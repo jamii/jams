@@ -18,12 +18,15 @@ pub const Database = struct {
     }
 };
 
+/// https://www.sqlite.org/datatype3.html
 pub const Value = union(enum) {
     Null,
     Integer: i64,
     Real: f64,
     Test: []const u8,
     Blob: []const u8,
+
+    // https://www.sqlite.org/datatype3.html#comparisons
 };
 
 test {}
