@@ -6,18 +6,13 @@ pub fn build(b: *std.build.Builder) !void {
     var target = b.standardTargetOptions(.{});
 
     const test_slt = addBin(b, mode, target, "test_slt", "Run the sqlite logic test suite", "./test/slt.zig");
-    const default_args = [1][]const u8{"./deps/slt"};
-    test_slt.run.addArgs(b.args orelse &default_args);
+    test_slt.run.addArgs(b.args orelse &[0][]const u8{});
 
     const test_unit_bin = b.addTestExe("test_unit", "lib/sql.zig");
     commonSetup(test_unit_bin, mode, target);
     const test_unit_run = test_unit_bin.run();
     const test_unit_step = b.step("test_unit", "Run unit tests");
     test_unit_step.dependOn(&test_unit_run.step);
-
-    const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(test_slt.step);
-    test_step.dependOn(test_unit_step);
 
     const debugger = addBin(b, mode, target, "run_debugger", "Run the debugger", "./debugger/debugger.zig");
     imgui.link(debugger.bin);
@@ -56,6 +51,8 @@ fn commonSetup(
     bin.setMainPkgPath("./");
     bin.setBuildMode(mode);
     bin.setTarget(target);
+    bin.linkLibC();
+    bin.omit_frame_pointer = false;
 }
 
 fn getRelativePath() []const u8 {

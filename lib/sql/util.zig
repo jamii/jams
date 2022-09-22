@@ -20,6 +20,14 @@ pub fn panic(comptime fmt: []const u8, args: anytype) noreturn {
     @panic(message);
 }
 
+/// Like `try` but less so
+pub fn fail(value_or_err: anytype) @TypeOf(if (value_or_err) |value| value else |_| unreachable) {
+    if (value_or_err) |value|
+        return value
+    else |err|
+        panic("Caught error: {}", .{err});
+}
+
 pub fn assert(b: bool) void {
     if (!b)
         panic("Assert failed", .{});
@@ -437,6 +445,7 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
             } else @compileError("cannot deepHash " ++ @typeName(T));
         },
         .Void => {},
+        .ErrorSet => deepHashInto(hasher, @errorToInt(key)),
         else => @compileError("cannot deepHash " ++ @typeName(T)),
     }
 }

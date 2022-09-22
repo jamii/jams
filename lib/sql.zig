@@ -4,17 +4,26 @@ const std = @import("std");
 const u = util;
 
 pub const Database = struct {
+    allocator: u.Allocator,
+
     pub fn init(allocator: u.Allocator) Database {
         return .{ .allocator = allocator };
     }
 
-    pub fn exec(self: *Database) void {
+    pub fn deinit(self: *Database) void {
         _ = self;
     }
 
-    pub fn query(self: *Database) []const []const Value {
+    pub fn runStatement(self: *Database, statement: []const u8) !void {
         _ = self;
-        return &.{};
+        _ = statement;
+        return error.Unimplemented;
+    }
+
+    pub fn runQuery(self: *Database, query: []const u8) ![]const []const Value {
+        _ = self;
+        _ = query;
+        return error.Unimplemented;
     }
 };
 
