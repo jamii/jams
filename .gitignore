@@ -1,0 +1,10 @@
+out
+target
+*.log
+.cpcache
+preimp.db
+secret.nix
+zig-cache
+zig-out
+imgui.ini
+.gdb_history
