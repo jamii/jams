@@ -27,13 +27,21 @@ pub const Database = struct {
     }
 };
 
+pub const Type = enum {
+    nul,
+    integer,
+    real,
+    text,
+    blob,
+};
+
 /// https://www.sqlite.org/datatype3.html
-pub const Value = union(enum) {
-    Null,
-    Integer: i64,
-    Real: f64,
-    Test: []const u8,
-    Blob: []const u8,
+pub const Value = union(Type) {
+    nul,
+    integer: i64,
+    real: f64,
+    text: []const u8,
+    blob: []const u8,
 
     // https://www.sqlite.org/datatype3.html#comparisons
 };

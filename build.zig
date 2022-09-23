@@ -8,7 +8,7 @@ pub fn build(b: *std.build.Builder) !void {
     const test_slt = addBin(b, mode, target, "test_slt", "Run the sqlite logic test suite", "./test/slt.zig");
     test_slt.run.addArgs(b.args orelse &[0][]const u8{});
 
-    const test_unit_bin = b.addTestExe("test_unit", "lib/sql.zig");
+    const test_unit_bin = b.addTestExe("test_unit", "./test/slt.zig");
     commonSetup(test_unit_bin, mode, target);
     const test_unit_run = test_unit_bin.run();
     const test_unit_step = b.step("test_unit", "Run unit tests");
