@@ -150,7 +150,10 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
     } else |err| {
         switch (expected) {
             .ok => return err,
-            .err => return,
+            .err => switch (err) {
+                error.Unimplemented => return err,
+                else => return,
+            },
         }
     }
 }
