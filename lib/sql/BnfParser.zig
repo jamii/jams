@@ -180,6 +180,10 @@ fn parseDefBody(self: *Self, name: []const u8) Error!NodeId {
         Node{ .literal = "<=" }
     else if (u.deepEqual(name, "not equals operator"))
         Node{ .literal = "<>" }
+    else if (u.deepEqual(name, "left brace"))
+        Node{ .literal = "{" }
+    else if (u.deepEqual(name, "left brace minus"))
+        Node{ .literal = "{-" }
     else if (u.deepEqual(name, "space"))
         Node{ .space = {} }
     else if (u.deepEqual(name, "newline"))
@@ -256,7 +260,7 @@ fn parseExpr(self: *Self) Error!NodeId {
         } else if (self.tryConsume("!!")) {
             // Discard comment
             _ = self.splitAt("\n") orelse "";
-        } else if (self.pos >= source.len or source[self.pos] == ']') {
+        } else if (self.pos >= source.len or source[self.pos] == ']' or source[self.pos] == '}') {
             break;
         } else {
             const right = try self.parseAtom();
@@ -271,6 +275,7 @@ fn parseAtom(self: *Self) Error!NodeId {
     return switch (source[self.pos]) {
         '<' => try self.parseRefName(),
         '[' => try self.parseOptional(),
+        '{' => try self.parseGroup(),
         else => try self.parseLiteral(),
     };
 }
@@ -302,4 +307,13 @@ fn parseOptional(self: *Self) Error!NodeId {
     self.discardSpaceAndNewline();
     self.consume("]");
     return self.pushNode(.{ .optional = body });
+}
+
+fn parseGroup(self: *Self) Error!NodeId {
+    self.consume("{");
+    self.discardSpaceAndNewline();
+    const body = try self.parseExpr();
+    self.discardSpaceAndNewline();
+    self.consume("}");
+    return body;
 }
