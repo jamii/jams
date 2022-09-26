@@ -131,7 +131,14 @@ pub fn parseDefs(self: *Self) Error!void {
     self.query_specification = self.name_to_node.get("query specification").?;
     self.sql_procedure_statement = self.name_to_node.get("SQL procedure statement").?;
 
-    u.dump(self.name_to_node.count());
+    {
+        var def_count: usize = 0;
+        for (self.nodes.items) |node| {
+            if (node == .def_name and !std.mem.startsWith(u8, node.def_name.name, "one_or_more"))
+                def_count += 1;
+        }
+        //u.dump(.{ .def_count = def_count });
+    }
 }
 
 fn parseDef(self: *Self) Error!NodeId {
@@ -221,19 +228,21 @@ fn parseDefBody(self: *Self, name: []const u8) Error!NodeId {
             // We should have special-cased any rule that contains only comments
             self.assert(false);
 
-        return self.parseExpr();
+        return self.parseExpr(.all);
     }
 }
 
-fn parseExpr(self: *Self) Error!NodeId {
+fn parseExpr(self: *Self, level: enum { all, all_but_either }) Error!NodeId {
     var node = try self.parseAtom();
 
     while (true) {
         self.discardSpace();
         if (self.tryConsume("\n")) {
-            if (self.pos < source.len and source[self.pos] != ' ' and source[self.pos] != '\n')
+            if (self.pos < source.len and source[self.pos] != ' ' and source[self.pos] != '\n') {
                 // This is the start of a new def (because it isn't indented)
+                self.pos -= "\n".len;
                 break;
+            }
         } else if (self.tryConsume("...")) {
 
             // anon ::= node [ anon ]
@@ -254,9 +263,17 @@ fn parseExpr(self: *Self) Error!NodeId {
             // node = node [ anon ]
             node = anon_body;
         } else if (self.tryConsume("|")) {
-            self.discardSpaceAndNewline();
-            const right = try self.parseAtom();
-            node = try self.pushNode(.{ .either = .{ node, right } });
+            switch (level) {
+                .all => {
+                    self.discardSpaceAndNewline();
+                    const right = try self.parseExpr(.all_but_either);
+                    node = try self.pushNode(.{ .either = .{ node, right } });
+                },
+                .all_but_either => {
+                    self.pos -= "|".len;
+                    break;
+                },
+            }
         } else if (self.tryConsume("!!")) {
             // Discard comment
             _ = self.splitAt("\n") orelse "";
@@ -303,7 +320,7 @@ fn parseLiteral(self: *Self) Error!NodeId {
 fn parseOptional(self: *Self) Error!NodeId {
     self.consume("[");
     self.discardSpaceAndNewline();
-    const body = try self.parseExpr();
+    const body = try self.parseExpr(.all);
     self.discardSpaceAndNewline();
     self.consume("]");
     return self.pushNode(.{ .optional = body });
@@ -312,7 +329,7 @@ fn parseOptional(self: *Self) Error!NodeId {
 fn parseGroup(self: *Self) Error!NodeId {
     self.consume("{");
     self.discardSpaceAndNewline();
-    const body = try self.parseExpr();
+    const body = try self.parseExpr(.all);
     self.discardSpaceAndNewline();
     self.consume("}");
     return body;

@@ -66,6 +66,7 @@ fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, start_pos: usize, le
 
 fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
     const start_pos = self.pos;
+    //u.dump(.{ bnf_node_id, self.bnf.nodes.items[bnf_node_id] });
     switch (self.bnf.nodes.items[bnf_node_id]) {
         .def_name => |def_name| {
             const old_may_contain_whitespace = self.may_contain_whitespace;
@@ -136,11 +137,12 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
     const start_pos = self.pos;
     const memo_key = MemoKey{ .start_pos = start_pos, .bnf_node_id = bnf_node_id };
     if (self.memo.get(memo_key)) |memo_value| {
-        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = memo_value });
         self.pos = memo_value.end_pos;
+        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = memo_value });
         return memo_value.node_id;
     } else {
-        u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos });
+        _ = parent_bnf_node_id;
+        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos });
         var last_end_pos: usize = self.pos;
         var last_node_id: ?NodeId = null;
         while (true) {
@@ -161,7 +163,7 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
             .end_pos = last_end_pos,
             .node_id = last_node_id,
         });
-        u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
+        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
         return last_node_id;
     }
 }
