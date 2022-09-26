@@ -3327,7 +3327,7 @@ Specify a table derived from the result of a <table expression>.
 
 Format
 <query specification> ::=
-  SELECT [ <set quantifier> ] <select list> <table expression>
+  SELECT [ <set quantifier> ] <select list> [ <table expression> ]
 
 <select list> ::=
     <asterisk>
