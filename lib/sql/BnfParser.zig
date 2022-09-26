@@ -6,6 +6,7 @@ const Self = @This();
 const source = @embedFile("../../deps/sql-2016.bnf");
 allocator: u.Allocator,
 nodes: u.ArrayList(BnfNode),
+name_to_node: u.DeepHashMap([]const u8, BnfNodeId),
 pos: usize,
 
 pub const BnfNodeId = usize;
@@ -28,6 +29,7 @@ pub fn init(allocator: u.Allocator) Self {
     return Self{
         .allocator = allocator,
         .nodes = u.ArrayList(BnfNode).init(allocator),
+        .name_to_node = u.DeepHashMap([]const u8, BnfNodeId).init(allocator),
         .pos = 0,
     };
 }
@@ -78,6 +80,8 @@ pub fn discardSpaceAndNewline(self: *Self) void {
 pub fn pushNode(self: *Self, node: BnfNode) Error!BnfNodeId {
     const id = self.nodes.items.len;
     try self.nodes.append(node);
+    if (node == .def_name)
+        try self.name_to_node.put(node.def_name.name, id);
     return id;
 }
 
