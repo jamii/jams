@@ -7,6 +7,7 @@ allocator: u.Allocator,
 bnf: *const sql.BnfParser,
 source: []const u8,
 pos: usize,
+may_contain_whitespace: bool,
 nodes: u.ArrayList(Node),
 memo: u.DeepHashMap(MemoKey, MemoValue),
 
@@ -37,6 +38,7 @@ pub fn init(allocator: u.Allocator, bnf: *const sql.BnfParser, source: []const u
         .bnf = bnf,
         .source = source,
         .pos = 0,
+        .may_contain_whitespace = true,
         .nodes = u.ArrayList(Node).init(allocator),
         .memo = u.DeepHashMap(MemoKey, MemoValue).init(allocator),
     };
@@ -65,7 +67,12 @@ fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, start_pos: usize, le
 fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
     const start_pos = self.pos;
     switch (self.bnf.nodes.items[bnf_node_id]) {
-        .def_name => |def_name| return self.parseMemo(bnf_node_id, def_name.body),
+        .def_name => |def_name| {
+            const old_may_contain_whitespace = self.may_contain_whitespace;
+            self.may_contain_whitespace = self.may_contain_whitespace and def_name.may_contain_whitespace;
+            defer self.may_contain_whitespace = old_may_contain_whitespace;
+            return self.parseMemo(bnf_node_id, def_name.body);
+        },
         .ref_name => |ref_name| return self.parse(ref_name.id.?),
         .literal => |literal| {
             if (self.pos + literal.len < self.source.len) {
@@ -86,7 +93,8 @@ fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
         },
         .both => |both| {
             const left_child = (try self.parse(both[0])) orelse return null;
-            self.discardSpaceAndNewline();
+            if (self.may_contain_whitespace)
+                self.discardSpaceAndNewline();
             const right_child = (try self.parse(both[1])) orelse return null;
             return @as(?usize, try self.pushNode(bnf_node_id, start_pos, left_child, right_child));
         },

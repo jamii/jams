@@ -17,6 +17,7 @@ pub const Node = union(enum) {
     def_name: struct {
         name: []const u8,
         body: NodeId,
+        may_contain_whitespace: bool,
     },
     ref_name: struct {
         name: []const u8,
@@ -138,7 +139,18 @@ fn parseDef(self: *Self) Error!NodeId {
     _ = self.splitAt("::=");
     self.discardSpaceAndNewline();
     const body = try self.parseDefBody(name);
-    return self.pushNode(.{ .def_name = .{ .name = name, .body = body } });
+    // > NOTE 19 - White space is typically used to separate <nondelimiter token>s from one another in SQL text always permitted between two tokens in SQL text.
+    const may_contain_whitespace =
+        !(u.deepEqual(name, "regular identifier") or
+        u.deepEqual(name, "key word") or
+        u.deepEqual(name, "unsigned numeric literal") or
+        u.deepEqual(name, "national character string literal") or
+        u.deepEqual(name, "binary string literal") or
+        u.deepEqual(name, "large object length token") or
+        u.deepEqual(name, "Unicode delimited identifier") or
+        u.deepEqual(name, "Unicode character string literal") or
+        u.deepEqual(name, "SQL language identifier"));
+    return self.pushNode(.{ .def_name = .{ .name = name, .body = body, .may_contain_whitespace = may_contain_whitespace } });
 }
 
 fn parseName(self: *Self) ![]const u8 {
@@ -231,6 +243,7 @@ fn parseExpr(self: *Self) Error!NodeId {
             const anon_def = try self.pushNode(.{ .def_name = .{
                 .name = name,
                 .body = anon_body,
+                .may_contain_whitespace = true,
             } });
             _ = anon_def;
 
