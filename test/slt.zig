@@ -25,7 +25,7 @@ pub fn main() !void {
     file: while (args.next()) |slt_path| {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
 
-        var database = try sql.Database.init(allocator);
+        var database = try sql.Database.init(allocator, &bnf_parser);
         defer database.deinit();
 
         var bytes = u.ArrayList(u8).init(allocator);

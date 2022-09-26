@@ -5,37 +5,58 @@ const u = sql.util;
 const Self = @This();
 const source = @embedFile("../../deps/sql-2016.bnf");
 allocator: u.Allocator,
-nodes: u.ArrayList(BnfNode),
-name_to_node: u.DeepHashMap([]const u8, BnfNodeId),
+nodes: u.ArrayList(Node),
+name_to_node: u.DeepHashMap([]const u8, NodeId),
 pos: usize,
 
-pub const BnfNodeId = usize;
-pub const BnfNode = union(enum) {
+query_specification: ?NodeId,
+sql_data_change_statement: ?NodeId,
+
+pub const NodeId = usize;
+pub const Node = union(enum) {
     def_name: struct {
         name: []const u8,
-        body: BnfNodeId,
+        body: NodeId,
     },
-    ref_name: []const u8,
+    ref_name: struct {
+        name: []const u8,
+        id: ?NodeId,
+    },
     literal: []const u8,
-    either: [2]BnfNodeId,
-    both: [2]BnfNodeId,
-    optional: BnfNodeId,
-    one_or_more: BnfNodeId,
-    special,
+    either: [2]NodeId,
+    both: [2]NodeId,
+    optional: NodeId,
+
+    // hardcoded tokenizers
+    space,
+    newline,
+    whitespace,
+    identifier_start,
+    identifier_extend,
+    unicode_escape_character,
+    non_quote_character,
+    non_double_quote_character,
+    escaped_character,
+    non_escaped_character,
+
+    // for more obscure syntax that we don't care about, just give up
+    fail,
 };
 pub const Error = error{OutOfMemory};
 
 pub fn init(allocator: u.Allocator) Self {
     return Self{
         .allocator = allocator,
-        .nodes = u.ArrayList(BnfNode).init(allocator),
-        .name_to_node = u.DeepHashMap([]const u8, BnfNodeId).init(allocator),
+        .nodes = u.ArrayList(Node).init(allocator),
+        .name_to_node = u.DeepHashMap([]const u8, NodeId).init(allocator),
         .pos = 0,
+        .query_specification = null,
+        .sql_data_change_statement = null,
     };
 }
 
 pub fn assert(self: *Self, cond: bool) void {
-    u.assert(cond, .{ self.nodes.items[if (self.nodes.items.len > 100) self.nodes.items.len - 100 else 0..], source[self.pos..] });
+    u.assert(cond, .{source[self.pos..]});
 }
 
 pub fn splitAt(self: *Self, needle: []const u8) ?[]const u8 {
@@ -77,7 +98,7 @@ pub fn discardSpaceAndNewline(self: *Self) void {
     }
 }
 
-pub fn pushNode(self: *Self, node: BnfNode) Error!BnfNodeId {
+pub fn pushNode(self: *Self, node: Node) Error!NodeId {
     const id = self.nodes.items.len;
     try self.nodes.append(node);
     if (node == .def_name)
@@ -88,7 +109,7 @@ pub fn pushNode(self: *Self, node: BnfNode) Error!BnfNodeId {
 pub fn parseDefs(self: *Self) Error!void {
     while (self.pos < source.len) {
         self.discardSpaceAndNewline();
-        if (self.pos == source.len) return;
+        if (self.pos == source.len) break;
         switch (source[self.pos]) {
             '0'...'9' => {
                 // Skip comments
@@ -98,9 +119,19 @@ pub fn parseDefs(self: *Self) Error!void {
         }
         _ = try self.parseDef();
     }
+
+    self.query_specification = self.name_to_node.get("query specification").?;
+    self.sql_data_change_statement = self.name_to_node.get("SQL data change statement").?;
+
+    for (self.nodes.items) |*node| {
+        if (node.* == .ref_name)
+            node.ref_name.id = self.name_to_node.get(node.ref_name.name);
+    }
+
+    u.dump(self.name_to_node.count());
 }
 
-fn parseDef(self: *Self) Error!BnfNodeId {
+fn parseDef(self: *Self) Error!NodeId {
     const name = self.parseName();
     _ = self.splitAt("::=");
     self.discardSpaceAndNewline();
@@ -113,41 +144,74 @@ fn parseName(self: *Self) []const u8 {
     return self.splitAt(">").?;
 }
 
-fn parseDefBody(self: *Self, name: []const u8) Error!BnfNodeId {
-    // We have to special case a bunch of unescaped literals
-    if (u.deepEqual(name, "left bracket")) {
-        self.consume("[");
-        return self.pushNode(.{ .literal = "[" });
-    } else if (u.deepEqual(name, "right bracket")) {
-        self.consume("]");
-        return self.pushNode(.{ .literal = "]" });
-    } else if (u.deepEqual(name, "less than operator")) {
-        self.consume("<");
-        return self.pushNode(.{ .literal = "<" });
-    } else if (u.deepEqual(name, "less than or equals operator")) {
-        self.consume("<=");
-        return self.pushNode(.{ .literal = "<=" });
+fn parseDefBody(self: *Self, name: []const u8) Error!NodeId {
+    // We have to special-case many rules that are otherwise unparseable
+    const maybe_node =
+        if (u.deepEqual(name, "left bracket"))
+        Node{ .literal = "[" }
+    else if (u.deepEqual(name, "right bracket"))
+        Node{ .literal = "]" }
+    else if (u.deepEqual(name, "less than operator"))
+        Node{ .literal = "<" }
+    else if (u.deepEqual(name, "less than or equals operator"))
+        Node{ .literal = "<=" }
+    else if (u.deepEqual(name, "space"))
+        Node{ .space = {} }
+    else if (u.deepEqual(name, "newline"))
+        Node{ .newline = {} }
+    else if (u.deepEqual(name, "white space"))
+        Node{ .whitespace = {} }
+    else if (u.deepEqual(name, "identifier start"))
+        Node{ .identifier_start = {} }
+    else if (u.deepEqual(name, "identifier extend"))
+        Node{ .identifier_extend = {} }
+    else if (u.deepEqual(name, "Unicode escape character"))
+        Node{ .unicode_escape_character = {} }
+    else if (u.deepEqual(name, "nonquote character"))
+        Node{ .non_quote_character = {} }
+    else if (u.deepEqual(name, "nondoublequote character"))
+        Node{ .non_double_quote_character = {} }
+    else if (u.deepEqual(name, "escaped character"))
+        Node{ .escaped_character = {} }
+    else if (u.deepEqual(name, "non-escaped character"))
+        Node{ .non_escaped_character = {} }
+    else if (std.mem.indexOf(u8, name, "JSON") != null or
+        std.mem.indexOf(u8, name, "implementation-defined") != null or
+        std.mem.indexOf(u8, name, "host") != null or
+        std.mem.indexOf(u8, name, "embedded") != null)
+        Node{ .fail = {} }
+    else
+        null;
+    if (maybe_node) |node| {
+        // Go to start of next def
+        _ = self.splitAt("\n<");
+        self.pos -= "\n<".len;
+        return self.pushNode(node);
     } else {
+        if (self.tryConsume("!!"))
+            // We should have special-cased any rule that contains only comments
+            self.assert(false);
+
         return self.parseExpr();
     }
 }
 
-fn parseExpr(self: *Self) Error!BnfNodeId {
-    if (std.mem.startsWith(u8, source[self.pos..], "!!")) {
-        _ = self.splitAt("\n") orelse "";
-        return self.pushNode(.special);
-    }
-
+fn parseExpr(self: *Self) Error!NodeId {
     var node = try self.parseAtom();
 
     while (true) {
         self.discardSpace();
         if (self.tryConsume("\n")) {
             if (self.pos < source.len and source[self.pos] == '<')
-                // This is the start of a new def (because it isn't indendent)
+                // This is the start of a new def (because it isn't indented)
                 break;
         } else if (self.tryConsume("...")) {
-            node = try self.pushNode(.{ .one_or_more = node });
+            // Convert into:
+            // (anon ::= node | anon)
+            // node | anon
+            const anon = try self.pushNode(.{ .either = .{ node, undefined } });
+            self.nodes.items[anon].either[1] = anon;
+            node = try self.pushNode(.{ .either = .{ node, anon } });
         } else if (self.tryConsume("|")) {
             self.discardSpaceAndNewline();
             const right = try self.parseAtom();
@@ -166,7 +230,7 @@ fn parseExpr(self: *Self) Error!BnfNodeId {
     return node;
 }
 
-fn parseAtom(self: *Self) Error!BnfNodeId {
+fn parseAtom(self: *Self) Error!NodeId {
     return switch (source[self.pos]) {
         '<' => try self.parseRefName(),
         '[' => try self.parseOptional(),
@@ -174,12 +238,15 @@ fn parseAtom(self: *Self) Error!BnfNodeId {
     };
 }
 
-fn parseRefName(self: *Self) Error!BnfNodeId {
+fn parseRefName(self: *Self) Error!NodeId {
     const name = self.parseName();
-    return self.pushNode(.{ .ref_name = name });
+    return self.pushNode(.{ .ref_name = .{
+        .name = name,
+        .id = null,
+    } });
 }
 
-fn parseLiteral(self: *Self) Error!BnfNodeId {
+fn parseLiteral(self: *Self) Error!NodeId {
     const start = self.pos;
     while (self.pos < source.len) {
         switch (source[self.pos]) {
@@ -190,7 +257,7 @@ fn parseLiteral(self: *Self) Error!BnfNodeId {
     return self.pushNode(.{ .literal = source[start..self.pos] });
 }
 
-fn parseOptional(self: *Self) Error!BnfNodeId {
+fn parseOptional(self: *Self) Error!NodeId {
     self.consume("[");
     self.discardSpaceAndNewline();
     const body = try self.parseExpr();
