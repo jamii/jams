@@ -10,7 +10,7 @@ name_to_node: u.DeepHashMap([]const u8, NodeId),
 pos: usize,
 
 query_specification: ?NodeId,
-sql_data_change_statement: ?NodeId,
+sql_procedure_statement: ?NodeId,
 
 pub const NodeId = usize;
 pub const Node = union(enum) {
@@ -51,7 +51,7 @@ pub fn init(allocator: u.Allocator) Self {
         .name_to_node = u.DeepHashMap([]const u8, NodeId).init(allocator),
         .pos = 0,
         .query_specification = null,
-        .sql_data_change_statement = null,
+        .sql_procedure_statement = null,
     };
 }
 
@@ -101,8 +101,6 @@ pub fn discardSpaceAndNewline(self: *Self) void {
 pub fn pushNode(self: *Self, node: Node) Error!NodeId {
     const id = self.nodes.items.len;
     try self.nodes.append(node);
-    if (node == .def_name)
-        try self.name_to_node.put(node.def_name.name, id);
     return id;
 }
 
@@ -120,28 +118,41 @@ pub fn parseDefs(self: *Self) Error!void {
         _ = try self.parseDef();
     }
 
-    self.query_specification = self.name_to_node.get("query specification").?;
-    self.sql_data_change_statement = self.name_to_node.get("SQL data change statement").?;
-
+    for (self.nodes.items) |node, id| {
+        if (node == .def_name)
+            try self.name_to_node.put(node.def_name.name, id);
+    }
     for (self.nodes.items) |*node| {
         if (node.* == .ref_name)
-            node.ref_name.id = self.name_to_node.get(node.ref_name.name);
+            node.ref_name.id = self.name_to_node.get(node.ref_name.name) orelse u.panic("What are \"{}\"", .{std.zig.fmtEscapes(node.ref_name.name)});
     }
+
+    self.query_specification = self.name_to_node.get("query specification").?;
+    self.sql_procedure_statement = self.name_to_node.get("SQL procedure statement").?;
 
     u.dump(self.name_to_node.count());
 }
 
 fn parseDef(self: *Self) Error!NodeId {
-    const name = self.parseName();
+    const name = try self.parseName();
     _ = self.splitAt("::=");
     self.discardSpaceAndNewline();
     const body = try self.parseDefBody(name);
     return self.pushNode(.{ .def_name = .{ .name = name, .body = body } });
 }
 
-fn parseName(self: *Self) []const u8 {
+fn parseName(self: *Self) ![]const u8 {
     self.consume("<");
-    return self.splitAt(">").?;
+    const raw_name = self.splitAt(">").?;
+    // Sometimes the grammar line-wraps in the middle of a name :|
+    var name = u.ArrayList(u8).init(self.allocator);
+    var iter = std.mem.tokenize(u8, raw_name, " \n");
+    while (iter.next()) |part| {
+        if (name.items.len > 0)
+            try name.append(' ');
+        try name.appendSlice(part);
+    }
+    return name.toOwnedSlice();
 }
 
 fn parseDefBody(self: *Self, name: []const u8) Error!NodeId {
@@ -155,6 +166,8 @@ fn parseDefBody(self: *Self, name: []const u8) Error!NodeId {
         Node{ .literal = "<" }
     else if (u.deepEqual(name, "less than or equals operator"))
         Node{ .literal = "<=" }
+    else if (u.deepEqual(name, "not equals operator"))
+        Node{ .literal = "<>" }
     else if (u.deepEqual(name, "space"))
         Node{ .space = {} }
     else if (u.deepEqual(name, "newline"))
@@ -202,7 +215,7 @@ fn parseExpr(self: *Self) Error!NodeId {
     while (true) {
         self.discardSpace();
         if (self.tryConsume("\n")) {
-            if (self.pos < source.len and source[self.pos] == '<')
+            if (self.pos < source.len and source[self.pos] != ' ' and source[self.pos] != '\n')
                 // This is the start of a new def (because it isn't indented)
                 break;
         } else if (self.tryConsume("...")) {
@@ -239,7 +252,7 @@ fn parseAtom(self: *Self) Error!NodeId {
 }
 
 fn parseRefName(self: *Self) Error!NodeId {
-    const name = self.parseName();
+    const name = try self.parseName();
     return self.pushNode(.{ .ref_name = .{
         .name = name,
         .id = null,
@@ -254,7 +267,8 @@ fn parseLiteral(self: *Self) Error!NodeId {
             else => self.pos += 1,
         }
     }
-    return self.pushNode(.{ .literal = source[start..self.pos] });
+    const literal = try std.ascii.allocLowerString(self.allocator, source[start..self.pos]);
+    return self.pushNode(.{ .literal = literal });
 }
 
 fn parseOptional(self: *Self) Error!NodeId {
