@@ -8,7 +8,7 @@ bnf: *const sql.BnfParser,
 source: []const u8,
 pos: usize,
 nodes: u.ArrayList(Node),
-memo: u.DeepHashMap(MemoKey, ?NodeId),
+memo: u.DeepHashMap(MemoKey, MemoValue),
 
 pub const NodeId = usize;
 pub const Node = struct {
@@ -18,8 +18,13 @@ pub const Node = struct {
 };
 
 pub const MemoKey = struct {
-    pos: usize,
+    start_pos: usize,
     bnf_node_id: sql.BnfParser.NodeId,
+};
+
+pub const MemoValue = struct {
+    end_pos: usize,
+    node_id: ?NodeId,
 };
 
 const Error = error{
@@ -33,7 +38,7 @@ pub fn init(allocator: u.Allocator, bnf: *const sql.BnfParser, source: []const u
         .source = source,
         .pos = 0,
         .nodes = u.ArrayList(Node).init(allocator),
-        .memo = u.DeepHashMap(MemoKey, ?NodeId).init(allocator),
+        .memo = u.DeepHashMap(MemoKey, MemoValue).init(allocator),
     };
 }
 
@@ -59,31 +64,8 @@ fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, start_pos: usize, le
 
 fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
     const start_pos = self.pos;
-    const entry = try self.memo.getOrPut(.{ .pos = start_pos, .bnf_node_id = bnf_node_id });
-    if (entry.found_existing) {
-        return entry.value_ptr.*;
-    } else {
-        entry.value_ptr.* = null;
-        var last_node_id: ?NodeId = null;
-        var last_end_pos: usize = self.pos;
-        while (true) {
-            self.pos = start_pos;
-            const node_id = try self.parseInner(bnf_node_id);
-            const end_pos = self.pos;
-            if (node_id == null or end_pos < last_end_pos) break;
-            last_node_id = node_id;
-            if (end_pos == last_end_pos) break;
-            last_end_pos = end_pos;
-        }
-        self.pos = last_end_pos;
-        return last_node_id;
-    }
-}
-
-fn parseInner(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
-    const start_pos = self.pos;
     switch (self.bnf.nodes.items[bnf_node_id]) {
-        .def_name => |def_name| return self.parse(def_name.body),
+        .def_name => |def_name| return self.parseMemo(bnf_node_id, def_name.body),
         .ref_name => |ref_name| return self.parse(ref_name.id.?),
         .literal => |literal| {
             if (self.pos + literal.len < self.source.len) {
@@ -112,11 +94,67 @@ fn parseInner(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
             const child = try self.parse(optional);
             return @as(?usize, try self.pushNode(bnf_node_id, start_pos, child, null));
         },
+        .identifier_start => {
+            // > An <identifier start> is any character in the Unicode General Category classes "Lu", "Ll", "Lt", "Lm", "Lo", or "Nl".
+            if (self.pos < self.source.len)
+                switch (self.source[self.pos]) {
+                    'a'...'z', 'A'...'Z' => {
+                        self.pos += 1;
+                        return @as(?usize, try self.pushNode(bnf_node_id, start_pos, null, null));
+                    },
+                    else => {},
+                };
+            return null;
+        },
+        .identifier_extend => {
+            // > An <identifier extend> is U+00B7, "Middle Dot", or any character in the Unicode General Category classes "Mn", "Mc", "Nd", "Pc", or "Cf".
+            if (self.pos < self.source.len)
+                switch (self.source[self.pos]) {
+                    '0'...'9', '-', '_' => {
+                        self.pos += 1;
+                        return @as(?usize, try self.pushNode(bnf_node_id, start_pos, null, null));
+                    },
+                    else => {},
+                };
+            return null;
+        },
         .fail => return null,
 
-        else =>
-        //TODO
-        unreachable,
+        else => |node| u.panic("TODO {}", .{node}),
+    }
+}
+
+fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
+    const start_pos = self.pos;
+    const memo_key = MemoKey{ .start_pos = start_pos, .bnf_node_id = bnf_node_id };
+    if (self.memo.get(memo_key)) |memo_value| {
+        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = memo_value });
+        self.pos = memo_value.end_pos;
+        return memo_value.node_id;
+    } else {
+        u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos });
+        var last_end_pos: usize = self.pos;
+        var last_node_id: ?NodeId = null;
+        while (true) {
+            try self.memo.put(memo_key, .{
+                .end_pos = last_end_pos,
+                .node_id = last_node_id,
+            });
+            self.pos = start_pos;
+            const node_id = try self.parse(bnf_node_id);
+            const end_pos = self.pos;
+            if (node_id == null or end_pos < last_end_pos) break;
+            last_node_id = node_id;
+            if (end_pos == last_end_pos) break;
+            last_end_pos = end_pos;
+        }
+        self.pos = last_end_pos;
+        try self.memo.put(memo_key, .{
+            .end_pos = last_end_pos,
+            .node_id = last_node_id,
+        });
+        u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
+        return last_node_id;
     }
 }
 

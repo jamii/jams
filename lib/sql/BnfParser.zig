@@ -219,12 +219,23 @@ fn parseExpr(self: *Self) Error!NodeId {
                 // This is the start of a new def (because it isn't indented)
                 break;
         } else if (self.tryConsume("...")) {
-            // Convert into:
-            // (anon ::= node | anon)
-            // node | anon
-            const anon = try self.pushNode(.{ .either = .{ node, undefined } });
-            self.nodes.items[anon].either[1] = anon;
-            node = try self.pushNode(.{ .either = .{ node, anon } });
+
+            // anon ::= node [ anon ]
+            const name = try std.fmt.allocPrint(self.allocator, "one_or_more_{}", .{self.nodes.items.len});
+            const anon_ref = try self.pushNode(.{ .ref_name = .{
+                .name = name,
+                .id = null,
+            } });
+            const anon_ref_optional = try self.pushNode(.{ .optional = anon_ref });
+            const anon_body = try self.pushNode(.{ .both = .{ node, anon_ref_optional } });
+            const anon_def = try self.pushNode(.{ .def_name = .{
+                .name = name,
+                .body = anon_body,
+            } });
+            _ = anon_def;
+
+            // node = node [ anon ]
+            node = anon_body;
         } else if (self.tryConsume("|")) {
             self.discardSpaceAndNewline();
             const right = try self.parseAtom();
