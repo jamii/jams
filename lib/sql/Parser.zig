@@ -75,7 +75,7 @@ fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
         },
         .ref_name => |ref_name| return self.parse(ref_name.id.?),
         .literal => |literal| {
-            if (self.pos + literal.len < self.source.len) {
+            if (self.pos + literal.len <= self.source.len) {
                 const candidate = try std.ascii.allocLowerString(self.allocator, self.source[self.pos .. self.pos + literal.len]);
                 defer self.allocator.free(candidate);
                 if (std.mem.eql(u8, candidate, literal)) {
@@ -167,7 +167,7 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
 }
 
 pub fn discardSpaceAndNewline(self: *Self) void {
-    while (self.pos <= self.source.len) {
+    while (self.pos < self.source.len) {
         switch (self.source[self.pos]) {
             ' ', '\n' => self.pos += 1,
             else => break,

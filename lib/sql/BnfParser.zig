@@ -82,7 +82,7 @@ pub fn tryConsume(self: *Self, needle: []const u8) bool {
 }
 
 pub fn discardSpace(self: *Self) void {
-    while (self.pos <= source.len) {
+    while (self.pos < source.len) {
         switch (source[self.pos]) {
             ' ' => self.pos += 1,
             else => break,
@@ -91,7 +91,7 @@ pub fn discardSpace(self: *Self) void {
 }
 
 pub fn discardSpaceAndNewline(self: *Self) void {
-    while (self.pos <= source.len) {
+    while (self.pos < source.len) {
         switch (source[self.pos]) {
             ' ', '\n' => self.pos += 1,
             else => break,
