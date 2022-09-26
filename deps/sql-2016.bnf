@@ -4178,8 +4178,6 @@ Format
 <JSON member accessor> ::=
     <period> <JSON path key name>
   | <period> <JSON path string literal>
-      NOTE 447 - Unlike [ECMAScript], SQL/JSON path language does not provide a member accessor using brackets that enclose
-      a character string.
 
 <JSON wildcard member accessor> ::=
   <period> <asterisk>
@@ -4208,8 +4206,6 @@ Format
 
 <JSON filter expression> ::=
   <question mark> <left paren> <JSON path predicate> <right paren>
-      NOTE 448 - Unlike [ECMAScript], predicates are not expressions; instead they form a separate language that can only be invoked
-      within a <JSON filter expression>.
 
 <JSON item method> ::=
   <period> <JSON method>
@@ -4244,8 +4240,6 @@ Format
 
 <JSON path wff> ::=
   <JSON additive expression>
-   NOTE 449 - This concludes the main language for JSON path expressions. Next comes the language for predicates, used only
-   in <JSON filter expression>.
 
 <JSON predicate primary> ::=
     <JSON delimited predicate>
@@ -4266,7 +4260,6 @@ Format
 
 <JSON comparison predicate> ::=
   <JSON path wff> <JSON comp op> <JSON path wff>
-   NOTE 450 - Comparison operators are not left associative, unlike [ECMAScript].
 
 <JSON comp op> ::=
     <double equals>
@@ -4275,7 +4268,6 @@ Format
   | <greater than operator>
   | <less than or equals operator>
   | <greater than or equals operator>
-   NOTE 451 - Equality operators have the same precedence as inequality comparison operators, unlike [ECMAScript].
 
 <JSON like_regex predicate> ::=
   <JSON path wff> like_regex <JSON like_regex pattern>
@@ -7404,7 +7396,6 @@ Format
 
 Function
 Set the characteristics of the next SQL-transaction for the SQL-agent.
-    NOTE 711 - This statement has no effect on any SQL-transactions subsequent to the next SQL-transaction.
 
 
 Format
@@ -7451,7 +7442,6 @@ Function
 If an SQL-transaction is currently active, then set the constraint mode for that SQL-transaction in the current
 SQL-session. If no SQL-transaction is currently active, then set the constraint mode for the next SQL-transaction
 in the current SQL-session for the SQL-agent.
-    NOTE 713 - This statement has no effect on any SQL-transactions subsequent to this SQL-transaction.
 
 
 Format

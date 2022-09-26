@@ -28,9 +28,11 @@ pub fn fail(value_or_err: anytype) @TypeOf(if (value_or_err) |value| value else 
         panic("Caught error: {}", .{err});
 }
 
-pub fn assert(b: bool) void {
-    if (!b)
+pub fn assert(b: bool, message: anytype) void {
+    if (!b) {
+        dump(message);
         panic("Assert failed", .{});
+    }
 }
 
 pub fn oom() noreturn {
@@ -104,7 +106,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
             if (ati.child == u8) {
                 try std.fmt.format(writer, "\"{s}\"", .{thing});
             } else {
-                try std.fmt.format(writer, "[{}]{s}[\n", .{ ati.len, ati.child });
+                try std.fmt.format(writer, "[{}]{}[\n", .{ ati.len, ati.child });
                 for (thing) |elem| {
                     try writer.writeByteNTimes(' ', indent + 4);
                     try dumpInto(writer, indent + 4, elem);

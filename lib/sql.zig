@@ -1,4 +1,5 @@
-pub const util = @import("./sql/util.zig");
+pub const util = @import("sql/util.zig");
+pub const BnfParser = @import("sql/BnfParser.zig");
 
 const std = @import("std");
 const u = util;
@@ -6,8 +7,8 @@ const u = util;
 pub const Database = struct {
     allocator: u.Allocator,
 
-    pub fn init(allocator: u.Allocator) Database {
-        return .{ .allocator = allocator };
+    pub fn init(allocator: u.Allocator) !Database {
+        return Database{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Database) void {

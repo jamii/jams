@@ -19,10 +19,13 @@ pub fn main() !void {
     var errors = u.DeepHashMap(TestError, usize).init(allocator);
     defer errors.deinit();
 
+    var bnf_parser = sql.BnfParser.init(allocator);
+    try bnf_parser.parseDefs();
+
     file: while (args.next()) |slt_path| {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
 
-        var database = sql.Database.init(allocator);
+        var database = try sql.Database.init(allocator);
         defer database.deinit();
 
         var bytes = u.ArrayList(u8).init(allocator);
