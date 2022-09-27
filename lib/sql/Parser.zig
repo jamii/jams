@@ -170,15 +170,16 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
             last_end_pos = end_pos;
             last_node_id = node_id;
 
-            if (!self.memo.get(memo_key).?.was_used)
+            if (!self.memo.get(memo_key).?.was_used) {
                 // If we didn't recur, we won't get any improvement from trying again
+                try self.memo.put(memo_key, .{
+                    .end_pos = last_end_pos,
+                    .node_id = last_node_id,
+                    .was_used = false,
+                });
                 break;
+            }
         }
-        try self.memo.put(memo_key, .{
-            .end_pos = last_end_pos,
-            .node_id = last_node_id,
-            .was_used = false,
-        });
         self.pos = last_end_pos;
         //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
         return last_node_id;
