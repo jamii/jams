@@ -137,7 +137,7 @@ pub fn parseDefs(self: *Self) Error!void {
             if (node == .def_name and !std.mem.startsWith(u8, node.def_name.name, "one_or_more"))
                 def_count += 1;
         }
-        //u.dump(.{ .def_count = def_count });
+        u.assert(def_count == 1719, def_count);
     }
 }
 
