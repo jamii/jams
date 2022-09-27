@@ -79,7 +79,10 @@ fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
             const old_may_contain_whitespace = self.may_contain_whitespace;
             self.may_contain_whitespace = self.may_contain_whitespace and def_name.may_contain_whitespace;
             defer self.may_contain_whitespace = old_may_contain_whitespace;
-            return self.parseMemo(bnf_node_id, def_name.body);
+            return if (bnf_node_id == self.bnf.regular_identifier.?)
+                self.parseRegularIdentifier(bnf_node_id, def_name.body)
+            else
+                self.parseMemo(bnf_node_id, def_name.body);
         },
         .ref_name => |ref_name| return self.parse(ref_name.id.?),
         .literal => |literal| {
@@ -184,6 +187,17 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
         //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
         return last_node_id;
     }
+}
+
+fn parseRegularIdentifier(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
+    const node_id_maybe = try self.parseMemo(parent_bnf_node_id, bnf_node_id);
+    if (node_id_maybe) |node_id| {
+        const node = self.nodes.items[node_id];
+        const token = self.source[node.range[0]..node.range[1]];
+        if (self.bnf.reserved_words.get(token) != null)
+            return null;
+    }
+    return node_id_maybe;
 }
 
 pub fn discardSpaceAndNewline(self: *Self) void {
