@@ -45,6 +45,12 @@ pub fn init(allocator: u.Allocator, bnf: *const sql.BnfParser, source: []const u
     };
 }
 
+pub fn deinit(self: *Self) void {
+    self.memo.deinit();
+    self.nodes.deinit();
+    self.* = undefined;
+}
+
 pub fn parseQuery(self: *Self) !void {
     _ = (try self.parse(self.bnf.query_specification.?)) orelse return error.ParseError;
     if (self.pos < self.source.len) return error.ParseError;
