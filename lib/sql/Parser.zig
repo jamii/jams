@@ -26,6 +26,7 @@ pub const MemoKey = struct {
 pub const MemoValue = struct {
     end_pos: usize,
     node_id: ?NodeId,
+    was_used: bool,
 };
 
 const Error = error{
@@ -136,10 +137,11 @@ fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
 fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
     const start_pos = self.pos;
     const memo_key = MemoKey{ .start_pos = start_pos, .bnf_node_id = bnf_node_id };
-    if (self.memo.get(memo_key)) |memo_value| {
-        self.pos = memo_value.end_pos;
-        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = memo_value });
-        return memo_value.node_id;
+    if (self.memo.getEntry(memo_key)) |entry| {
+        entry.value_ptr.was_used = true;
+        self.pos = entry.value_ptr.end_pos;
+        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = entry.value_ptr.* });
+        return entry.value_ptr.node_id;
     } else {
         _ = parent_bnf_node_id;
         //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos });
@@ -149,20 +151,29 @@ fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id:
             try self.memo.put(memo_key, .{
                 .end_pos = last_end_pos,
                 .node_id = last_node_id,
+                .was_used = false,
             });
             self.pos = start_pos;
             const node_id = try self.parse(bnf_node_id);
             const end_pos = self.pos;
-            if (node_id == null or end_pos < last_end_pos) break;
-            last_node_id = node_id;
-            if (end_pos == last_end_pos) break;
+
+            if (node_id == null or end_pos < last_end_pos)
+                // Not an improvement, let's stick with last_end_pos/last_node_id
+                break;
+
             last_end_pos = end_pos;
+            last_node_id = node_id;
+
+            if (!self.memo.get(memo_key).?.was_used)
+                // If we didn't recur, we won't get any improvement from trying again
+                break;
         }
-        self.pos = last_end_pos;
         try self.memo.put(memo_key, .{
             .end_pos = last_end_pos,
             .node_id = last_node_id,
+            .was_used = false,
         });
+        self.pos = last_end_pos;
         //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
         return last_node_id;
     }
