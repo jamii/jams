@@ -75,6 +75,28 @@ Executed in   94.84 secs    fish           external
 
 Tomorrow I'll start working through those parse failures. Probably I'll need to build a little gui debugger to help, because trying to read through printlns of all the productions of that massive grammar is not time efficient.
 
+## Day 2
+
+I realized that I unthinkingly made the parser greedy. It will backtrack within an `either`, but if the first branch succeeds it will never go back to explore the second branch. That means when it hits something like `avg(c)` it parses the `avg` as an identifier and then can't backtrack to try to parse it as a function call later.
+
+SQL can be parsed with this minimal backtracking (that's how the materialize parser works) but the bnf grammar is not designed with this in mind and it would be way too much work to edit it by hand.
+
+I read a bunch about table driven parsers for arbitrary context-free grammars (because who knows what class of grammar this bnf is). Eventually I decided it would be safer to just add backtracking to the parser I already have, since that's a method I already understand.
+
+I flailed for a long while trying to figure out how to combine this with the memoized loop used for handling left-recursive definitions. Eventually I came up with what I think is a workable design, where the memoized value is stored on the parse stack and the loop works by adding backtrack points whenever the a recursive definition completes succesfully.
+
+I started on the implementation but at this point I'm just staring at the screen and not making forward progress, so I'm going to stop early and get some rest.
+
+My original plan looked like this:
+
+* sql parser (3 days)
+* name resolution (1 day)
+* type inference and lowering (1 day)
+* optimization and execution (1 day)
+* grind out the long tail of bugs (1 day)
+
+I estimated 3 days to get the sql parser working because I've been to sql-land before and I know what horrors lurk there, but I'm a little worried now that it will take even longer.
+
 &nbsp;
 
 &nbsp;
