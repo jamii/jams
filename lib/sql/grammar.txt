@@ -1,12 +1,12 @@
 statement = 
-|| CREATE => create
-|| INSERT => insert;
+| CREATE => create
+| INSERT => insert;
 create =
-|| CREATE TABLE => create_table;
+| (CREATE TABLE) => create_table;
 create_table = CREATE TABLE name OPEN_PAREN column_specs CLOSE_PAREN;
 insert = INSERT INTO name OPEN_PAREN column_specs CLOSE_PAREN table_expr;
 table_expr = 
-|| VALUES => table_expr_values;
+| VALUES => table_expr_values;
 table_expr_values = VALUES OPEN_PAREN value_exprs CLOSE_PAREN;
 value_exprs = value_expr*COMMA;
 value_expr =
