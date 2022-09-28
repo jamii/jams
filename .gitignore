@@ -8,3 +8,4 @@ zig-cache
 zig-out
 imgui.ini
 .gdb_history
+test.test
