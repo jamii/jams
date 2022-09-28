@@ -4,9 +4,9 @@ const u = sql.util;
 
 const Self = @This();
 allocator: u.Allocator,
+arena: u.ArenaAllocator,
 bnf: *const sql.BnfParser,
 source: []const u8,
-pos: usize,
 may_contain_whitespace: bool,
 nodes: u.ArrayList(Node),
 memo: u.DeepHashMap(MemoKey, MemoValue),
@@ -24,9 +24,8 @@ pub const MemoKey = struct {
 };
 
 pub const MemoValue = struct {
-    end_pos: usize,
-    node_id: ?NodeId,
     was_used: bool,
+    node_ids: u.DeepHashSet(NodeId),
 };
 
 const Error = error{
@@ -36,9 +35,9 @@ const Error = error{
 pub fn init(allocator: u.Allocator, bnf: *const sql.BnfParser, source: []const u8) Self {
     return Self{
         .allocator = allocator,
+        .arena = u.ArenaAllocator.init(allocator),
         .bnf = bnf,
         .source = source,
-        .pos = 0,
         .may_contain_whitespace = true,
         .nodes = u.ArrayList(Node).init(allocator),
         .memo = u.DeepHashMap(MemoKey, MemoValue).init(allocator),
@@ -48,165 +47,185 @@ pub fn init(allocator: u.Allocator, bnf: *const sql.BnfParser, source: []const u
 pub fn deinit(self: *Self) void {
     self.memo.deinit();
     self.nodes.deinit();
+    self.arena.deinit();
     self.* = undefined;
 }
 
-pub fn parseQuery(self: *Self) !void {
-    _ = (try self.parse(self.bnf.query_specification.?)) orelse return error.ParseError;
-    if (self.pos < self.source.len) return error.ParseError;
+pub fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) !NodeId {
+    const node_ids = try self.parseNode(bnf_node_id, 0);
+
+    var return_node_id: ?NodeId = null;
+    for (node_ids) |node_id| {
+        const node = self.nodes.items[node_id];
+        if (node.range[1] == self.source.len) {
+            if (return_node_id != null)
+                return error.AmbiguousParse
+            else
+                return_node_id = node_id;
+        }
+    }
+
+    return if (return_node_id) |node_id|
+        node_id
+    else
+        error.NoParse;
 }
 
-pub fn parseStatement(self: *Self) !void {
-    _ = (try self.parse(self.bnf.sql_procedure_statement.?)) orelse return error.ParseError;
-    if (self.pos < self.source.len) return error.ParseError;
-}
-
-fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, start_pos: usize, left_child: ?NodeId, right_child: ?NodeId) Error!NodeId {
+fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, range: [2]usize, left_child: ?NodeId, right_child: ?NodeId) Error!NodeId {
     const id = self.nodes.items.len;
     try self.nodes.append(.{
         .bnf_node_id = bnf_node_id,
-        .range = .{ start_pos, self.pos },
+        .range = range,
         .children = .{ left_child, right_child },
     });
     return id;
 }
 
-fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
-    const start_pos = self.pos;
+fn getEndPos(self: *Self, node_id: NodeId) usize {
+    return self.nodes.items[node_id].range[1];
+}
+
+fn parseNode(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) Error![]const NodeId {
     //u.dump(.{ bnf_node_id, self.bnf.nodes.items[bnf_node_id] });
+    var result = u.ArrayList(NodeId).init(self.arena.allocator());
     switch (self.bnf.nodes.items[bnf_node_id]) {
         .def_name => |def_name| {
             const old_may_contain_whitespace = self.may_contain_whitespace;
             self.may_contain_whitespace = self.may_contain_whitespace and def_name.may_contain_whitespace;
             defer self.may_contain_whitespace = old_may_contain_whitespace;
-            return if (bnf_node_id == self.bnf.regular_identifier.?)
-                self.parseRegularIdentifier(bnf_node_id, def_name.body)
-            else
-                self.parseMemo(bnf_node_id, def_name.body);
+            try result.appendSlice(
+                if (bnf_node_id == self.bnf.regular_identifier.?)
+                    try self.parseRegularIdentifier(start_pos, def_name.body)
+                else
+                    try self.parseMemo(start_pos, def_name.body),
+            );
         },
-        .ref_name => |ref_name| return self.parse(ref_name.id.?),
+        .ref_name => |ref_name| {
+            try result.appendSlice(try self.parseNode(start_pos, ref_name.id.?));
+        },
         .literal => |literal| {
-            if (self.pos + literal.len <= self.source.len) {
-                const candidate = try std.ascii.allocLowerString(self.allocator, self.source[self.pos .. self.pos + literal.len]);
+            if (start_pos + literal.len <= self.source.len) {
+                const candidate = try std.ascii.allocLowerString(self.allocator, self.source[start_pos .. start_pos + literal.len]);
                 defer self.allocator.free(candidate);
                 if (std.mem.eql(u8, candidate, literal)) {
-                    self.pos += literal.len;
-                    return @as(?usize, try self.pushNode(bnf_node_id, start_pos, null, null));
+                    try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos + literal.len }, null, null));
                 }
             }
-            return null;
         },
         .either => |either| {
-            if (try self.parse(either[0])) |node_id| return @as(?usize, node_id);
-            self.pos = start_pos;
-            if (try self.parse(either[1])) |node_id| return @as(?usize, node_id);
-            return null;
+            try result.appendSlice(try self.parseNode(start_pos, either[0]));
+            try result.appendSlice(try self.parseNode(start_pos, either[1]));
         },
         .both => |both| {
-            const left_child = (try self.parse(both[0])) orelse return null;
-            if (self.may_contain_whitespace)
-                self.discardSpaceAndNewline();
-            const right_child = (try self.parse(both[1])) orelse return null;
-            return @as(?usize, try self.pushNode(bnf_node_id, start_pos, left_child, right_child));
+            for (try self.parseNode(start_pos, both[0])) |left_child| {
+                const mid_pos = if (self.may_contain_whitespace)
+                    self.discardSpaceAndNewline(self.getEndPos(left_child))
+                else
+                    self.getEndPos(left_child);
+                for (try self.parseNode(mid_pos, both[1])) |right_child| {
+                    try result.append(try self.pushNode(
+                        bnf_node_id,
+                        .{ start_pos, self.getEndPos(right_child) },
+                        left_child,
+                        right_child,
+                    ));
+                }
+            }
         },
         .optional => |optional| {
-            const child = try self.parse(optional);
-            return @as(?usize, try self.pushNode(bnf_node_id, start_pos, child, null));
+            try result.appendSlice(try self.parseNode(start_pos, optional));
+            try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos }, null, null));
         },
         .identifier_start => {
             // > An <identifier start> is any character in the Unicode General Category classes "Lu", "Ll", "Lt", "Lm", "Lo", or "Nl".
-            if (self.pos < self.source.len)
-                switch (self.source[self.pos]) {
+            if (start_pos < self.source.len)
+                switch (self.source[start_pos]) {
                     'a'...'z', 'A'...'Z' => {
-                        self.pos += 1;
-                        return @as(?usize, try self.pushNode(bnf_node_id, start_pos, null, null));
+                        try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos + 1 }, null, null));
                     },
                     else => {},
                 };
-            return null;
         },
         .identifier_extend => {
             // > An <identifier extend> is U+00B7, "Middle Dot", or any character in the Unicode General Category classes "Mn", "Mc", "Nd", "Pc", or "Cf".
-            if (self.pos < self.source.len)
-                switch (self.source[self.pos]) {
+            if (start_pos < self.source.len)
+                switch (self.source[start_pos]) {
                     '0'...'9', '-', '_' => {
-                        self.pos += 1;
-                        return @as(?usize, try self.pushNode(bnf_node_id, start_pos, null, null));
+                        try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos + 1 }, null, null));
                     },
                     else => {},
                 };
-            return null;
         },
-        .fail => return null,
+        .space => {
+            if (start_pos < self.source.len)
+                switch (self.source[start_pos]) {
+                    ' ' => {
+                        try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos + 1 }, null, null));
+                    },
+                    else => {},
+                };
+        },
+        .fail => {},
 
         else => |node| u.panic("TODO {}", .{node}),
     }
+    return result.toOwnedSlice();
 }
 
-fn parseMemo(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
-    const start_pos = self.pos;
+fn parseMemo(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) Error![]const NodeId {
+    var result = u.ArrayList(NodeId).init(self.arena.allocator());
     const memo_key = MemoKey{ .start_pos = start_pos, .bnf_node_id = bnf_node_id };
-    if (self.memo.getEntry(memo_key)) |entry| {
-        entry.value_ptr.was_used = true;
-        self.pos = entry.value_ptr.end_pos;
-        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = entry.value_ptr.* });
-        return entry.value_ptr.node_id;
+    if (self.memo.getPtr(memo_key)) |memo_value| {
+        memo_value.was_used = true;
+        {
+            var iter = memo_value.node_ids.keyIterator();
+            while (iter.next()) |node_id| try result.append(node_id.*);
+        }
     } else {
-        _ = parent_bnf_node_id;
-        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos });
-        var last_end_pos: usize = self.pos;
-        var last_node_id: ?NodeId = null;
+        try self.memo.put(memo_key, MemoValue{
+            .was_used = false,
+            .node_ids = u.DeepHashSet(NodeId).init(self.arena.allocator()),
+        });
         while (true) {
-            try self.memo.put(memo_key, .{
-                .end_pos = last_end_pos,
-                .node_id = last_node_id,
-                .was_used = false,
-            });
-            self.pos = start_pos;
-            const node_id = try self.parse(bnf_node_id);
-            const end_pos = self.pos;
-
-            if (node_id == null or end_pos < last_end_pos)
-                // Not an improvement, let's stick with last_end_pos/last_node_id
-                break;
-
-            last_end_pos = end_pos;
-            last_node_id = node_id;
-
-            if (!self.memo.get(memo_key).?.was_used) {
-                // If we didn't recur, we won't get any improvement from trying again
-                try self.memo.put(memo_key, .{
-                    .end_pos = last_end_pos,
-                    .node_id = last_node_id,
-                    .was_used = false,
-                });
+            const results_count_before = self.memo.get(memo_key).?.node_ids.count();
+            const node_ids = try self.parseNode(start_pos, bnf_node_id);
+            const memo_value = self.memo.getPtr(memo_key).?;
+            for (node_ids) |node_id| try memo_value.node_ids.put(node_id, {});
+            const results_count_after = memo_value.node_ids.count();
+            if (results_count_before == results_count_after or
+                !memo_value.was_used)
+            {
+                // No further improvement to be had
+                var iter = memo_value.node_ids.keyIterator();
+                while (iter.next()) |node_id| try result.append(node_id.*);
                 break;
             }
         }
-        self.pos = last_end_pos;
-        //u.dump(.{ .node = self.bnf.nodes.items[parent_bnf_node_id], .start_pos = start_pos, .result = last_node_id, .end_pos = self.pos });
-        return last_node_id;
     }
+    return result.toOwnedSlice();
 }
 
-fn parseRegularIdentifier(self: *Self, parent_bnf_node_id: sql.BnfParser.NodeId, bnf_node_id: sql.BnfParser.NodeId) Error!?NodeId {
-    const node_id_maybe = try self.parseMemo(parent_bnf_node_id, bnf_node_id);
-    if (node_id_maybe) |node_id| {
+fn parseRegularIdentifier(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) Error![]const NodeId {
+    var result = u.ArrayList(NodeId).init(self.arena.allocator());
+    const node_ids = try self.parseMemo(start_pos, bnf_node_id);
+    for (node_ids) |node_id| {
         const node = self.nodes.items[node_id];
         const token = self.source[node.range[0]..node.range[1]];
-        if (self.bnf.reserved_words.get(token) != null)
-            return null;
+        if (self.bnf.reserved_words.get(token) == null)
+            try result.append(node_id);
     }
-    return node_id_maybe;
+    return result.toOwnedSlice();
 }
 
-pub fn discardSpaceAndNewline(self: *Self) void {
-    while (self.pos < self.source.len) {
-        switch (self.source[self.pos]) {
-            ' ', '\n' => self.pos += 1,
+pub fn discardSpaceAndNewline(self: *Self, start_pos: usize) usize {
+    var pos = start_pos;
+    while (pos < self.source.len) {
+        switch (self.source[pos]) {
+            ' ', '\n' => pos += 1,
             else => break,
         }
     }
+    return pos;
 }
 
 pub fn dumpInto(writer: anytype, indent: u32, self: Self) anyerror!void {

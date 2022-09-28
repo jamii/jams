@@ -23,14 +23,14 @@ pub const Database = struct {
     pub fn runStatement(self: *Database, statement: []const u8) !void {
         var parser = Parser.init(self.allocator, self.bnf, statement);
         defer parser.deinit();
-        try parser.parseStatement();
+        _ = try parser.parse(self.bnf.sql_procedure_statement.?);
         return error.Unimplemented;
     }
 
     pub fn runQuery(self: *Database, query: []const u8) ![]const []const Value {
         var parser = Parser.init(self.allocator, self.bnf, query);
         defer parser.deinit();
-        try parser.parseQuery();
+        _ = try parser.parse(self.bnf.query_specification.?);
         return error.Unimplemented;
     }
 };

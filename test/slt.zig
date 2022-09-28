@@ -154,7 +154,7 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
         switch (expected) {
             .ok => return err,
             .err => switch (err) {
-                error.Unimplemented, error.ParseError => return err,
+                error.Unimplemented, error.NoParse, error.AmbiguousParse => return err,
                 else => return,
             },
         }

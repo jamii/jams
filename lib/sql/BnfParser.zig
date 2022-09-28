@@ -105,6 +105,8 @@ pub fn discardSpaceAndNewline(self: *Self) void {
 }
 
 pub fn pushNode(self: *Self, node: Node) Error!NodeId {
+    if (node == .either)
+        u.assert(node.either[0] != node.either[1], node);
     const id = self.nodes.items.len;
     try self.nodes.append(node);
     return id;
