@@ -13,7 +13,7 @@ const Error = error{OutOfMemory};
 
 pub const NamedRule = struct {
     name: []const u8,
-    rule: sql.grammar_support.Rule,
+    rule: Rule,
 };
 
 pub fn init(arena: *u.ArenaAllocator) Self {
@@ -46,8 +46,8 @@ fn parseNamedRule(self: *Self) Error!void {
     try self.rules.append(.{ .name = name, .rule = rule });
 }
 
-fn parseOneOf(self: *Self) Error!sql.grammar_support.Rule {
-    var one_ofs = u.ArrayList(sql.grammar_support.OneOf).init(self.allocator);
+fn parseOneOf(self: *Self) Error!Rule {
+    var one_ofs = u.ArrayList(OneOf).init(self.allocator);
     while (true) {
         if (!self.tryConsume("|")) break;
         self.discardWhitespace();
@@ -63,11 +63,11 @@ fn parseOneOf(self: *Self) Error!sql.grammar_support.Rule {
         self.discardWhitespace();
     }
     self.assert(one_ofs.items.len > 0);
-    return sql.grammar_support.Rule{ .one_of = one_ofs.toOwnedSlice() };
+    return Rule{ .one_of = one_ofs.toOwnedSlice() };
 }
 
-fn parseAllOf(self: *Self) Error!sql.grammar_support.Rule {
-    var all_ofs = u.ArrayList(sql.grammar_support.RuleRef).init(self.allocator);
+fn parseAllOf(self: *Self) Error!Rule {
+    var all_ofs = u.ArrayList(RuleRef).init(self.allocator);
     while (true) {
         self.discardWhitespace();
         var rule_ref = (try self.tryParseRuleRef()) orelse break;
@@ -75,10 +75,10 @@ fn parseAllOf(self: *Self) Error!sql.grammar_support.Rule {
         try all_ofs.append(rule_ref);
     }
     self.assert(all_ofs.items.len > 0);
-    return sql.grammar_support.Rule{ .all_of = all_ofs.toOwnedSlice() };
+    return Rule{ .all_of = all_ofs.toOwnedSlice() };
 }
 
-fn tryParseModifier(self: *Self, rule_ref: *sql.grammar_support.RuleRef) Error!void {
+fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
     switch (source[self.pos]) {
         '*' => {
             self.consume("*");
@@ -90,7 +90,7 @@ fn tryParseModifier(self: *Self, rule_ref: *sql.grammar_support.RuleRef) Error!v
         },
         '?' => {
             self.consume("?");
-            const optional = sql.grammar_support.Rule{ .optional = rule_ref.* };
+            const optional = Rule{ .optional = rule_ref.* };
             rule_ref.rule_name = try self.makeAnonRule(optional);
         },
         '=' => {
@@ -102,15 +102,15 @@ fn tryParseModifier(self: *Self, rule_ref: *sql.grammar_support.RuleRef) Error!v
     }
 }
 
-fn parseRepeat(self: *Self, min_count: usize, rule_ref: *sql.grammar_support.RuleRef) Error!void {
+fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
     const separator = if (self.tryParseName()) |name|
-        sql.grammar_support.RuleRef{
+        RuleRef{
             .field_name = null,
             .rule_name = name,
         }
     else
         null;
-    const repeat = sql.grammar_support.Rule{ .repeat = .{
+    const repeat = Rule{ .repeat = .{
         .min_count = min_count,
         .element = rule_ref.*,
         .separator = separator,
@@ -118,7 +118,7 @@ fn parseRepeat(self: *Self, min_count: usize, rule_ref: *sql.grammar_support.Rul
     rule_ref.rule_name = try self.makeAnonRule(repeat);
 }
 
-fn makeAnonRule(self: *Self, rule: sql.grammar_support.Rule) Error![]const u8 {
+fn makeAnonRule(self: *Self, rule: Rule) Error![]const u8 {
     const name = try self.makeAnonRuleName();
     try self.rules.append(.{ .name = name, .rule = rule });
     return name;
@@ -128,26 +128,32 @@ fn makeAnonRuleName(self: *Self) Error![]const u8 {
     return std.fmt.allocPrint(self.allocator, "anon_{}", .{self.rules.items.len});
 }
 
-fn parseRuleRef(self: *Self) Error!sql.grammar_support.RuleRef {
+fn parseRuleRef(self: *Self) Error!RuleRef {
     const rule_ref = try self.tryParseRuleRef();
     self.assert(rule_ref != null);
     return rule_ref.?;
 }
 
-fn tryParseRuleRef(self: *Self) Error!?sql.grammar_support.RuleRef {
+fn tryParseRuleRef(self: *Self) Error!?RuleRef {
     if (source[self.pos] == '(') {
         self.consume("(");
         const all_of = try self.parseAllOf();
         self.consume(")");
         const name = try self.makeAnonRule(all_of);
-        return sql.grammar_support.RuleRef{
+        return RuleRef{
             .field_name = null,
             .rule_name = name,
         };
     } else {
         const name = self.tryParseName() orelse return null;
-        return sql.grammar_support.RuleRef{
-            .field_name = name,
+        var is_token = true;
+        for (name) |char|
+            switch (char) {
+                'A'...'Z', '_' => {},
+                else => is_token = false,
+            };
+        return RuleRef{
+            .field_name = if (is_token) null else name,
             .rule_name = name,
         };
     }
@@ -204,13 +210,12 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\const std = @import("std");
         \\const sql = @import("../lib/sql.zig");
         \\const u = sql.util;
-        \\pub usingnamespace sql.grammar_support;
         \\
-        \\const Token = sql.grammar_support.Token;
-        \\const Rule = sql.grammar_support.Rule;
-        \\const OneOf = sql.grammar_support.OneOf;
-        \\const Repeat = sql.grammar_support.Repeat;
-        \\const RuleRef = sql.grammar_support.RuleRef;
+        \\const Token = sql.GrammarParser.Token;
+        \\const Rule = sql.GrammarParser.Rule;
+        \\const OneOf = sql.GrammarParser.OneOf;
+        \\const Repeat = sql.GrammarParser.Repeat;
+        \\const RuleRef = sql.GrammarParser.RuleRef;
         \\
         \\
     );
@@ -220,27 +225,27 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
 }
 
 fn writeRules(self: *Self, writer: anytype) anyerror!void {
-    try writer.writeAll("pub const rules = .{\n");
-    inline for (@typeInfo(sql.grammar_support.Token).Enum.fields) |field| {
-        try std.fmt.format(writer, ".{s} = ", .{field.name});
-        try self.writeRule(writer, .{ .token = @intToEnum(sql.grammar_support.Token, field.value) });
-        try writer.writeAll(",\n");
+    try writer.writeAll("pub const rules = struct {\n");
+    inline for (@typeInfo(Token).Enum.fields) |field| {
+        try std.fmt.format(writer, "const {s} = ", .{field.name});
+        try self.writeRule(writer, .{ .token = @intToEnum(Token, field.value) });
+        try writer.writeAll(";\n");
     }
     for (self.rules.items) |rule| {
-        try std.fmt.format(writer, ".{s} = ", .{rule.name});
+        try std.fmt.format(writer, "const {s} = ", .{rule.name});
         try self.writeRule(writer, rule.rule);
-        try writer.writeAll(",\n");
+        try writer.writeAll(";\n");
     }
     try writer.writeAll("};");
 }
 
-fn writeRule(self: *Self, writer: anytype, rule: sql.grammar_support.Rule) anyerror!void {
+fn writeRule(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     switch (rule) {
         .token => |token| {
             try std.fmt.format(writer, "Rule{{.token = .{s}}}", .{std.meta.tagName(token)});
         },
         .one_of => |one_ofs| {
-            try std.fmt.format(writer, "Rule{{.one_of = &[{}]OneOf{{\n", .{one_ofs.len});
+            try std.fmt.format(writer, "Rule{{.one_of = &[_]OneOf{{\n", .{});
             for (one_ofs) |one_of| {
                 switch (one_of) {
                     .choice => |choice| {
@@ -259,11 +264,33 @@ fn writeRule(self: *Self, writer: anytype, rule: sql.grammar_support.Rule) anyer
             }
             try writer.writeAll("}}");
         },
-        else => try writer.writeAll("TODO"),
+        .all_of => |all_ofs| {
+            try std.fmt.format(writer, "Rule{{.all_of = &[_]RuleRef{{\n", .{});
+            for (all_ofs) |all_of| {
+                try self.writeRuleRef(writer, all_of);
+                try writer.writeAll(",\n");
+            }
+            try writer.writeAll("}}");
+        },
+        .optional => |optional| {
+            try std.fmt.format(writer, "Rule{{.optional = ", .{});
+            try self.writeRuleRef(writer, optional);
+            try writer.writeAll("}");
+        },
+        .repeat => |repeat| {
+            try std.fmt.format(writer, "Rule{{.repeat = .{{.min_count = {}, .element =", .{repeat.min_count});
+            try self.writeRuleRef(writer, repeat.element);
+            try writer.writeAll(", .separator =  ");
+            if (repeat.separator) |separator|
+                try self.writeRuleRef(writer, separator)
+            else
+                try writer.writeAll("null");
+            try writer.writeAll("}}");
+        },
     }
 }
 
-fn writeRuleRef(self: *Self, writer: anytype, rule_ref: sql.grammar_support.RuleRef) anyerror!void {
+fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
     _ = self;
     if (rule_ref.field_name) |field_name|
         try std.fmt.format(writer, "RuleRef{{.field_name = \"{}\", .rule_name = \"{}\"}}", .{
@@ -278,38 +305,94 @@ fn writeRuleRef(self: *Self, writer: anytype, rule_ref: sql.grammar_support.Rule
 }
 
 fn writeTypes(self: *Self, writer: anytype) anyerror!void {
-    try writer.writeAll("pub const types = .{\n");
-    inline for (@typeInfo(sql.grammar_support.Token).Enum.fields) |field| {
-        try std.fmt.format(writer, ".{s} = ", .{field.name});
-        try self.writeType(writer, .{ .token = @intToEnum(sql.grammar_support.Token, field.value) });
-        try writer.writeAll(",\n");
+    try writer.writeAll("pub const types = struct {\n");
+    inline for (@typeInfo(Token).Enum.fields) |field| {
+        try std.fmt.format(writer, "const {s} = ", .{field.name});
+        try self.writeType(writer, .{ .token = @intToEnum(Token, field.value) });
+        try writer.writeAll(";\n");
     }
     for (self.rules.items) |rule| {
-        try std.fmt.format(writer, ".{s} = ", .{rule.name});
+        try std.fmt.format(writer, "const {s} = ", .{rule.name});
         try self.writeType(writer, rule.rule);
-        try writer.writeAll(",\n");
+        try writer.writeAll(";\n");
     }
     try writer.writeAll("};");
 }
 
-fn writeType(self: *Self, writer: anytype, rule: sql.grammar_support.Rule) anyerror!void {
+fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     _ = self;
     switch (rule) {
         .token => {
             try writer.writeAll("Token");
         },
         .one_of => |one_ofs| {
-            try std.fmt.format(writer, "union(enum) {{\n", .{});
+            var is_enum = true;
+            for (one_ofs) |one_of| {
+                const rule_ref = switch (one_of) {
+                    .choice => |choice| choice,
+                    .committed_choice => |committed_choice| committed_choice[1],
+                };
+                if (rule_ref.field_name != null)
+                    is_enum = false;
+            }
+            if (is_enum)
+                try std.fmt.format(writer, "enum {{\n", .{})
+            else
+                try std.fmt.format(writer, "union(enum) {{\n", .{});
             for (one_ofs) |one_of| {
                 const rule_ref = switch (one_of) {
                     .choice => |choice| choice,
                     .committed_choice => |committed_choice| committed_choice[1],
                 };
                 if (rule_ref.field_name) |field_name|
-                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, rule_ref.rule_name });
+                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, rule_ref.rule_name })
+                else
+                    try std.fmt.format(writer, "{s},", .{rule_ref.rule_name});
             }
             try writer.writeAll("}");
         },
-        else => try writer.writeAll("TODO"),
+        .all_of => |all_ofs| {
+            try std.fmt.format(writer, "struct {{\n", .{});
+            for (all_ofs) |all_of| {
+                if (all_of.field_name) |field_name| {
+                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, all_of.rule_name });
+                }
+            }
+            try writer.writeAll("}");
+        },
+        .optional => |optional| {
+            try std.fmt.format(writer, "?{s}", .{optional.rule_name});
+        },
+        .repeat => |repeat| {
+            try std.fmt.format(writer, "[]const {s}", .{repeat.element.rule_name});
+        },
     }
 }
+
+pub const Token = enum {
+    EOF,
+};
+
+pub const Rule = union(enum) {
+    token: Token,
+    one_of: []const OneOf,
+    all_of: []const RuleRef,
+    optional: RuleRef,
+    repeat: Repeat,
+};
+
+pub const OneOf = union(enum) {
+    choice: RuleRef,
+    committed_choice: [2]RuleRef,
+};
+
+pub const Repeat = struct {
+    min_count: usize,
+    element: RuleRef,
+    separator: ?RuleRef,
+};
+
+pub const RuleRef = struct {
+    field_name: ?[]const u8,
+    rule_name: []const u8,
+};

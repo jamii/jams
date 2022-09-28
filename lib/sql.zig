@@ -1,6 +1,6 @@
 pub const util = @import("sql/util.zig");
-pub const grammar_support = @import("sql/grammar_support.zig");
 pub const GrammarParser = @import("sql/GrammarParser.zig");
+pub const grammar = @import("sql/grammar.zig");
 pub const Parser = @import("sql/Parser.zig");
 
 const std = @import("std");
