@@ -266,7 +266,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     try self.writeTypes(writer);
     try writer.writeAll("\n\n");
     {
-        try writer.writeAll("pub const Token = enum {eof,");
+        try writer.writeAll("pub const Token = enum {");
         var iter = self.tokens.keyIterator();
         while (iter.next()) |token|
             try std.fmt.format(writer, "{s},", .{token.*});
@@ -274,11 +274,16 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     }
     try writer.writeAll("\n\n");
     {
-        try writer.writeAll("pub const keywords = std.ComptimeStringMap(Token, .{\n");
+        try writer.writeAll(
+            \\pub const keywords = keywords: {
+            \\    @setEvalBranchQuota(10000);
+            \\    break :keywords std.ComptimeStringMap(Token, .{
+            \\
+        );
         var keywords_iter = std.mem.tokenize(u8, keywords, "\n");
         while (keywords_iter.next()) |keyword|
             try std.fmt.format(writer, ".{{\"{}\", Token.{s}}},\n", .{ std.zig.fmtEscapes(keyword), keyword });
-        try writer.writeAll("});");
+        try writer.writeAll("});};");
     }
 }
 

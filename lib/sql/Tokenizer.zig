@@ -29,6 +29,7 @@ pub fn init(source: [:0]const u8) Self {
 pub fn next(self: *Self) !Token {
     var state = State.start;
     var string_start: u8 = 0;
+    const start_pos = self.pos;
     while (true) {
         const char = self.source[self.pos];
         self.pos += 1;
@@ -104,7 +105,11 @@ pub fn next(self: *Self) !Token {
                 'a'...'z', 'A'...'Z', '0'...'9', '_' => {},
                 else => {
                     self.pos -= 1;
-                    return Token.name;
+                    const name = self.source[start_pos..self.pos];
+                    return if (sql.grammar.keywords.get(name)) |token|
+                        token
+                    else
+                        Token.name;
                 },
             },
             .minus => switch (char) {
@@ -116,11 +121,17 @@ pub fn next(self: *Self) !Token {
     }
 }
 
-pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const Token {
-    var tokens = u.ArrayList(Token).init(allocator);
+pub const TokenAndRange = struct {
+    token: Token,
+    range: [2]usize,
+};
+
+pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const TokenAndRange {
+    var tokens = u.ArrayList(TokenAndRange).init(allocator);
     while (true) {
+        const start_pos = self.pos;
         const token = try self.next();
-        try tokens.append(token);
+        try tokens.append(.{ .token = token, .range = .{ start_pos, self.pos } });
         if (token == .eof) break;
     }
     return tokens.toOwnedSlice();

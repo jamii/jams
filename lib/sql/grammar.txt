@@ -1,3 +1,4 @@
+sql = statement_or_query eof;
 statement_or_query =
 | statement
 | query;
