@@ -4,7 +4,7 @@ const u = sql.util;
 
 const allocator = std.heap.c_allocator;
 
-pub fn ReturnError(f: anytype) type {
+pub fn ReturnError(comptime f: anytype) type {
     const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
     return @typeInfo(Return).ErrorUnion.error_set;
 }

@@ -54,9 +54,9 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         try writer.writeAll("Allocator{}");
     } else if (T == ArenaAllocator) {
         try writer.writeAll("ArenaAllocator{}");
-    } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
+    } else if (comptime std.mem.startsWith(u8, @typeName(T), "array_list.ArrayList")) {
         try dumpInto(writer, indent, thing.items);
-    } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
+    } else if (comptime std.mem.startsWith(u8, @typeName(T), "hash_map.HashMap")) {
         var iter = thing.iterator();
         const is_set = @TypeOf(iter.next().?.value_ptr.*) == void;
         try writer.writeAll(if (is_set) "HashSet(\n" else "HashMap(\n");

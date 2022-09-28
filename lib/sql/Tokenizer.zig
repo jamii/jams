@@ -5,7 +5,7 @@ const Token = sql.grammar.Token;
 const keywords = sql.grammar.keywords;
 
 const Self = @This();
-source: []const u8,
+source: [:0]const u8,
 pos: usize,
 
 const State = enum {
@@ -82,6 +82,7 @@ pub fn next(self: *Self) !Token {
             .comment => switch (char) {
                 0, '\r', '\n' => {
                     self.pos -= 1;
+                    state = .start;
                     return self.next();
                 },
                 else => {},
@@ -90,6 +91,7 @@ pub fn next(self: *Self) !Token {
                 ' ', '\r', '\t', '\n' => {},
                 else => {
                     self.pos -= 1;
+                    state = .start;
                     return self.next();
                 },
             },

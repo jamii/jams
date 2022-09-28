@@ -79,6 +79,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                     return null;
                 }
             }
+            return result;
         },
         .optional => |optional| {
             if (try self.parse(optional.rule_name)) |optional_result| {
@@ -92,7 +93,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
             var results = u.ArrayList(@field(types, repeat.element.rule_name)).init(self.allocator);
             while (true) {
                 const start_pos = self.pos;
-                if (repeat.element.separator) |separator| {
+                if (repeat.separator) |separator| {
                     if (results.items.len > 0) {
                         if (try self.parse(separator.rule_name) == null) {
                             self.pos = start_pos;

@@ -70,7 +70,7 @@ pub fn parseRules(self: *Self) Error!void {
 }
 
 fn parseNamedRule(self: *Self) Error!void {
-    const name = self.parseName();
+    const name = try self.parseName();
     self.discardWhitespace();
     self.consume("=");
     self.discardWhitespace();
@@ -131,7 +131,7 @@ fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
         },
         '=' => {
             self.consume("=");
-            const name = self.parseName();
+            const name = try self.parseName();
             rule_ref.field_name = name;
         },
         else => {},
@@ -139,7 +139,7 @@ fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
 }
 
 fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
-    const separator = if (self.tryParseName()) |name|
+    const separator = if (try self.tryParseName()) |name|
         RuleRef{
             .field_name = null,
             .rule_name = name,
@@ -181,8 +181,7 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
             .rule_name = name,
         };
     } else {
-        const name = self.tryParseName() orelse return null;
-        try self.rule_name_refs.put(name, {});
+        const name = (try self.tryParseName()) orelse return null;
         var is_token = true;
         for (name) |char|
             switch (char) {
@@ -196,13 +195,13 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
     }
 }
 
-fn parseName(self: *Self) []const u8 {
-    const name = self.tryParseName();
+fn parseName(self: *Self) ![]const u8 {
+    const name = try self.tryParseName();
     self.assert(name != null);
     return name.?;
 }
 
-fn tryParseName(self: *Self) ?[]const u8 {
+fn tryParseName(self: *Self) !?[]const u8 {
     const start_pos = self.pos;
     while (true) {
         switch (source[self.pos]) {
@@ -210,10 +209,14 @@ fn tryParseName(self: *Self) ?[]const u8 {
             else => break,
         }
     }
-    return if (self.pos == start_pos)
-        null
-    else
-        source[start_pos..self.pos];
+
+    if (self.pos == start_pos) {
+        return null;
+    } else {
+        const name = source[start_pos..self.pos];
+        try self.rule_name_refs.put(name, {});
+        return name;
+    }
 }
 
 pub fn assert(self: *Self, cond: bool) void {
@@ -408,7 +411,7 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
             try std.fmt.format(writer, "struct {{\n", .{});
             for (all_ofs) |all_of| {
                 if (all_of.field_name) |field_name| {
-                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, all_of.rule_name });
+                    try std.fmt.format(writer, "{s}: *{s},", .{ field_name, all_of.rule_name });
                 }
             }
             try writer.writeAll("}");
