@@ -74,6 +74,8 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         try writer.writeAll(")");
     } else if (T == sql.Parser) {
         try sql.Parser.dumpInto(writer, indent, thing);
+    } else if (T == sql.Parser.DumpNode) {
+        try sql.Parser.DumpNode.dumpInto(writer, indent, thing);
     } else switch (@typeInfo(T)) {
         .Pointer => |pti| {
             switch (pti.size) {

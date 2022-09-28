@@ -52,7 +52,11 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) !NodeId {
-    const node_ids = try self.parseNode(bnf_node_id, 0);
+    const node_ids = try self.parseNode(0, bnf_node_id);
+
+    //for (node_ids) |node_id| {
+    //    u.dump(DumpNode{ .self = self.*, .node_id = node_id });
+    //}
 
     var return_node_id: ?NodeId = null;
     for (node_ids) |node_id| {
@@ -71,37 +75,24 @@ pub fn parse(self: *Self, bnf_node_id: sql.BnfParser.NodeId) !NodeId {
         error.NoParse;
 }
 
-fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, range: [2]usize, left_child: ?NodeId, right_child: ?NodeId) Error!NodeId {
-    const id = self.nodes.items.len;
-    try self.nodes.append(.{
-        .bnf_node_id = bnf_node_id,
-        .range = range,
-        .children = .{ left_child, right_child },
-    });
-    return id;
-}
-
-fn getEndPos(self: *Self, node_id: NodeId) usize {
-    return self.nodes.items[node_id].range[1];
-}
-
 fn parseNode(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) Error![]const NodeId {
-    //u.dump(.{ bnf_node_id, self.bnf.nodes.items[bnf_node_id] });
     var result = u.ArrayList(NodeId).init(self.arena.allocator());
     switch (self.bnf.nodes.items[bnf_node_id]) {
         .def_name => |def_name| {
             const old_may_contain_whitespace = self.may_contain_whitespace;
             self.may_contain_whitespace = self.may_contain_whitespace and def_name.may_contain_whitespace;
             defer self.may_contain_whitespace = old_may_contain_whitespace;
-            try result.appendSlice(
+            const node_ids =
                 if (bnf_node_id == self.bnf.regular_identifier.?)
-                    try self.parseRegularIdentifier(start_pos, def_name.body)
-                else
-                    try self.parseMemo(start_pos, def_name.body),
-            );
+                try self.parseRegularIdentifier(start_pos, def_name.body)
+            else
+                try self.parseMemo(start_pos, def_name.body);
+            for (node_ids) |node_id|
+                try result.append(try self.pushNode(bnf_node_id, self.getRange(node_id), node_id, null));
         },
         .ref_name => |ref_name| {
-            try result.appendSlice(try self.parseNode(start_pos, ref_name.id.?));
+            for (try self.parseNode(start_pos, ref_name.id.?)) |node_id|
+                try result.append(try self.pushNode(bnf_node_id, self.getRange(node_id), node_id, null));
         },
         .literal => |literal| {
             if (start_pos + literal.len <= self.source.len) {
@@ -113,8 +104,10 @@ fn parseNode(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) E
             }
         },
         .either => |either| {
-            try result.appendSlice(try self.parseNode(start_pos, either[0]));
-            try result.appendSlice(try self.parseNode(start_pos, either[1]));
+            for (try self.parseNode(start_pos, either[0])) |node_id|
+                try result.append(try self.pushNode(bnf_node_id, self.getRange(node_id), node_id, null));
+            for (try self.parseNode(start_pos, either[1])) |node_id|
+                try result.append(try self.pushNode(bnf_node_id, self.getRange(node_id), node_id, null));
         },
         .both => |both| {
             for (try self.parseNode(start_pos, both[0])) |left_child| {
@@ -133,7 +126,8 @@ fn parseNode(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) E
             }
         },
         .optional => |optional| {
-            try result.appendSlice(try self.parseNode(start_pos, optional));
+            for (try self.parseNode(start_pos, optional)) |node_id|
+                try result.append(try self.pushNode(bnf_node_id, self.getRange(node_id), node_id, null));
             try result.append(try self.pushNode(bnf_node_id, .{ start_pos, start_pos }, null, null));
         },
         .identifier_start => {
@@ -228,21 +222,59 @@ pub fn discardSpaceAndNewline(self: *Self, start_pos: usize) usize {
     return pos;
 }
 
+fn pushNode(self: *Self, bnf_node_id: sql.BnfParser.NodeId, range: [2]usize, left_child_id: ?NodeId, right_child_id: ?NodeId) Error!NodeId {
+    var hasher = std.crypto.hash.Blake3.init(.{});
+    hasher.update(&@bitCast([8]u8, bnf_node_id));
+    hasher.update(&@bitCast([16]u8, range));
+    if (left_child_id != null)
+        hasher.update(&@bitCast([16]u8, self.nodes.items[left_child_id.?].hash));
+    if (right_child_id != null)
+        hasher.update(&@bitCast([16]u8, self.nodes.items[right_child_id.?].hash));
+    var hash: [16]u8 = undefined;
+    hasher.final(&hash);
+
+    const id = self.nodes.items.len;
+    try self.nodes.append(.{
+        .hash = @bitCast(u128, hash),
+        .bnf_node_id = bnf_node_id,
+        .range = range,
+        .children = .{ left_child_id, right_child_id },
+    });
+    return id;
+}
+
+fn getHash(self: *Self, node_id: NodeId) u128 {
+    return self.nodes.items[node_id].hash;
+}
+
+fn getRange(self: *Self, node_id: NodeId) [2]usize {
+    return self.nodes.items[node_id].range;
+}
+
+fn getEndPos(self: *Self, node_id: NodeId) usize {
+    return self.nodes.items[node_id].range[1];
+}
+
 pub fn dumpInto(writer: anytype, indent: u32, self: Self) anyerror!void {
     if (self.nodes.items.len == 0)
         try writer.writeAll("<empty>\n")
     else
-        try dumpNodeInto(writer, indent, self, self.nodes.items.len - 1);
+        try u.dumpInto(writer, indent, DumpNode{ .self = self, .node_id = self.nodes.items.len - 1 });
 }
 
-pub fn dumpNodeInto(writer: anytype, indent: u32, self: Self, node_id: NodeId) anyerror!void {
-    const node = self.nodes.items[node_id];
-    const bnf_node = self.bnf.nodes.items[node.bnf_node_id];
-    if (bnf_node == .def_name) {
-        try writer.writeByteNTimes(' ', indent);
-        try std.fmt.format(writer, "{s}: {}\n", .{ bnf_node.def_name.name, std.zig.fmtEscapes(self.source[node.range[0]..node.range[1]]) });
+pub const DumpNode = struct {
+    self: Self,
+    node_id: NodeId,
+
+    pub fn dumpInto(writer: anytype, indent: u32, self: DumpNode) anyerror!void {
+        const node = self.self.nodes.items[self.node_id];
+        const bnf_node = self.self.bnf.nodes.items[node.bnf_node_id];
+        if (bnf_node == .def_name) {
+            try writer.writeByteNTimes(' ', indent);
+            try std.fmt.format(writer, "{s}: {}\n", .{ bnf_node.def_name.name, std.zig.fmtEscapes(self.self.source[node.range[0]..node.range[1]]) });
+        }
+        for (node.children) |child_id_maybe|
+            if (child_id_maybe) |child_id|
+                try u.dumpInto(writer, indent + 2, DumpNode{ .self = self.self, .node_id = child_id });
     }
-    for (node.children) |child_id_maybe|
-        if (child_id_maybe) |child_id|
-            try dumpNodeInto(writer, indent + 2, self, child_id);
-}
+};
