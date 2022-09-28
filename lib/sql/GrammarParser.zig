@@ -199,7 +199,117 @@ pub fn discardWhitespace(self: *Self) void {
     }
 }
 
-pub fn writeRules(self: *Self, writer: anytype) anyerror!void {
+pub fn write(self: *Self, writer: anytype) anyerror!void {
+    try writer.writeAll(
+        \\const std = @import("std");
+        \\const sql = @import("../lib/sql.zig");
+        \\const u = sql.util;
+        \\pub usingnamespace sql.grammar_support;
+        \\
+        \\const Token = sql.grammar_support.Token;
+        \\const Rule = sql.grammar_support.Rule;
+        \\const OneOf = sql.grammar_support.OneOf;
+        \\const Repeat = sql.grammar_support.Repeat;
+        \\const RuleRef = sql.grammar_support.RuleRef;
+        \\
+        \\
+    );
+    try self.writeRules(writer);
+    try writer.writeAll("\n\n");
+    try self.writeTypes(writer);
+}
+
+fn writeRules(self: *Self, writer: anytype) anyerror!void {
+    try writer.writeAll("pub const rules = .{\n");
+    inline for (@typeInfo(sql.grammar_support.Token).Enum.fields) |field| {
+        try std.fmt.format(writer, ".{s} = ", .{field.name});
+        try self.writeRule(writer, .{ .token = @intToEnum(sql.grammar_support.Token, field.value) });
+        try writer.writeAll(",\n");
+    }
+    for (self.rules.items) |rule| {
+        try std.fmt.format(writer, ".{s} = ", .{rule.name});
+        try self.writeRule(writer, rule.rule);
+        try writer.writeAll(",\n");
+    }
+    try writer.writeAll("};");
+}
+
+fn writeRule(self: *Self, writer: anytype, rule: sql.grammar_support.Rule) anyerror!void {
+    switch (rule) {
+        .token => |token| {
+            try std.fmt.format(writer, "Rule{{.token = .{s}}}", .{std.meta.tagName(token)});
+        },
+        .one_of => |one_ofs| {
+            try std.fmt.format(writer, "Rule{{.one_of = &[{}]OneOf{{\n", .{one_ofs.len});
+            for (one_ofs) |one_of| {
+                switch (one_of) {
+                    .choice => |choice| {
+                        try std.fmt.format(writer, ".{{.choice = ", .{});
+                        try self.writeRuleRef(writer, choice);
+                        try writer.writeAll("},\n");
+                    },
+                    .committed_choice => |committed_choice| {
+                        try std.fmt.format(writer, ".{{.committed_choice = .{{\n", .{});
+                        try self.writeRuleRef(writer, committed_choice[0]);
+                        try writer.writeAll("\n,");
+                        try self.writeRuleRef(writer, committed_choice[1]);
+                        try writer.writeAll(",\n}},\n");
+                    },
+                }
+            }
+            try writer.writeAll("}}");
+        },
+        else => try writer.writeAll("TODO"),
+    }
+}
+
+fn writeRuleRef(self: *Self, writer: anytype, rule_ref: sql.grammar_support.RuleRef) anyerror!void {
     _ = self;
-    _ = writer;
+    if (rule_ref.field_name) |field_name|
+        try std.fmt.format(writer, "RuleRef{{.field_name = \"{}\", .rule_name = \"{}\"}}", .{
+            std.zig.fmtEscapes(field_name),
+            std.zig.fmtEscapes(rule_ref.rule_name),
+        })
+    else
+        try std.fmt.format(writer, "RuleRef{{.field_name = {}, .rule_name = \"{}\"}}", .{
+            null,
+            std.zig.fmtEscapes(rule_ref.rule_name),
+        });
+}
+
+fn writeTypes(self: *Self, writer: anytype) anyerror!void {
+    try writer.writeAll("pub const types = .{\n");
+    inline for (@typeInfo(sql.grammar_support.Token).Enum.fields) |field| {
+        try std.fmt.format(writer, ".{s} = ", .{field.name});
+        try self.writeType(writer, .{ .token = @intToEnum(sql.grammar_support.Token, field.value) });
+        try writer.writeAll(",\n");
+    }
+    for (self.rules.items) |rule| {
+        try std.fmt.format(writer, ".{s} = ", .{rule.name});
+        try self.writeType(writer, rule.rule);
+        try writer.writeAll(",\n");
+    }
+    try writer.writeAll("};");
+}
+
+fn writeType(self: *Self, writer: anytype, rule: sql.grammar_support.Rule) anyerror!void {
+    _ = self;
+    switch (rule) {
+        .token => {
+            try writer.writeAll("Token");
+        },
+        .one_of => |one_ofs| {
+            try std.fmt.format(writer, "union(enum) {{\n", .{});
+            for (one_ofs) |one_of| {
+                const rule_ref = switch (one_of) {
+                    .choice => |choice| choice,
+                    .committed_choice => |committed_choice| committed_choice[1],
+                };
+                if (rule_ref.field_name) |field_name|
+                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, rule_ref.rule_name });
+            }
+            try writer.writeAll("}");
+        },
+        else => try writer.writeAll("TODO"),
+    }
 }
