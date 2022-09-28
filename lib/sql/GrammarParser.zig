@@ -3,9 +3,12 @@ const u = @import("./util.zig");
 
 const Self = @This();
 const source = @embedFile("./grammar.txt");
+const keywords = @embedFile("./keywords.txt");
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 rules: u.ArrayList(NamedRule),
+rule_name_defs: u.DeepHashSet([]const u8),
+rule_name_refs: u.DeepHashSet([]const u8),
 tokens: u.DeepHashSet([]const u8),
 pos: usize,
 
@@ -21,6 +24,8 @@ pub fn init(arena: *u.ArenaAllocator) Self {
         .arena = arena,
         .allocator = arena.allocator(),
         .rules = u.ArrayList(NamedRule).init(arena.allocator()),
+        .rule_name_defs = u.DeepHashSet([]const u8).init(arena.allocator()),
+        .rule_name_refs = u.DeepHashSet([]const u8).init(arena.allocator()),
         .tokens = u.DeepHashSet([]const u8).init(arena.allocator()),
         .pos = 0,
     };
@@ -32,6 +37,30 @@ pub fn parseRules(self: *Self) Error!void {
         if (source[self.pos] == 0) break;
         _ = try self.parseNamedRule();
     }
+
+    // rule_name_refs gets filled while parsing, because I'm lazy.
+
+    // fill rule_name_defs
+    for (self.rules.items) |rule|
+        try self.rule_name_defs.put(rule.name, {});
+
+    // Any name that is reffed but not deffed is assumed to be a token.
+    {
+        var iter = self.rule_name_refs.keyIterator();
+        while (iter.next()) |name| {
+            if (!self.rule_name_defs.contains(name.*))
+                try self.tokens.put(name.*, {});
+        }
+    }
+
+    // Add keywords to tokens list too.
+    {
+        var iter = std.mem.tokenize(u8, keywords, "\n");
+        while (iter.next()) |keyword|
+            try self.tokens.put(keyword, {});
+    }
+
+    // Generate a rule for each token.
     var iter = self.tokens.keyIterator();
     while (iter.next()) |token|
         try self.rules.append(.{
@@ -153,14 +182,13 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
         };
     } else {
         const name = self.tryParseName() orelse return null;
+        try self.rule_name_refs.put(name, {});
         var is_token = true;
         for (name) |char|
             switch (char) {
                 'A'...'Z', '_' => {},
                 else => is_token = false,
             };
-        if (is_token)
-            try self.tokens.put(name, {});
         return RuleRef{
             .field_name = if (is_token) null else name,
             .rule_name = name,
@@ -227,16 +255,25 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\
         \\
     );
-    {
-        try writer.writeAll("const Token = enum {");
-        var iter = self.tokens.keyIterator();
-        while (iter.next()) |token|
-            try std.fmt.format(writer, "{s},", .{token.*});
-        try writer.writeAll("};\n\n");
-    }
     try self.writeRules(writer);
     try writer.writeAll("\n\n");
     try self.writeTypes(writer);
+    try writer.writeAll("\n\n");
+    {
+        try writer.writeAll("const Token = enum {eof, err,");
+        var iter = self.tokens.keyIterator();
+        while (iter.next()) |token|
+            try std.fmt.format(writer, "{s},", .{token.*});
+        try writer.writeAll("};");
+    }
+    try writer.writeAll("\n\n");
+    {
+        try writer.writeAll("const keywords = std.ComptimeStringMap(Token, .{\n");
+        var keywords_iter = std.mem.tokenize(u8, keywords, "\n");
+        while (keywords_iter.next()) |keyword|
+            try std.fmt.format(writer, ".{{\"{}\", Token.{s}}},\n", .{ std.zig.fmtEscapes(keyword), keyword });
+        try writer.writeAll("});");
+    }
 }
 
 fn writeRules(self: *Self, writer: anytype) anyerror!void {
