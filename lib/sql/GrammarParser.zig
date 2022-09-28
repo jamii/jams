@@ -245,13 +245,19 @@ pub fn discardWhitespace(self: *Self) void {
 pub fn write(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll(
         \\const std = @import("std");
-        \\const sql = @import("../lib/sql.zig");
+        \\const sql = @import("../sql.zig");
         \\const u = sql.util;
         \\
-        \\const Rule = sql.GrammarParser.Rule;
-        \\const OneOf = sql.GrammarParser.OneOf;
-        \\const Repeat = sql.GrammarParser.Repeat;
-        \\const RuleRef = sql.GrammarParser.RuleRef;
+        \\pub const Rule = union(enum) {
+        \\    token: Token,
+        \\    one_of: []const OneOf,
+        \\    all_of: []const RuleRef,
+        \\    optional: RuleRef,
+        \\    repeat: Repeat,
+        \\};
+        \\pub const OneOf = sql.GrammarParser.OneOf;
+        \\pub const Repeat = sql.GrammarParser.Repeat;
+        \\pub const RuleRef = sql.GrammarParser.RuleRef;
         \\
         \\
     );
@@ -260,7 +266,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     try self.writeTypes(writer);
     try writer.writeAll("\n\n");
     {
-        try writer.writeAll("const Token = enum {eof, err,");
+        try writer.writeAll("pub const Token = enum {eof,");
         var iter = self.tokens.keyIterator();
         while (iter.next()) |token|
             try std.fmt.format(writer, "{s},", .{token.*});
@@ -268,7 +274,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     }
     try writer.writeAll("\n\n");
     {
-        try writer.writeAll("const keywords = std.ComptimeStringMap(Token, .{\n");
+        try writer.writeAll("pub const keywords = std.ComptimeStringMap(Token, .{\n");
         var keywords_iter = std.mem.tokenize(u8, keywords, "\n");
         while (keywords_iter.next()) |keyword|
             try std.fmt.format(writer, ".{{\"{}\", Token.{s}}},\n", .{ std.zig.fmtEscapes(keyword), keyword });
@@ -279,7 +285,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
 fn writeRules(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("pub const rules = struct {\n");
     for (self.rules.items) |rule| {
-        try std.fmt.format(writer, "const {s} = ", .{rule.name});
+        try std.fmt.format(writer, "pub const {s} = ", .{rule.name});
         try self.writeRule(writer, rule.rule);
         try writer.writeAll(";\n");
     }
@@ -354,7 +360,7 @@ fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
 fn writeTypes(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("pub const types = struct {\n");
     for (self.rules.items) |rule| {
-        try std.fmt.format(writer, "const {s} = ", .{rule.name});
+        try std.fmt.format(writer, "pub const {s} = ", .{rule.name});
         try self.writeType(writer, rule.rule);
         try writer.writeAll(";\n");
     }

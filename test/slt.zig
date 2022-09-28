@@ -19,13 +19,10 @@ pub fn main() !void {
     var errors = u.DeepHashMap(TestError, usize).init(allocator);
     defer errors.deinit();
 
-    var bnf_parser = sql.BnfParser.init(allocator);
-    try bnf_parser.parseDefs();
-
     file: while (args.next()) |slt_path| {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
 
-        var database = try sql.Database.init(allocator, &bnf_parser);
+        var database = try sql.Database.init(allocator);
         defer database.deinit();
 
         var bytes = u.ArrayList(u8).init(allocator);
@@ -145,7 +142,7 @@ const SortMode = enum {
 };
 
 fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
-    if (database.runStatement(statement)) |_| {
+    if (database.run(statement)) |_| {
         switch (expected) {
             .ok => return,
             .err => return error.StatementShouldError,
@@ -154,7 +151,7 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
         switch (expected) {
             .ok => return err,
             .err => switch (err) {
-                error.Unimplemented, error.NoParse, error.AmbiguousParse => return err,
+                error.Unimplemented, error.ParseError => return err,
                 else => return,
             },
         }
@@ -165,7 +162,7 @@ fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type,
     _ = label; // TODO handle labels
     // TODO handle hashing
 
-    const rows = try database.runQuery(query);
+    const rows = try database.run(query);
 
     for (rows) |row| {
         if (row.len != types.len)

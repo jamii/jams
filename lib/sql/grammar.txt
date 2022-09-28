@@ -1,19 +1,23 @@
+statement_or_query =
+| statement
+| query;
 statement = 
 | CREATE => create
 | INSERT => insert;
 create =
 | (CREATE TABLE) => create_table;
-create_table = CREATE TABLE name OPEN_PAREN column_specs CLOSE_PAREN;
-insert = INSERT INTO name OPEN_PAREN column_specs CLOSE_PAREN table_expr;
+create_table = CREATE TABLE name open_paren column_specs close_paren;
+insert = INSERT INTO name open_paren column_specs close_paren table_expr;
 table_expr = 
 | VALUES => table_expr_values;
-table_expr_values = VALUES OPEN_PAREN value_exprs CLOSE_PAREN;
-value_exprs = value_expr*COMMA;
+table_expr_values = VALUES open_paren value_exprs close_paren;
+value_exprs = value_expr*comma;
 value_expr =
 | value;
 value =
-| number;
-columns_specs = column_spec*COMMA;
+| number
+| string;
+columns_specs = column_spec*comma;
 column_spec = name typ?;
 typ = 
 | INTEGER;

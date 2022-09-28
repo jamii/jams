@@ -7,14 +7,18 @@ const types = sql.grammar.types;
 const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
-tokens: [:sql.GrammarParser.Token.EOF]const sql.GrammarParser.Token,
+// Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
+tokens: []const sql.grammar.Token,
 pos: usize,
 
 pub const Error = error{
     OutOfMemory,
 };
 
-pub fn init(arena: *u.ArenaAllocator, tokens: []const u8) void {
+pub fn init(
+    arena: *u.ArenaAllocator,
+    tokens: []const sql.grammar.Token,
+) Self {
     return Self{
         .arena = arena,
         .allocator = arena.allocator(),
@@ -43,7 +47,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                             self.pos = start_pos;
                         }
                     },
-                    .commited_choice => |rule_refs| {
+                    .committed_choice => |rule_refs| {
                         if (try self.parse(rule_refs[0].rule_name)) |_| {
                             // Reset after lookahead
                             self.pos = start_pos;

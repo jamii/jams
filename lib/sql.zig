@@ -1,6 +1,7 @@
 pub const util = @import("sql/util.zig");
 pub const GrammarParser = @import("sql/GrammarParser.zig");
 pub const grammar = @import("sql/grammar.zig");
+pub const Tokenizer = @import("sql/Tokenizer.zig");
 pub const Parser = @import("sql/Parser.zig");
 
 const std = @import("std");
@@ -19,17 +20,15 @@ pub const Database = struct {
         _ = self;
     }
 
-    pub fn runStatement(self: *Database, statement: []const u8) !void {
-        var parser = Parser.init(self.allocator, self.bnf, statement);
-        defer parser.deinit();
-        _ = try parser.parse(self.bnf.sql_procedure_statement.?);
-        return error.Unimplemented;
-    }
-
-    pub fn runQuery(self: *Database, query: []const u8) ![]const []const Value {
-        var parser = Parser.init(self.allocator, self.bnf, query);
-        defer parser.deinit();
-        _ = try parser.parse(self.bnf.query_specification.?);
+    pub fn run(self: *Database, sql: []const u8) ![]const []const Value {
+        var arena = u.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const sql_z = try arena.allocator().dupeZ(u8, sql);
+        var tokenizer = Tokenizer.init(sql_z);
+        const tokens = try tokenizer.tokenize(arena.allocator());
+        var parser = Parser.init(&arena, tokens);
+        const parsed = (try parser.parse("statement_or_query")) orelse return error.ParseError;
+        u.dump(parsed);
         return error.Unimplemented;
     }
 };
