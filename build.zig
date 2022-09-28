@@ -5,6 +5,9 @@ pub fn build(b: *std.build.Builder) !void {
     const mode = b.standardReleaseOptions();
     var target = b.standardTargetOptions(.{});
 
+    const generate_grammar = addBin(b, mode, target, "generate_grammar", "Generate the sql grammar", "./bin/generate_grammar.zig");
+    generate_grammar.run.addArgs(b.args orelse &[0][]const u8{});
+
     const test_slt = addBin(b, mode, target, "test_slt", "Run the sqlite logic test suite", "./test/slt.zig");
     test_slt.run.addArgs(b.args orelse &[0][]const u8{});
 
