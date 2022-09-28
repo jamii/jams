@@ -7,7 +7,6 @@ pub fn main() !void {
 
     var parser = GrammarParser.init(&arena);
     try parser.parseRules();
-    u.dump(parser.rules.items);
 
     var bytes = u.ArrayList(u8).init(arena.allocator());
     try parser.write(bytes.writer());
@@ -21,6 +20,7 @@ pub fn main() !void {
         // Write the formatted version
         const formatted = try tree.render(arena.allocator());
         try file.writeAll(formatted);
+        std.debug.print("Generated!\n", .{});
     } else {
         // Source is invalid, but write it anyway for debugging
         try file.writeAll(bytes.items);

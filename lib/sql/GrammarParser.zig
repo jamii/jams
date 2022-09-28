@@ -6,6 +6,7 @@ const source = @embedFile("./grammar.txt");
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 rules: u.ArrayList(NamedRule),
+tokens: u.DeepHashSet([]const u8),
 pos: usize,
 
 const Error = error{OutOfMemory};
@@ -20,6 +21,7 @@ pub fn init(arena: *u.ArenaAllocator) Self {
         .arena = arena,
         .allocator = arena.allocator(),
         .rules = u.ArrayList(NamedRule).init(arena.allocator()),
+        .tokens = u.DeepHashSet([]const u8).init(arena.allocator()),
         .pos = 0,
     };
 }
@@ -30,6 +32,12 @@ pub fn parseRules(self: *Self) Error!void {
         if (source[self.pos] == 0) break;
         _ = try self.parseNamedRule();
     }
+    var iter = self.tokens.keyIterator();
+    while (iter.next()) |token|
+        try self.rules.append(.{
+            .name = token.*,
+            .rule = .{ .token = token.* },
+        });
 }
 
 fn parseNamedRule(self: *Self) Error!void {
@@ -151,6 +159,8 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
                 'A'...'Z', '_' => {},
                 else => is_token = false,
             };
+        if (is_token)
+            try self.tokens.put(name, {});
         return RuleRef{
             .field_name = if (is_token) null else name,
             .rule_name = name,
@@ -210,7 +220,6 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\const sql = @import("../lib/sql.zig");
         \\const u = sql.util;
         \\
-        \\const Token = sql.GrammarParser.Token;
         \\const Rule = sql.GrammarParser.Rule;
         \\const OneOf = sql.GrammarParser.OneOf;
         \\const Repeat = sql.GrammarParser.Repeat;
@@ -218,6 +227,13 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\
         \\
     );
+    {
+        try writer.writeAll("const Token = enum {");
+        var iter = self.tokens.keyIterator();
+        while (iter.next()) |token|
+            try std.fmt.format(writer, "{s},", .{token.*});
+        try writer.writeAll("};\n\n");
+    }
     try self.writeRules(writer);
     try writer.writeAll("\n\n");
     try self.writeTypes(writer);
@@ -225,11 +241,6 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
 
 fn writeRules(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("pub const rules = struct {\n");
-    inline for (@typeInfo(Token).Enum.fields) |field| {
-        try std.fmt.format(writer, "const {s} = ", .{field.name});
-        try self.writeRule(writer, .{ .token = @intToEnum(Token, field.value) });
-        try writer.writeAll(";\n");
-    }
     for (self.rules.items) |rule| {
         try std.fmt.format(writer, "const {s} = ", .{rule.name});
         try self.writeRule(writer, rule.rule);
@@ -241,7 +252,7 @@ fn writeRules(self: *Self, writer: anytype) anyerror!void {
 fn writeRule(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     switch (rule) {
         .token => |token| {
-            try std.fmt.format(writer, "Rule{{.token = .{s}}}", .{std.meta.tagName(token)});
+            try std.fmt.format(writer, "Rule{{.token = .{s}}}", .{token});
         },
         .one_of => |one_ofs| {
             try std.fmt.format(writer, "Rule{{.one_of = &[_]OneOf{{\n", .{});
@@ -305,11 +316,6 @@ fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
 
 fn writeTypes(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("pub const types = struct {\n");
-    inline for (@typeInfo(Token).Enum.fields) |field| {
-        try std.fmt.format(writer, "const {s} = ", .{field.name});
-        try self.writeType(writer, .{ .token = @intToEnum(Token, field.value) });
-        try writer.writeAll(";\n");
-    }
     for (self.rules.items) |rule| {
         try std.fmt.format(writer, "const {s} = ", .{rule.name});
         try self.writeType(writer, rule.rule);
@@ -368,12 +374,8 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     }
 }
 
-pub const Token = enum {
-    EOF,
-};
-
 pub const Rule = union(enum) {
-    token: Token,
+    token: []const u8,
     one_of: []const OneOf,
     all_of: []const RuleRef,
     optional: RuleRef,
