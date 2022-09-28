@@ -1,11 +1,11 @@
 const std = @import("std");
-const sql = @import("../lib/sql.zig");
-const u = sql.util;
+const GrammarParser = @import("../lib/sql/GrammarParser.zig");
+const u = @import("../lib/sql/util.zig");
 
 pub fn main() !void {
     var arena = u.ArenaAllocator.init(std.heap.page_allocator);
 
-    var parser = sql.GrammarParser.init(&arena);
+    var parser = GrammarParser.init(&arena);
     try parser.parseRules();
     u.dump(parser.rules.items);
 

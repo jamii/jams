@@ -1,5 +1,4 @@
 const std = @import("std");
-const sql = @import("../sql.zig");
 
 pub const Allocator = std.mem.Allocator;
 pub const ArenaAllocator = std.heap.ArenaAllocator;
@@ -72,9 +71,10 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         }
         try writer.writeByteNTimes(' ', indent);
         try writer.writeAll(")");
-    } else if (T == sql.Parser) {
-        try sql.Parser.dumpInto(writer, indent, thing);
     }
+    //else if (T == sql.Parser) {
+    //    try sql.Parser.dumpInto(writer, indent, thing);
+    //}
     //else if (T == sql.Parser.DumpNode) {
     //    try sql.Parser.DumpNode.dumpInto(writer, indent, thing);
     //}

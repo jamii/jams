@@ -1,6 +1,5 @@
 const std = @import("std");
-const sql = @import("../sql.zig");
-const u = sql.util;
+const u = @import("./util.zig");
 
 const Self = @This();
 const source = @embedFile("./grammar.txt");
