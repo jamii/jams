@@ -16,6 +16,7 @@ pub const Node = struct {
     bnf_node_id: sql.BnfParser.NodeId,
     range: [2]usize,
     children: [2]?NodeId,
+    hash: u128,
 };
 
 pub const MemoKey = struct {
@@ -25,7 +26,7 @@ pub const MemoKey = struct {
 
 pub const MemoValue = struct {
     was_used: bool,
-    node_ids: u.DeepHashSet(NodeId),
+    node_ids: u.DeepHashMap(u128, NodeId),
 };
 
 const Error = error{
@@ -172,30 +173,49 @@ fn parseMemo(self: *Self, start_pos: usize, bnf_node_id: sql.BnfParser.NodeId) E
     if (self.memo.getPtr(memo_key)) |memo_value| {
         memo_value.was_used = true;
         {
-            var iter = memo_value.node_ids.keyIterator();
+            var iter = memo_value.node_ids.valueIterator();
             while (iter.next()) |node_id| try result.append(node_id.*);
         }
     } else {
+        var old_node_ids = u.DeepHashMap(u128, NodeId).init(self.allocator);
+        defer old_node_ids.deinit();
         try self.memo.put(memo_key, MemoValue{
             .was_used = false,
-            .node_ids = u.DeepHashSet(NodeId).init(self.arena.allocator()),
+            .node_ids = u.DeepHashMap(u128, NodeId).init(self.arena.allocator()),
         });
         while (true) {
-            const results_count_before = self.memo.get(memo_key).?.node_ids.count();
             const node_ids = try self.parseNode(start_pos, bnf_node_id);
             const memo_value = self.memo.getPtr(memo_key).?;
-            for (node_ids) |node_id| try memo_value.node_ids.put(node_id, {});
-            const results_count_after = memo_value.node_ids.count();
-            if (results_count_before == results_count_after or
+
+            var new_node_ids = u.DeepHashMap(u128, NodeId).init(self.arena.allocator());
+            for (node_ids) |node_id| {
+                const hash = self.getHash(node_id);
+                const entry = try old_node_ids.getOrPut(hash);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = node_id;
+                    try new_node_ids.put(hash, node_id);
+                }
+            }
+            if (new_node_ids.count() == 0 or
                 !memo_value.was_used)
             {
                 // No further improvement to be had
-                var iter = memo_value.node_ids.keyIterator();
+                var iter = old_node_ids.valueIterator();
                 while (iter.next()) |node_id| try result.append(node_id.*);
                 break;
+            } else {
+                try self.memo.put(memo_key, MemoValue{
+                    .was_used = false,
+                    .node_ids = new_node_ids,
+                });
             }
         }
     }
+    //if (result.items.len > 0) {
+    //    u.dump(.{ .start_pos = start_pos, .bnf_node_id = bnf_node_id, .bnf_node = self.bnf.nodes.items[bnf_node_id], .result = result.items });
+    //} else {
+    //    u.dump(.{ .start_pos = start_pos, .bnf_node_id = bnf_node_id, .bnf_node = self.bnf.nodes.items[bnf_node_id] });
+    //}
     return result.toOwnedSlice();
 }
 
