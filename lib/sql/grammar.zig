@@ -12,13 +12,253 @@ pub const Rule = union(enum) {
 pub const OneOf = sql.GrammarParser.OneOf;
 pub const Repeat = sql.GrammarParser.Repeat;
 pub const RuleRef = sql.GrammarParser.RuleRef;
-pub const TokenAndRange = struct {
-    token: Token,
-    range: [2]usize,
+
+pub const Node = union(enum) {
+    anon_0: @field(types, "anon_0"),
+    root: @field(types, "root"),
+    statement_or_query: @field(types, "statement_or_query"),
+    anon_3: @field(types, "anon_3"),
+    create: @field(types, "create"),
+    create_table: @field(types, "create_table"),
+    insert: @field(types, "insert"),
+    table_expr: @field(types, "table_expr"),
+    values: @field(types, "values"),
+    anon_9: @field(types, "anon_9"),
+    column_specs: @field(types, "column_specs"),
+    anon_11: @field(types, "anon_11"),
+    column_spec: @field(types, "column_spec"),
+    typ: @field(types, "typ"),
+    anon_14: @field(types, "anon_14"),
+    anon_15: @field(types, "anon_15"),
+    anon_16: @field(types, "anon_16"),
+    anon_17: @field(types, "anon_17"),
+    anon_18: @field(types, "anon_18"),
+    anon_19: @field(types, "anon_19"),
+    anon_20: @field(types, "anon_20"),
+    anon_21: @field(types, "anon_21"),
+    select: @field(types, "select"),
+    distinct_or_all: @field(types, "distinct_or_all"),
+    anon_24: @field(types, "anon_24"),
+    result_columns: @field(types, "result_columns"),
+    result_column: @field(types, "result_column"),
+    anon_27: @field(types, "anon_27"),
+    from: @field(types, "from"),
+    table_or_subquery_or_join: @field(types, "table_or_subquery_or_join"),
+    anon_30: @field(types, "anon_30"),
+    tables_or_subqueries: @field(types, "tables_or_subqueries"),
+    table_or_subquery: @field(types, "table_or_subquery"),
+    where: @field(types, "where"),
+    group_by: @field(types, "group_by"),
+    having: @field(types, "having"),
+    window: @field(types, "window"),
+    order_by: @field(types, "order_by"),
+    ordering_term: @field(types, "ordering_term"),
+    limit: @field(types, "limit"),
+    anon_40: @field(types, "anon_40"),
+    exprs: @field(types, "exprs"),
+    expr: @field(types, "expr"),
+    anon_43: @field(types, "anon_43"),
+    anon_44: @field(types, "anon_44"),
+    anon_45: @field(types, "anon_45"),
+    case: @field(types, "case"),
+    case_when: @field(types, "case_when"),
+    case_else: @field(types, "case_else"),
+    anon_49: @field(types, "anon_49"),
+    function_call: @field(types, "function_call"),
+    function_name: @field(types, "function_name"),
+    anon_52: @field(types, "anon_52"),
+    anon_53: @field(types, "anon_53"),
+    anon_54: @field(types, "anon_54"),
+    function_args: @field(types, "function_args"),
+    value: @field(types, "value"),
+    tokens: @field(types, "tokens"),
+    FROM: @field(types, "FROM"),
+    string: @field(types, "string"),
+    not_greater_than: @field(types, "not_greater_than"),
+    DO: @field(types, "DO"),
+    INSTEAD: @field(types, "INSTEAD"),
+    TEMPORARY: @field(types, "TEMPORARY"),
+    DELETE: @field(types, "DELETE"),
+    DISTINCT: @field(types, "DISTINCT"),
+    when: @field(types, "when"),
+    WINDOW: @field(types, "WINDOW"),
+    NATURAL: @field(types, "NATURAL"),
+    BY: @field(types, "BY"),
+    COLLATE: @field(types, "COLLATE"),
+    IF: @field(types, "IF"),
+    DEFERRED: @field(types, "DEFERRED"),
+    WHERE: @field(types, "WHERE"),
+    args: @field(types, "args"),
+    modulus: @field(types, "modulus"),
+    ATTACH: @field(types, "ATTACH"),
+    GLOB: @field(types, "GLOB"),
+    bitwise_not: @field(types, "bitwise_not"),
+    NOT: @field(types, "NOT"),
+    PRAGMA: @field(types, "PRAGMA"),
+    FILTER: @field(types, "FILTER"),
+    THEN: @field(types, "THEN"),
+    tables_or_subqueries_or_join: @field(types, "tables_or_subqueries_or_join"),
+    WITH: @field(types, "WITH"),
+    UNBOUNDED: @field(types, "UNBOUNDED"),
+    FOR: @field(types, "FOR"),
+    join_clause: @field(types, "join_clause"),
+    shift_left: @field(types, "shift_left"),
+    EXISTS: @field(types, "EXISTS"),
+    AND: @field(types, "AND"),
+    double_equal: @field(types, "double_equal"),
+    BETWEEN: @field(types, "BETWEEN"),
+    INSERT: @field(types, "INSERT"),
+    CASCADE: @field(types, "CASCADE"),
+    INITIALLY: @field(types, "INITIALLY"),
+    RECURSIVE: @field(types, "RECURSIVE"),
+    REPLACE: @field(types, "REPLACE"),
+    CREATE: @field(types, "CREATE"),
+    open_paren: @field(types, "open_paren"),
+    UNIQUE: @field(types, "UNIQUE"),
+    greater_than: @field(types, "greater_than"),
+    WHEN: @field(types, "WHEN"),
+    NOTHING: @field(types, "NOTHING"),
+    OF: @field(types, "OF"),
+    semicolon: @field(types, "semicolon"),
+    RESTRICT: @field(types, "RESTRICT"),
+    DEFERRABLE: @field(types, "DEFERRABLE"),
+    NULLS: @field(types, "NULLS"),
+    ON: @field(types, "ON"),
+    close_paren: @field(types, "close_paren"),
+    EXPLAIN: @field(types, "EXPLAIN"),
+    INTERSECT: @field(types, "INTERSECT"),
+    FULL: @field(types, "FULL"),
+    PLAN: @field(types, "PLAN"),
+    PRIMARY: @field(types, "PRIMARY"),
+    name: @field(types, "name"),
+    EACH: @field(types, "EACH"),
+    OFFSET: @field(types, "OFFSET"),
+    ROLLBACK: @field(types, "ROLLBACK"),
+    shift_right: @field(types, "shift_right"),
+    SET: @field(types, "SET"),
+    TRANSACTION: @field(types, "TRANSACTION"),
+    bitwise_and: @field(types, "bitwise_and"),
+    COMMIT: @field(types, "COMMIT"),
+    VALUES: @field(types, "VALUES"),
+    EXCLUSIVE: @field(types, "EXCLUSIVE"),
+    ALL: @field(types, "ALL"),
+    ADD: @field(types, "ADD"),
+    ACTION: @field(types, "ACTION"),
+    dot: @field(types, "dot"),
+    AFTER: @field(types, "AFTER"),
+    CONFLICT: @field(types, "CONFLICT"),
+    DEFAULT: @field(types, "DEFAULT"),
+    INNER: @field(types, "INNER"),
+    IS: @field(types, "IS"),
+    IMMEDIATE: @field(types, "IMMEDIATE"),
+    SAVEPOINT: @field(types, "SAVEPOINT"),
+    FOLLOWING: @field(types, "FOLLOWING"),
+    RAISE: @field(types, "RAISE"),
+    HAVING: @field(types, "HAVING"),
+    TEMP: @field(types, "TEMP"),
+    less_than: @field(types, "less_than"),
+    CHECK: @field(types, "CHECK"),
+    RETURNING: @field(types, "RETURNING"),
+    INDEX: @field(types, "INDEX"),
+    CONSTRAINT: @field(types, "CONSTRAINT"),
+    then: @field(types, "then"),
+    CURRENT_TIME: @field(types, "CURRENT_TIME"),
+    ISNULL: @field(types, "ISNULL"),
+    ROW: @field(types, "ROW"),
+    plus: @field(types, "plus"),
+    FAIL: @field(types, "FAIL"),
+    USING: @field(types, "USING"),
+    NOTNULL: @field(types, "NOTNULL"),
+    CAST: @field(types, "CAST"),
+    AS: @field(types, "AS"),
+    SELECT: @field(types, "SELECT"),
+    COLUMN: @field(types, "COLUMN"),
+    END: @field(types, "END"),
+    IN: @field(types, "IN"),
+    INDEXED: @field(types, "INDEXED"),
+    LEFT: @field(types, "LEFT"),
+    QUERY: @field(types, "QUERY"),
+    BEFORE: @field(types, "BEFORE"),
+    equal: @field(types, "equal"),
+    OTHERS: @field(types, "OTHERS"),
+    REFERENCES: @field(types, "REFERENCES"),
+    ORDER: @field(types, "ORDER"),
+    ROWS: @field(types, "ROWS"),
+    comma: @field(types, "comma"),
+    TIES: @field(types, "TIES"),
+    LIMIT: @field(types, "LIMIT"),
+    bitwise_or: @field(types, "bitwise_or"),
+    ABORT: @field(types, "ABORT"),
+    DETACH: @field(types, "DETACH"),
+    DROP: @field(types, "DROP"),
+    LAST: @field(types, "LAST"),
+    not_equal: @field(types, "not_equal"),
+    INTO: @field(types, "INTO"),
+    CURRENT_TIMESTAMP: @field(types, "CURRENT_TIMESTAMP"),
+    PRECEDING: @field(types, "PRECEDING"),
+    RANGE: @field(types, "RANGE"),
+    MATERIALIZED: @field(types, "MATERIALIZED"),
+    OUTER: @field(types, "OUTER"),
+    GENERATED: @field(types, "GENERATED"),
+    string_concat: @field(types, "string_concat"),
+    REGEXP: @field(types, "REGEXP"),
+    AUTOINCREMENT: @field(types, "AUTOINCREMENT"),
+    CROSS: @field(types, "CROSS"),
+    CURRENT_DATE: @field(types, "CURRENT_DATE"),
+    BEGIN: @field(types, "BEGIN"),
+    ASC: @field(types, "ASC"),
+    EXCEPT: @field(types, "EXCEPT"),
+    OR: @field(types, "OR"),
+    RIGHT: @field(types, "RIGHT"),
+    TRIGGER: @field(types, "TRIGGER"),
+    EXCLUDE: @field(types, "EXCLUDE"),
+    UPDATE: @field(types, "UPDATE"),
+    ESCAPE: @field(types, "ESCAPE"),
+    RELEASE: @field(types, "RELEASE"),
+    LIKE: @field(types, "LIKE"),
+    FIRST: @field(types, "FIRST"),
+    minus: @field(types, "minus"),
+    TODO: @field(types, "TODO"),
+    eof: @field(types, "eof"),
+    WITHOUT: @field(types, "WITHOUT"),
+    GROUPS: @field(types, "GROUPS"),
+    number: @field(types, "number"),
+    GROUP: @field(types, "GROUP"),
+    CURRENT: @field(types, "CURRENT"),
+    FOREIGN: @field(types, "FOREIGN"),
+    KEY: @field(types, "KEY"),
+    DATABASE: @field(types, "DATABASE"),
+    REINDEX: @field(types, "REINDEX"),
+    UNION: @field(types, "UNION"),
+    not_less_than: @field(types, "not_less_than"),
+    OVER: @field(types, "OVER"),
+    RENAME: @field(types, "RENAME"),
+    PARTITION: @field(types, "PARTITION"),
+    forward_slash: @field(types, "forward_slash"),
+    ANALYZE: @field(types, "ANALYZE"),
+    VACUUM: @field(types, "VACUUM"),
+    DESC: @field(types, "DESC"),
+    VIRTUAL: @field(types, "VIRTUAL"),
+    JOIN: @field(types, "JOIN"),
+    NULL: @field(types, "NULL"),
+    ALWAYS: @field(types, "ALWAYS"),
+    TO: @field(types, "TO"),
+    star: @field(types, "star"),
+    MATCH: @field(types, "MATCH"),
+    ELSE: @field(types, "ELSE"),
+    greater_than_or_equal: @field(types, "greater_than_or_equal"),
+    VIEW: @field(types, "VIEW"),
+    CASE: @field(types, "CASE"),
+    ALTER: @field(types, "ALTER"),
+    IGNORE: @field(types, "IGNORE"),
+    TABLE: @field(types, "TABLE"),
+    less_than_or_equal: @field(types, "less_than_or_equal"),
+    NO: @field(types, "NO"),
 };
+
 pub const rules = struct {
     pub const anon_0 = Rule{ .optional = RuleRef{ .field_name = "semicolon", .rule_name = "semicolon" } };
-    pub const sql = Rule{ .all_of = &[_]RuleRef{
+    pub const root = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "statement_or_query", .rule_name = "statement_or_query" },
         RuleRef{ .field_name = "semicolon", .rule_name = "anon_0" },
         RuleRef{ .field_name = "eof", .rule_name = "eof" },
@@ -425,186 +665,186 @@ pub const rules = struct {
 };
 
 pub const types = struct {
-    pub const anon_0 = ?semicolon;
-    pub const sql = struct {
-        statement_or_query: *statement_or_query,
-        semicolon: *anon_0,
-        eof: *eof,
+    pub const anon_0 = ?sql.Parser.NodeId("semicolon");
+    pub const root = struct {
+        statement_or_query: sql.Parser.NodeId("statement_or_query"),
+        semicolon: sql.Parser.NodeId("anon_0"),
+        eof: sql.Parser.NodeId("eof"),
     };
     pub const statement_or_query = union(enum) {
-        select: select,
-        values: values,
-        create: create,
-        insert: insert,
+        select: sql.Parser.NodeId("select"),
+        values: sql.Parser.NodeId("values"),
+        create: sql.Parser.NodeId("create"),
+        insert: sql.Parser.NodeId("insert"),
     };
     pub const anon_3 = struct {};
     pub const create = union(enum) {
-        create_table: create_table,
+        create_table: sql.Parser.NodeId("create_table"),
     };
     pub const create_table = struct {
-        name: *name,
-        open_paren: *open_paren,
-        column_specs: *column_specs,
-        close_paren: *close_paren,
+        name: sql.Parser.NodeId("name"),
+        open_paren: sql.Parser.NodeId("open_paren"),
+        column_specs: sql.Parser.NodeId("column_specs"),
+        close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const insert = struct {
-        name: *name,
-        open_paren: *open_paren,
-        column_specs: *column_specs,
-        close_paren: *close_paren,
-        table_expr: *table_expr,
+        name: sql.Parser.NodeId("name"),
+        open_paren: sql.Parser.NodeId("open_paren"),
+        column_specs: sql.Parser.NodeId("column_specs"),
+        close_paren: sql.Parser.NodeId("close_paren"),
+        table_expr: sql.Parser.NodeId("table_expr"),
     };
     pub const table_expr = union(enum) {
-        values: values,
+        values: sql.Parser.NodeId("values"),
     };
     pub const values = struct {
-        open_paren: *open_paren,
-        exprs: *exprs,
-        close_paren: *close_paren,
+        open_paren: sql.Parser.NodeId("open_paren"),
+        exprs: sql.Parser.NodeId("exprs"),
+        close_paren: sql.Parser.NodeId("close_paren"),
     };
-    pub const anon_9 = []const column_spec;
+    pub const anon_9 = []const sql.Parser.NodeId("column_spec");
     pub const column_specs = struct {
-        column_spec: *anon_9,
+        column_spec: sql.Parser.NodeId("anon_9"),
     };
-    pub const anon_11 = ?typ;
+    pub const anon_11 = ?sql.Parser.NodeId("typ");
     pub const column_spec = struct {
-        name: *name,
-        typ: *anon_11,
+        name: sql.Parser.NodeId("name"),
+        typ: sql.Parser.NodeId("anon_11"),
     };
     pub const typ = struct {
-        name: *name,
+        name: sql.Parser.NodeId("name"),
     };
-    pub const anon_14 = ?distinct_or_all;
-    pub const anon_15 = ?from;
-    pub const anon_16 = ?where;
-    pub const anon_17 = ?group_by;
-    pub const anon_18 = ?having;
-    pub const anon_19 = ?window;
-    pub const anon_20 = ?order_by;
-    pub const anon_21 = ?limit;
+    pub const anon_14 = ?sql.Parser.NodeId("distinct_or_all");
+    pub const anon_15 = ?sql.Parser.NodeId("from");
+    pub const anon_16 = ?sql.Parser.NodeId("where");
+    pub const anon_17 = ?sql.Parser.NodeId("group_by");
+    pub const anon_18 = ?sql.Parser.NodeId("having");
+    pub const anon_19 = ?sql.Parser.NodeId("window");
+    pub const anon_20 = ?sql.Parser.NodeId("order_by");
+    pub const anon_21 = ?sql.Parser.NodeId("limit");
     pub const select = struct {
-        distinct_or_all: *anon_14,
-        result_columns: *result_columns,
-        from: *anon_15,
-        where: *anon_16,
-        group_by: *anon_17,
-        having: *anon_18,
-        window: *anon_19,
-        order_by: *anon_20,
-        limit: *anon_21,
+        distinct_or_all: sql.Parser.NodeId("anon_14"),
+        result_columns: sql.Parser.NodeId("result_columns"),
+        from: sql.Parser.NodeId("anon_15"),
+        where: sql.Parser.NodeId("anon_16"),
+        group_by: sql.Parser.NodeId("anon_17"),
+        having: sql.Parser.NodeId("anon_18"),
+        window: sql.Parser.NodeId("anon_19"),
+        order_by: sql.Parser.NodeId("anon_20"),
+        limit: sql.Parser.NodeId("anon_21"),
     };
     pub const distinct_or_all = enum {
         DISTINCT,
         ALL,
     };
-    pub const anon_24 = []const result_column;
+    pub const anon_24 = []const sql.Parser.NodeId("result_column");
     pub const result_columns = struct {
-        result_column: *anon_24,
+        result_column: sql.Parser.NodeId("anon_24"),
     };
     pub const result_column = struct {
-        expr: *expr,
+        expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_27 = []const tables_or_subqueries_or_join;
+    pub const anon_27 = []const sql.Parser.NodeId("tables_or_subqueries_or_join");
     pub const from = struct {
-        tables_or_subqueries_or_join: *anon_27,
+        tables_or_subqueries_or_join: sql.Parser.NodeId("anon_27"),
     };
     pub const table_or_subquery_or_join = union(enum) {
-        tables_or_subqueries: tables_or_subqueries,
-        join_clause: join_clause,
+        tables_or_subqueries: sql.Parser.NodeId("tables_or_subqueries"),
+        join_clause: sql.Parser.NodeId("join_clause"),
     };
-    pub const anon_30 = []const table_or_subquery;
+    pub const anon_30 = []const sql.Parser.NodeId("table_or_subquery");
     pub const tables_or_subqueries = struct {
-        table_or_subquery: *anon_30,
+        table_or_subquery: sql.Parser.NodeId("anon_30"),
     };
     pub const table_or_subquery = struct {};
     pub const where = struct {
-        expr: *expr,
+        expr: sql.Parser.NodeId("expr"),
     };
     pub const group_by = struct {
-        exprs: *exprs,
+        exprs: sql.Parser.NodeId("exprs"),
     };
     pub const having = struct {
-        expr: *expr,
+        expr: sql.Parser.NodeId("expr"),
     };
     pub const window = struct {};
     pub const order_by = struct {
-        ordering_term: *ordering_term,
+        ordering_term: sql.Parser.NodeId("ordering_term"),
     };
     pub const ordering_term = struct {
-        expr: *expr,
+        expr: sql.Parser.NodeId("expr"),
     };
     pub const limit = struct {
-        exprs: *exprs,
+        exprs: sql.Parser.NodeId("exprs"),
     };
-    pub const anon_40 = []const expr;
+    pub const anon_40 = []const sql.Parser.NodeId("expr");
     pub const exprs = struct {
-        expr: *anon_40,
+        expr: sql.Parser.NodeId("anon_40"),
     };
     pub const expr = union(enum) {
-        case: case,
-        function_call: function_call,
-        value: value,
+        case: sql.Parser.NodeId("case"),
+        function_call: sql.Parser.NodeId("function_call"),
+        value: sql.Parser.NodeId("value"),
     };
-    pub const anon_43 = ?expr;
-    pub const anon_44 = []const case_when;
-    pub const anon_45 = ?case_else;
+    pub const anon_43 = ?sql.Parser.NodeId("expr");
+    pub const anon_44 = []const sql.Parser.NodeId("case_when");
+    pub const anon_45 = ?sql.Parser.NodeId("case_else");
     pub const case = struct {
-        expr: *anon_43,
-        case_when: *anon_44,
-        case_else: *anon_45,
+        expr: sql.Parser.NodeId("anon_43"),
+        case_when: sql.Parser.NodeId("anon_44"),
+        case_else: sql.Parser.NodeId("anon_45"),
     };
     pub const case_when = struct {
-        when: *expr,
-        then: *expr,
+        when: sql.Parser.NodeId("expr"),
+        then: sql.Parser.NodeId("expr"),
     };
     pub const case_else = struct {
-        expr: *expr,
+        expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_49 = ?function_args;
+    pub const anon_49 = ?sql.Parser.NodeId("function_args");
     pub const function_call = struct {
-        function_name: *function_name,
-        open_paren: *open_paren,
-        function_args: *anon_49,
-        close_paren: *close_paren,
+        function_name: sql.Parser.NodeId("function_name"),
+        open_paren: sql.Parser.NodeId("open_paren"),
+        function_args: sql.Parser.NodeId("anon_49"),
+        close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const function_name = struct {
-        name: *name,
+        name: sql.Parser.NodeId("name"),
     };
-    pub const anon_52 = ?DISTINCT;
-    pub const anon_53 = []const expr;
+    pub const anon_52 = ?sql.Parser.NodeId("DISTINCT");
+    pub const anon_53 = []const sql.Parser.NodeId("expr");
     pub const anon_54 = struct {
-        expr: *anon_53,
+        expr: sql.Parser.NodeId("anon_53"),
     };
     pub const function_args = union(enum) {
-        args: anon_54,
-        star: star,
+        args: sql.Parser.NodeId("anon_54"),
+        star: sql.Parser.NodeId("star"),
     };
     pub const value = union(enum) {
-        number: number,
-        string: string,
+        number: sql.Parser.NodeId("number"),
+        string: sql.Parser.NodeId("string"),
     };
     pub const tokens = union(enum) {
-        less_than: less_than,
-        greater_than: greater_than,
-        less_than_or_equal: less_than_or_equal,
-        greater_than_or_equal: greater_than_or_equal,
-        not_less_than: not_less_than,
-        not_greater_than: not_greater_than,
-        equal: equal,
-        double_equal: double_equal,
-        not_equal: not_equal,
-        plus: plus,
-        minus: minus,
-        star: star,
-        forward_slash: forward_slash,
-        dot: dot,
-        modulus: modulus,
-        bitwise_and: bitwise_and,
-        bitwise_or: bitwise_or,
-        bitwise_not: bitwise_not,
-        string_concat: string_concat,
-        shift_left: shift_left,
-        shift_right: shift_right,
+        less_than: sql.Parser.NodeId("less_than"),
+        greater_than: sql.Parser.NodeId("greater_than"),
+        less_than_or_equal: sql.Parser.NodeId("less_than_or_equal"),
+        greater_than_or_equal: sql.Parser.NodeId("greater_than_or_equal"),
+        not_less_than: sql.Parser.NodeId("not_less_than"),
+        not_greater_than: sql.Parser.NodeId("not_greater_than"),
+        equal: sql.Parser.NodeId("equal"),
+        double_equal: sql.Parser.NodeId("double_equal"),
+        not_equal: sql.Parser.NodeId("not_equal"),
+        plus: sql.Parser.NodeId("plus"),
+        minus: sql.Parser.NodeId("minus"),
+        star: sql.Parser.NodeId("star"),
+        forward_slash: sql.Parser.NodeId("forward_slash"),
+        dot: sql.Parser.NodeId("dot"),
+        modulus: sql.Parser.NodeId("modulus"),
+        bitwise_and: sql.Parser.NodeId("bitwise_and"),
+        bitwise_or: sql.Parser.NodeId("bitwise_or"),
+        bitwise_not: sql.Parser.NodeId("bitwise_not"),
+        string_concat: sql.Parser.NodeId("string_concat"),
+        shift_left: sql.Parser.NodeId("shift_left"),
+        shift_right: sql.Parser.NodeId("shift_right"),
     };
     pub const FROM = [2]usize;
     pub const string = [2]usize;

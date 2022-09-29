@@ -19,6 +19,30 @@ pub const NamedRule = struct {
     rule: Rule,
 };
 
+pub const Rule = union(enum) {
+    token: []const u8,
+    one_of: []const OneOf,
+    all_of: []const RuleRef,
+    optional: RuleRef,
+    repeat: Repeat,
+};
+
+pub const OneOf = union(enum) {
+    choice: RuleRef,
+    committed_choice: [2]RuleRef,
+};
+
+pub const Repeat = struct {
+    min_count: usize,
+    element: RuleRef,
+    separator: ?RuleRef,
+};
+
+pub const RuleRef = struct {
+    field_name: ?[]const u8,
+    rule_name: []const u8,
+};
+
 pub fn init(arena: *u.ArenaAllocator) Self {
     return Self{
         .arena = arena,
@@ -271,12 +295,11 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\pub const OneOf = sql.GrammarParser.OneOf;
         \\pub const Repeat = sql.GrammarParser.Repeat;
         \\pub const RuleRef = sql.GrammarParser.RuleRef;
-        \\pub const TokenAndRange = struct {
-        \\    token: Token,
-        \\    range: [2]usize,
-        \\};
         \\
+        \\ 
     );
+    try self.writeNode(writer);
+    try writer.writeAll("\n\n");
     try self.writeRules(writer);
     try writer.writeAll("\n\n");
     try self.writeTypes(writer);
@@ -301,6 +324,14 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
             try std.fmt.format(writer, ".{{\"{}\", Token.{s}}},\n", .{ std.zig.fmtEscapes(keyword), keyword });
         try writer.writeAll("});};");
     }
+}
+
+fn writeNode(self: *Self, writer: anytype) anyerror!void {
+    try writer.writeAll("pub const Node = union(enum) {\n");
+    for (self.rules.items) |rule| {
+        try std.fmt.format(writer, "{s}: @field(types, \"{s}\"),\n", .{ rule.name, rule.name });
+    }
+    try writer.writeAll("};");
 }
 
 fn writeRules(self: *Self, writer: anytype) anyerror!void {
@@ -414,7 +445,7 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
                     .committed_choice => |committed_choice| committed_choice[1],
                 };
                 if (rule_ref.field_name) |field_name|
-                    try std.fmt.format(writer, "{s}: {s},", .{ field_name, rule_ref.rule_name })
+                    try std.fmt.format(writer, "{s}: sql.Parser.NodeId(\"{s}\"),", .{ field_name, rule_ref.rule_name })
                 else
                     try std.fmt.format(writer, "{s},", .{rule_ref.rule_name});
             }
@@ -424,40 +455,16 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
             try std.fmt.format(writer, "struct {{\n", .{});
             for (all_ofs) |all_of| {
                 if (all_of.field_name) |field_name| {
-                    try std.fmt.format(writer, "{s}: *{s},", .{ field_name, all_of.rule_name });
+                    try std.fmt.format(writer, "{s}: sql.Parser.NodeId(\"{s}\"),", .{ field_name, all_of.rule_name });
                 }
             }
             try writer.writeAll("}");
         },
         .optional => |optional| {
-            try std.fmt.format(writer, "?{s}", .{optional.rule_name});
+            try std.fmt.format(writer, "?sql.Parser.NodeId(\"{s}\")", .{optional.rule_name});
         },
         .repeat => |repeat| {
-            try std.fmt.format(writer, "[]const {s}", .{repeat.element.rule_name});
+            try std.fmt.format(writer, "[]const sql.Parser.NodeId(\"{s}\")", .{repeat.element.rule_name});
         },
     }
 }
-
-pub const Rule = union(enum) {
-    token: []const u8,
-    one_of: []const OneOf,
-    all_of: []const RuleRef,
-    optional: RuleRef,
-    repeat: Repeat,
-};
-
-pub const OneOf = union(enum) {
-    choice: RuleRef,
-    committed_choice: [2]RuleRef,
-};
-
-pub const Repeat = struct {
-    min_count: usize,
-    element: RuleRef,
-    separator: ?RuleRef,
-};
-
-pub const RuleRef = struct {
-    field_name: ?[]const u8,
-    rule_name: []const u8,
-};

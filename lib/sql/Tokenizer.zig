@@ -188,8 +188,13 @@ pub fn next(self: *Self) !Token {
     }
 }
 
-pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const sql.grammar.TokenAndRange {
-    var tokens = u.ArrayList(sql.grammar.TokenAndRange).init(allocator);
+pub const TokenAndRange = struct {
+    token: Token,
+    range: [2]usize,
+};
+
+pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const TokenAndRange {
+    var tokens = u.ArrayList(TokenAndRange).init(allocator);
     while (true) {
         const start_pos = self.pos;
         const token = try self.next();

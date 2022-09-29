@@ -1,6 +1,6 @@
 # https://www.sqlite.org/lang.html
 
-sql = statement_or_query semicolon? eof;
+root = statement_or_query semicolon? eof;
 statement_or_query =
   | SELECT => select
   | VALUES => values

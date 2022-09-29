@@ -3,30 +3,44 @@ const sql = @import("../sql.zig");
 const u = sql.util;
 const rules = sql.grammar.rules;
 const types = sql.grammar.types;
+const Node = sql.grammar.Node;
 
 const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 // Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
-tokens: []const sql.grammar.TokenAndRange,
+tokens: []const sql.Tokenizer.TokenAndRange,
 debug: bool,
 pos: usize,
+nodes: u.ArrayList(Node),
+// debug only
 rule_name_stack: u.ArrayList([]const u8),
 failures: u.ArrayList(Failure),
 
 pub const Failure = struct {
     rule_names: []const []const u8,
     pos: usize,
-    remaining_tokens: []const sql.grammar.TokenAndRange,
+    remaining_tokens: []const sql.Tokenizer.TokenAndRange,
 };
 
 pub const Error = error{
     OutOfMemory,
 };
 
+pub fn NodeId(comptime rule_name_: []const u8) type {
+    return struct {
+        pub const rule_name = rule_name_;
+        pub const T = @field(types, rule_name);
+        id: usize,
+        pub fn get(self: @This(), nodes: []const Node) T {
+            return @field(nodes[self.id], rule_name);
+        }
+    };
+}
+
 pub fn init(
     arena: *u.ArenaAllocator,
-    tokens: []const sql.grammar.TokenAndRange,
+    tokens: []const sql.Tokenizer.TokenAndRange,
     debug: bool,
 ) Self {
     //u.dump(tokens);
@@ -36,6 +50,7 @@ pub fn init(
         .tokens = tokens,
         .debug = debug,
         .pos = 0,
+        .nodes = u.ArrayList(Node).init(arena.allocator()),
         .rule_name_stack = u.ArrayList([]const u8).init(arena.allocator()),
         .failures = u.ArrayList(Failure).init(arena.allocator()),
     };
@@ -43,7 +58,24 @@ pub fn init(
 
 // TODO memoize for left-recursion where needed
 
-pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
+pub fn push(self: *Self, comptime rule_name: []const u8, node: @field(types, rule_name)) !NodeId(rule_name) {
+    const id = self.nodes.items.len;
+    try self.nodes.append(@unionInit(Node, rule_name, node));
+    return .{ .id = id };
+}
+
+pub fn get(self: *Self, node_id: anytype) @TypeOf(node_id).T {
+    return @field(self.nodes.items[node_id.id], @TypeOf(node_id).rule_name);
+}
+
+pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
+    if (try self.parseNode(rule_name)) |node|
+        return try self.push(rule_name, node)
+    else
+        return null;
+}
+
+pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
     if (self.debug) try self.rule_name_stack.append(rule_name);
     defer if (self.debug) {
         _ = self.rule_name_stack.pop();
@@ -97,9 +129,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
             inline for (all_ofs) |all_of| {
                 if (try self.parse(all_of.rule_name)) |field_result| {
                     if (all_of.field_name) |field_name| {
-                        const field_result_ptr = try self.allocator.create(@field(types, all_of.rule_name));
-                        field_result_ptr.* = field_result;
-                        @field(result, field_name) = field_result_ptr;
+                        @field(result, field_name) = field_result;
                     }
                 } else {
                     return self.fail(rule_name);
@@ -118,7 +148,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
             }
         },
         .repeat => |repeat| {
-            var results = u.ArrayList(@field(types, repeat.element.rule_name)).init(self.allocator);
+            var results = u.ArrayList(NodeId(repeat.element.rule_name)).init(self.allocator);
             while (true) {
                 const start_pos = self.pos;
                 if (repeat.separator) |separator| {
