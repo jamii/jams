@@ -173,13 +173,14 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = "function_call", .rule_name = "function_call" } },
         .{ .choice = RuleRef{ .field_name = "value", .rule_name = "value" } },
     } };
-    pub const anon_43 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
-    pub const anon_44 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
+    pub const anon_43 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
+    pub const anon_44 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
+    pub const anon_45 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
     pub const case = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = null, .rule_name = "CASE" },
-        RuleRef{ .field_name = "expr", .rule_name = "expr" },
-        RuleRef{ .field_name = "case_when", .rule_name = "anon_43" },
-        RuleRef{ .field_name = "case_else", .rule_name = "anon_44" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_43" },
+        RuleRef{ .field_name = "case_when", .rule_name = "anon_44" },
+        RuleRef{ .field_name = "case_else", .rule_name = "anon_45" },
         RuleRef{ .field_name = null, .rule_name = "END" },
     } };
     pub const case_when = Rule{ .all_of = &[_]RuleRef{
@@ -192,24 +193,24 @@ pub const rules = struct {
         RuleRef{ .field_name = null, .rule_name = "ELSE" },
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
     } };
-    pub const anon_48 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
+    pub const anon_49 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
     pub const function_call = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "function_name", .rule_name = "function_name" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "function_args", .rule_name = "anon_48" },
+        RuleRef{ .field_name = "function_args", .rule_name = "anon_49" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const function_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_51 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
-    pub const anon_52 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
-    pub const anon_53 = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = null, .rule_name = "anon_51" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_52" },
+    pub const anon_52 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
+    pub const anon_53 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
+    pub const anon_54 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = null, .rule_name = "anon_52" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_53" },
     } };
     pub const function_args = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_53" } },
+        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_54" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
     } };
     pub const value = Rule{ .one_of = &[_]OneOf{
@@ -544,12 +545,13 @@ pub const types = struct {
         function_call: function_call,
         value: value,
     };
-    pub const anon_43 = []const case_when;
-    pub const anon_44 = ?case_else;
+    pub const anon_43 = ?expr;
+    pub const anon_44 = []const case_when;
+    pub const anon_45 = ?case_else;
     pub const case = struct {
-        expr: *expr,
-        case_when: *anon_43,
-        case_else: *anon_44,
+        expr: *anon_43,
+        case_when: *anon_44,
+        case_else: *anon_45,
     };
     pub const case_when = struct {
         when: *expr,
@@ -558,23 +560,23 @@ pub const types = struct {
     pub const case_else = struct {
         expr: *expr,
     };
-    pub const anon_48 = ?function_args;
+    pub const anon_49 = ?function_args;
     pub const function_call = struct {
         function_name: *function_name,
         open_paren: *open_paren,
-        function_args: *anon_48,
+        function_args: *anon_49,
         close_paren: *close_paren,
     };
     pub const function_name = struct {
         name: *name,
     };
-    pub const anon_51 = ?DISTINCT;
-    pub const anon_52 = []const expr;
-    pub const anon_53 = struct {
-        expr: *anon_52,
+    pub const anon_52 = ?DISTINCT;
+    pub const anon_53 = []const expr;
+    pub const anon_54 = struct {
+        expr: *anon_53,
     };
     pub const function_args = union(enum) {
-        args: anon_53,
+        args: anon_54,
         star: star,
     };
     pub const value = union(enum) {

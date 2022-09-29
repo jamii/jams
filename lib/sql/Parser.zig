@@ -17,6 +17,7 @@ failures: u.ArrayList(Failure),
 pub const Failure = struct {
     rule_names: []const []const u8,
     pos: usize,
+    remaining_tokens: []const sql.grammar.TokenAndRange,
 };
 
 pub const Error = error{
@@ -148,6 +149,7 @@ fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_n
         try self.failures.append(.{
             .rule_names = try self.allocator.dupe([]const u8, self.rule_name_stack.items),
             .pos = self.pos,
+            .remaining_tokens = self.tokens[self.pos..],
         });
     return null;
 }
