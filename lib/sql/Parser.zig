@@ -80,6 +80,59 @@ pub fn get(self: *Self, node_id: anytype) @TypeOf(node_id).T {
 }
 
 pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
+    if (@field(sql.grammar.is_left_recursive, rule_name)) {
+        const start_pos = self.pos;
+        const memo_key = MemoKey{
+            .rule_name = rule_name,
+            .start_pos = start_pos,
+        };
+        if (self.memo.getEntry(memo_key)) |entry| {
+            entry.value_ptr.was_used = true;
+            self.pos = entry.value_ptr.end_pos;
+            return if (entry.value_ptr.node_id) |id|
+                NodeId(rule_name){ .id = id }
+            else
+                null;
+        } else {
+            var last_end_pos: usize = self.pos;
+            var last_node_id: ?usize = null;
+            while (true) {
+                try self.memo.put(memo_key, .{
+                    .end_pos = last_end_pos,
+                    .node_id = last_node_id,
+                    .was_used = false,
+                });
+                self.pos = start_pos;
+                const node_id = if (try self.parsePush(rule_name)) |id| id.id else null;
+                const end_pos = self.pos;
+
+                if (node_id == null or end_pos < last_end_pos)
+                    break;
+
+                last_end_pos = end_pos;
+                last_node_id = node_id;
+
+                if (!self.memo.get(memo_key).?.was_used) {
+                    try self.memo.put(memo_key, .{
+                        .end_pos = last_end_pos,
+                        .node_id = last_node_id,
+                        .was_used = false,
+                    });
+                    break;
+                }
+            }
+            self.pos = last_end_pos;
+            return if (last_node_id) |id|
+                NodeId(rule_name){ .id = id }
+            else
+                null;
+        }
+    } else {
+        return self.parsePush(rule_name);
+    }
+}
+
+pub fn parsePush(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
     if (try self.parseNode(rule_name)) |node|
         return try self.push(rule_name, node)
     else
