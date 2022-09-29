@@ -26,8 +26,16 @@ pub const Database = struct {
         const sql_z = try arena.allocator().dupeZ(u8, sql);
         var tokenizer = Tokenizer.init(sql_z);
         const tokens = try tokenizer.tokenize(arena.allocator());
-        var parser = Parser.init(&arena, tokens);
-        const parsed = (try parser.parse("statement_or_query")) orelse return error.ParseError;
+        var parser = Parser.init(&arena, tokens, false);
+        const parsed = (try parser.parse("root")) orelse {
+            parser = Parser.init(&arena, tokens, true);
+            _ = try parser.parse("root");
+            u.dump(parser.tokens);
+            u.dump(parser.failures.items);
+            u.dump(parser.pos);
+            u.dump(sql);
+            unreachable;
+        };
         _ = parsed;
         //u.dump(parsed);
         return error.Unimplemented;
