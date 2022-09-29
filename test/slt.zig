@@ -151,8 +151,8 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
         switch (expected) {
             .ok => return err,
             .err => switch (err) {
-                error.Unimplemented, error.ParseError => return err,
-                else => return,
+                else => return err,
+                // TODO when we actually validate statements, catch those errors here
             },
         }
     }

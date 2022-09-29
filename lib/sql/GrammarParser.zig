@@ -240,6 +240,12 @@ pub fn discardWhitespace(self: *Self) void {
     while (true) {
         switch (source[self.pos]) {
             ' ', '\n' => self.pos += 1,
+            '#' => while (true) {
+                switch (source[self.pos]) {
+                    0, '\n' => break,
+                    else => self.pos += 1,
+                }
+            },
             else => break,
         }
     }

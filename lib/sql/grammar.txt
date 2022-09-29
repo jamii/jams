@@ -1,8 +1,9 @@
+# https://www.sqlite.org/lang.html
+
 sql = statement_or_query semicolon? eof;
 statement_or_query =
-  | statement
-  | query;
-statement = 
+  | SELECT => select
+  | VALUES => values
   | CREATE => create
   | INSERT => insert;
 create =
@@ -10,10 +11,10 @@ create =
 create_table = CREATE TABLE name open_paren column_specs close_paren;
 insert = INSERT INTO name open_paren column_specs close_paren table_expr;
 table_expr = 
-  | VALUES => table_expr_values;
-table_expr_values = VALUES open_paren value_exprs close_paren;
-value_exprs = value_expr*comma;
-value_expr =
+  | VALUES => values;
+values = VALUES open_paren exprs close_paren;
+exprs = expr*comma;
+expr = # TODO
   | value;
 value =
   | number
@@ -21,6 +22,25 @@ value =
 column_specs = column_spec*comma;
 column_spec = name typ?;
 typ = name;
+select = SELECT distinct_or_all? result_columns from? where? group_by? having? window? order_by? limit?;
+distinct_or_all =
+  | DISTINCT
+  | ALL;
+results_columns = result_column*comma;
+result_column = expr; # TODO
+from = FROM tables_or_subqueries_or_join*;
+table_or_subquery_or_join =
+  | tables_or_subqueries
+  | join_clause;
+tables_or_subqueries = table_or_subquery+comma; #
+table_or_subquery = TODO;
+where = WHERE expr;
+group_by = GROUP BY exprs;
+having = HAVING expr;
+window = WINDOW TODO;
+order_by = ORDER BY ordering_term;
+ordering_term = expr;
+limit = LIMIT exprs; # TODO offset
 
 tokens =
   | less_than
