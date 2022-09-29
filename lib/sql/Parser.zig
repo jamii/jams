@@ -8,7 +8,7 @@ const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 // Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
-tokens: []const sql.Tokenizer.TokenAndRange,
+tokens: []const sql.grammar.TokenAndRange,
 pos: usize,
 
 pub const Error = error{
@@ -17,8 +17,9 @@ pub const Error = error{
 
 pub fn init(
     arena: *u.ArenaAllocator,
-    tokens: []const sql.Tokenizer.TokenAndRange,
+    tokens: []const sql.grammar.TokenAndRange,
 ) Self {
+    //u.dump(tokens);
     return Self{
         .arena = arena,
         .allocator = arena.allocator(),
@@ -31,11 +32,12 @@ pub fn init(
 
 pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
     const ResultType = @field(types, rule_name);
+    //u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
     switch (@field(rules, rule_name)) {
         .token => |token| {
             if (self.tokens[self.pos].token == token) {
                 self.pos += 1;
-                return token;
+                return self.tokens[self.pos];
             } else {
                 return null;
             }

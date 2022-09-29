@@ -31,6 +31,7 @@ pub fn next(self: *Self) !Token {
     var string_start: u8 = 0;
     const start_pos = self.pos;
     while (true) {
+        //u.dump(.{ self.pos, state, self.source[self.pos..] });
         const char = self.source[self.pos];
         self.pos += 1;
         switch (state) {
@@ -126,13 +127,8 @@ pub fn next(self: *Self) !Token {
     }
 }
 
-pub const TokenAndRange = struct {
-    token: Token,
-    range: [2]usize,
-};
-
-pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const TokenAndRange {
-    var tokens = u.ArrayList(TokenAndRange).init(allocator);
+pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const sql.grammar.TokenAndRange {
+    var tokens = u.ArrayList(sql.grammar.TokenAndRange).init(allocator);
     while (true) {
         const start_pos = self.pos;
         const token = try self.next();

@@ -28,7 +28,8 @@ pub const Database = struct {
         const tokens = try tokenizer.tokenize(arena.allocator());
         var parser = Parser.init(&arena, tokens);
         const parsed = (try parser.parse("statement_or_query")) orelse return error.ParseError;
-        u.dump(parsed);
+        _ = parsed;
+        //u.dump(parsed);
         return error.Unimplemented;
     }
 };

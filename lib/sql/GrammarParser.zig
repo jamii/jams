@@ -261,7 +261,10 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
         \\pub const OneOf = sql.GrammarParser.OneOf;
         \\pub const Repeat = sql.GrammarParser.Repeat;
         \\pub const RuleRef = sql.GrammarParser.RuleRef;
-        \\
+        \\pub const TokenAndRange = struct {
+        \\    token: Token,
+        \\    range: [2]usize,
+        \\};
         \\
     );
     try self.writeRules(writer);
@@ -379,7 +382,7 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     _ = self;
     switch (rule) {
         .token => {
-            try writer.writeAll("Token");
+            try writer.writeAll("TokenAndRange");
         },
         .one_of => |one_ofs| {
             var is_enum = true;
