@@ -20,7 +20,7 @@ select = SELECT distinct_or_all? result_columns from? where? group_by? having? w
 distinct_or_all =
   | DISTINCT
   | ALL;
-results_columns = result_column*comma;
+result_columns = result_column*comma;
 result_column = expr; # TODO
 from = FROM tables_or_subqueries_or_join*;
 table_or_subquery_or_join =

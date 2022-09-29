@@ -111,7 +111,7 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = null, .rule_name = "ALL" } },
     } };
     pub const anon_24 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "result_column", .rule_name = "result_column" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
-    pub const results_columns = Rule{ .all_of = &[_]RuleRef{
+    pub const result_columns = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "result_column", .rule_name = "anon_24" },
     } };
     pub const result_column = Rule{ .all_of = &[_]RuleRef{
@@ -364,11 +364,11 @@ pub const rules = struct {
     pub const CURRENT_TIMESTAMP = Rule{ .token = .CURRENT_TIMESTAMP };
     pub const PRECEDING = Rule{ .token = .PRECEDING };
     pub const RANGE = Rule{ .token = .RANGE };
-    pub const result_columns = Rule{ .token = .result_columns };
     pub const MATERIALIZED = Rule{ .token = .MATERIALIZED };
+    pub const OUTER = Rule{ .token = .OUTER };
     pub const GENERATED = Rule{ .token = .GENERATED };
     pub const string_concat = Rule{ .token = .string_concat };
-    pub const OUTER = Rule{ .token = .OUTER };
+    pub const REGEXP = Rule{ .token = .REGEXP };
     pub const AUTOINCREMENT = Rule{ .token = .AUTOINCREMENT };
     pub const CROSS = Rule{ .token = .CROSS };
     pub const CURRENT_DATE = Rule{ .token = .CURRENT_DATE };
@@ -376,7 +376,6 @@ pub const rules = struct {
     pub const ASC = Rule{ .token = .ASC };
     pub const EXCEPT = Rule{ .token = .EXCEPT };
     pub const OR = Rule{ .token = .OR };
-    pub const REGEXP = Rule{ .token = .REGEXP };
     pub const RIGHT = Rule{ .token = .RIGHT };
     pub const TRIGGER = Rule{ .token = .TRIGGER };
     pub const EXCLUDE = Rule{ .token = .EXCLUDE };
@@ -498,7 +497,7 @@ pub const types = struct {
         ALL,
     };
     pub const anon_24 = []const result_column;
-    pub const results_columns = struct {
+    pub const result_columns = struct {
         result_column: *anon_24,
     };
     pub const result_column = struct {
@@ -730,11 +729,11 @@ pub const types = struct {
     pub const CURRENT_TIMESTAMP = [2]usize;
     pub const PRECEDING = [2]usize;
     pub const RANGE = [2]usize;
-    pub const result_columns = [2]usize;
     pub const MATERIALIZED = [2]usize;
+    pub const OUTER = [2]usize;
     pub const GENERATED = [2]usize;
     pub const string_concat = [2]usize;
-    pub const OUTER = [2]usize;
+    pub const REGEXP = [2]usize;
     pub const AUTOINCREMENT = [2]usize;
     pub const CROSS = [2]usize;
     pub const CURRENT_DATE = [2]usize;
@@ -742,7 +741,6 @@ pub const types = struct {
     pub const ASC = [2]usize;
     pub const EXCEPT = [2]usize;
     pub const OR = [2]usize;
-    pub const REGEXP = [2]usize;
     pub const RIGHT = [2]usize;
     pub const TRIGGER = [2]usize;
     pub const EXCLUDE = [2]usize;
@@ -916,11 +914,11 @@ pub const Token = enum {
     CURRENT_TIMESTAMP,
     PRECEDING,
     RANGE,
-    result_columns,
     MATERIALIZED,
+    OUTER,
     GENERATED,
     string_concat,
-    OUTER,
+    REGEXP,
     AUTOINCREMENT,
     CROSS,
     CURRENT_DATE,
@@ -928,7 +926,6 @@ pub const Token = enum {
     ASC,
     EXCEPT,
     OR,
-    REGEXP,
     RIGHT,
     TRIGGER,
     EXCLUDE,

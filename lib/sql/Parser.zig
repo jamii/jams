@@ -9,11 +9,13 @@ arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 // Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
 tokens: []const sql.grammar.TokenAndRange,
+debug: bool,
 pos: usize,
+rule_name_stack: u.ArrayList([]const u8),
 failures: u.ArrayList(Failure),
 
 pub const Failure = struct {
-    rule_name: []const u8,
+    rule_names: []const []const u8,
     pos: usize,
 };
 
@@ -24,13 +26,16 @@ pub const Error = error{
 pub fn init(
     arena: *u.ArenaAllocator,
     tokens: []const sql.grammar.TokenAndRange,
+    debug: bool,
 ) Self {
     //u.dump(tokens);
     return Self{
         .arena = arena,
         .allocator = arena.allocator(),
         .tokens = tokens,
+        .debug = debug,
         .pos = 0,
+        .rule_name_stack = u.ArrayList([]const u8).init(arena.allocator()),
         .failures = u.ArrayList(Failure).init(arena.allocator()),
     };
 }
@@ -38,8 +43,13 @@ pub fn init(
 // TODO memoize for left-recursion where needed
 
 pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
+    if (self.debug) try self.rule_name_stack.append(rule_name);
+    defer if (self.debug) {
+        _ = self.rule_name_stack.pop();
+    };
     const ResultType = @field(types, rule_name);
-    //u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
+    if (self.debug)
+        u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
     switch (@field(rules, rule_name)) {
         .token => |token| {
             const self_token = self.tokens[self.pos];
@@ -134,7 +144,11 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
 }
 
 fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
-    try self.failures.append(.{ .rule_name = rule_name, .pos = self.pos });
+    if (self.debug)
+        try self.failures.append(.{
+            .rule_names = try self.allocator.dupe([]const u8, self.rule_name_stack.items),
+            .pos = self.pos,
+        });
     return null;
 }
 
