@@ -36,12 +36,19 @@ order_by = ORDER BY ordering_term;
 ordering_term = expr;
 limit = LIMIT exprs; # TODO offset
 exprs = expr*comma;
-expr = # TODO
+expr = expr_mult_prec;
+expr_mult_prec =
+  | expr_mult
+  | expr_add_prec;
+expr_add_prec = 
+  | expr_add
+  | expr_atom;
+expr_mult = expr=left (| star | forward_slash | percent)=op expr=right;
+expr_add = expr=left (| plus | minus)=op expr=right;
+expr_atom =
   | CASE => case
   | function_call
-  | expr_plus
   | value;
-expr_plus = expr=left plus expr=right;
 case = CASE expr? case_when* case_else? END;
 case_when = WHEN expr=when THEN expr=then;
 case_else = ELSE expr;
@@ -69,7 +76,7 @@ tokens =
   | star
   | forward_slash
   | dot
-  | modulus
+  | percent
   | bitwise_and
   | bitwise_or
   | bitwise_not

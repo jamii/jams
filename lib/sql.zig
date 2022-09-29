@@ -24,20 +24,19 @@ pub const Database = struct {
         var arena = u.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const sql_z = try arena.allocator().dupeZ(u8, sql);
-        var tokenizer = Tokenizer.init(sql_z);
-        const tokens_and_ranges = try tokenizer.tokenize(arena.allocator());
-        var parser = Parser.init(&arena, tokens_and_ranges.tokens, false);
-        const parsed = (try parser.parse("root")) orelse {
-            parser = Parser.init(&arena, tokens_and_ranges.tokens, true);
+        var tokenizer = Tokenizer.init(&arena, sql_z);
+        try tokenizer.tokenize();
+        var parser = Parser.init(&arena, tokenizer, false);
+        _ = (try parser.parse("root")) orelse {
+            parser = Parser.init(&arena, tokenizer, true);
             _ = try parser.parse("root");
-            u.dump(parser.tokens);
+            u.dump(tokenizer.tokens.items);
             u.dump(parser.failures.items);
             u.dump(parser.pos);
             u.dump(sql);
             unreachable;
         };
-        _ = parsed;
-        //u.dump(parsed);
+        u.dump(parser);
         return error.Unimplemented;
     }
 };
@@ -60,5 +59,3 @@ pub const Value = union(Type) {
 
     // https://www.sqlite.org/datatype3.html#comparisons
 };
-
-test {}

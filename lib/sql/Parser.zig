@@ -8,11 +8,12 @@ const Node = sql.grammar.Node;
 const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
-// Last token is .eof. We don't use a sentinel type because I got lazy when trying to figure out the correct casts.
-tokens: []const sql.grammar.Token,
+tokenizer: sql.Tokenizer,
 debug: bool,
 pos: usize,
 nodes: u.ArrayList(Node),
+node_ranges: u.ArrayList([2]usize),
+node_children: u.ArrayList([]const usize),
 memo: Memo,
 // debug only
 rule_name_stack: u.ArrayList([]const u8),
@@ -79,27 +80,23 @@ pub const MemoEntry = struct {
 
 pub fn init(
     arena: *u.ArenaAllocator,
-    tokens: []const sql.grammar.Token,
+    tokenizer: sql.Tokenizer,
     debug: bool,
 ) Self {
     const allocator = arena.allocator();
     return Self{
         .arena = arena,
         .allocator = allocator,
-        .tokens = tokens,
+        .tokenizer = tokenizer,
         .debug = debug,
         .pos = 0,
         .nodes = u.ArrayList(Node).init(allocator),
+        .node_ranges = u.ArrayList([2]usize).init(allocator),
+        .node_children = u.ArrayList([]const usize).init(allocator),
         .memo = .{ .entries = u.ArrayList(MemoEntry).init(allocator) },
         .rule_name_stack = u.ArrayList([]const u8).init(allocator),
         .failures = u.ArrayList(Failure).init(allocator),
     };
-}
-
-pub fn push(self: *Self, comptime rule_name: []const u8, node: @field(types, rule_name)) !NodeId(rule_name) {
-    const id = self.nodes.items.len;
-    try self.nodes.append(@unionInit(Node, rule_name, node));
-    return .{ .id = id };
 }
 
 pub fn get(self: *Self, node_id: anytype) @TypeOf(node_id).T {
@@ -164,26 +161,31 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
 }
 
 pub fn parsePush(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
-    if (try self.parseNode(rule_name)) |node|
-        return try self.push(rule_name, node)
-    else
-        return null;
+    const start_pos = self.pos;
+    var children = u.ArrayList(usize).init(self.allocator);
+    if (try self.parseNode(rule_name, &children)) |node| {
+        const id = self.nodes.items.len;
+        try self.nodes.append(@unionInit(Node, rule_name, node));
+        try self.node_ranges.append(.{ start_pos, self.pos });
+        try self.node_children.append(children.toOwnedSlice());
+        return .{ .id = id };
+    } else return null;
 }
 
-pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
+pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.ArrayList(usize)) Error!?@field(types, rule_name) {
     if (self.debug) try self.rule_name_stack.append(rule_name);
     defer if (self.debug) {
         _ = self.rule_name_stack.pop();
     };
     if (self.debug)
-        u.dump(.{ rule_name, self.pos, self.tokens[self.pos] });
+        u.dump(.{ rule_name, self.pos, self.tokenizer.tokens.items[self.pos] });
 
     const ResultType = @field(types, rule_name);
     switch (@field(rules, rule_name)) {
         .token => |token| {
-            const self_token = self.tokens[self.pos];
+            const self_token = self.tokenizer.tokens.items[self.pos];
             if (self_token == token) {
-                self.pos += 1;
+                if (token != .eof) self.pos += 1;
                 return {};
             } else {
                 return self.fail(rule_name);
@@ -195,6 +197,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
                 switch (one_of) {
                     .choice => |rule_ref| {
                         if (try self.parse(rule_ref.rule_name)) |result| {
+                            try children.append(result.id);
                             return initChoice(ResultType, rule_ref, result);
                         } else {
                             // Try next one_of.
@@ -206,6 +209,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
                             // Reset after lookahead
                             self.pos = start_pos;
                             if (try self.parse(rule_refs[1].rule_name)) |result| {
+                                try children.append(result.id);
                                 return initChoice(ResultType, rule_refs[1], result);
                             } else {
                                 // Already committed.
@@ -225,6 +229,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
             inline for (all_ofs) |all_of| {
                 if (try self.parse(all_of.rule_name)) |field_result| {
                     if (all_of.field_name) |field_name| {
+                        try children.append(field_result.id);
                         @field(result, field_name) = field_result;
                     }
                 } else {
@@ -236,6 +241,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
         .optional => |optional| {
             const start_pos = self.pos;
             if (try self.parse(optional.rule_name)) |optional_result| {
+                try children.append(optional_result.id);
                 return optional_result;
             } else {
                 self.pos = start_pos;
@@ -256,6 +262,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
                     }
                 }
                 if (try self.parse(repeat.element.rule_name)) |result| {
+                    try children.append(result.id);
                     try results.append(result);
                 } else {
                     self.pos = start_pos;
@@ -275,7 +282,7 @@ fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_n
         try self.failures.append(.{
             .rule_names = try self.allocator.dupe([]const u8, self.rule_name_stack.items),
             .pos = self.pos,
-            .remaining_tokens = self.tokens[self.pos..],
+            .remaining_tokens = self.tokenizer.tokens.items[self.pos..],
         });
     return null;
 }
@@ -287,3 +294,36 @@ fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef,
         else => unreachable,
     };
 }
+
+pub fn getSourceRange(self: Self, id: usize) [2]usize {
+    const token_range = self.node_ranges.items[id];
+    return .{
+        self.tokenizer.token_ranges.items[token_range[0]][0],
+        self.tokenizer.token_ranges.items[token_range[1]][0],
+    };
+}
+
+pub fn dumpInto(writer: anytype, indent: u32, self: Self) anyerror!void {
+    if (self.nodes.items.len == 0)
+        try writer.writeAll("<empty>\n")
+    else
+        try u.dumpInto(writer, indent, DumpNode{ .self = self, .node_id = self.nodes.items.len - 1 });
+}
+
+pub const DumpNode = struct {
+    self: Self,
+    node_id: usize,
+
+    pub fn dumpInto(writer: anytype, indent: u32, self: DumpNode) anyerror!void {
+        const node = self.self.nodes.items[self.node_id];
+        const source_range = self.self.getSourceRange(self.node_id);
+        const source = self.self.tokenizer.source[source_range[0]..source_range[1]];
+        try writer.writeByteNTimes(' ', indent);
+        try std.fmt.format(writer, "{s} <= \"{}\"\n", .{
+            @tagName(node),
+            std.zig.fmtEscapes(source),
+        });
+        for (self.self.node_children.items[self.node_id]) |child_id|
+            try u.dumpInto(writer, indent + 2, DumpNode{ .self = self.self, .node_id = child_id });
+    }
+};

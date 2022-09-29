@@ -50,6 +50,15 @@ pub fn dump(thing: anytype) void {
 
 pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
     const T = @TypeOf(thing);
+    switch (@typeInfo(T)) {
+        .Struct, .Enum, .Union => {
+            if (@hasDecl(T, "dumpInto")) {
+                try T.dumpInto(writer, indent, thing);
+                return;
+            }
+        },
+        else => {},
+    }
     if (T == Allocator) {
         try writer.writeAll("Allocator{}");
     } else if (T == ArenaAllocator) {
@@ -71,14 +80,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         }
         try writer.writeByteNTimes(' ', indent);
         try writer.writeAll(")");
-    }
-    //else if (T == sql.Parser) {
-    //    try sql.Parser.dumpInto(writer, indent, thing);
-    //}
-    //else if (T == sql.Parser.DumpNode) {
-    //    try sql.Parser.DumpNode.dumpInto(writer, indent, thing);
-    //}
-    else switch (@typeInfo(T)) {
+    } else switch (@typeInfo(T)) {
         .Pointer => |pti| {
             switch (pti.size) {
                 .One => {

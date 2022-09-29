@@ -5,8 +5,12 @@ const Token = sql.grammar.Token;
 const keywords = sql.grammar.keywords;
 
 const Self = @This();
+arena: *u.ArenaAllocator,
+allocator: u.Allocator,
 source: [:0]const u8,
 pos: usize,
+tokens: u.ArrayList(Token),
+token_ranges: u.ArrayList([2]usize),
 
 const State = enum {
     start,
@@ -24,14 +28,29 @@ const State = enum {
     bitwise_or,
 };
 
-pub fn init(source: [:0]const u8) Self {
+pub fn init(arena: *u.ArenaAllocator, source: [:0]const u8) Self {
+    const allocator = arena.allocator();
     return .{
+        .arena = arena,
+        .allocator = allocator,
         .source = source,
         .pos = 0,
+        .tokens = u.ArrayList(Token).init(allocator),
+        .token_ranges = u.ArrayList([2]usize).init(allocator),
     };
 }
 
-pub fn next(self: *Self) !Token {
+pub fn tokenize(self: *Self) !void {
+    while (true) {
+        const start_pos = self.pos;
+        const token = (try self.next()) orelse continue;
+        try self.tokens.append(token);
+        try self.token_ranges.append(.{ start_pos, self.pos });
+        if (token == .eof) break;
+    }
+}
+
+pub fn next(self: *Self) !?Token {
     var state = State.start;
     var string_start: u8 = 0;
     const start_pos = self.pos;
@@ -55,7 +74,7 @@ pub fn next(self: *Self) !Token {
                 '/' => return Token.forward_slash,
                 '=' => state = .equal,
                 '.' => return Token.dot,
-                '%' => return Token.modulus,
+                '%' => return Token.percent,
                 '!' => state = .not,
                 '|' => state = .bitwise_or,
                 '&' => return Token.bitwise_and,
@@ -145,7 +164,7 @@ pub fn next(self: *Self) !Token {
                 0, '\r', '\n' => {
                     self.pos -= 1;
                     state = .start;
-                    return self.next();
+                    return null;
                 },
                 else => {},
             },
@@ -154,7 +173,7 @@ pub fn next(self: *Self) !Token {
                 else => {
                     self.pos -= 1;
                     state = .start;
-                    return self.next();
+                    return null;
                 },
             },
             .number => switch (char) {
@@ -186,25 +205,4 @@ pub fn next(self: *Self) !Token {
             },
         }
     }
-}
-
-pub const TokensAndRanges = struct {
-    tokens: []const Token,
-    ranges: []const [2]usize,
-};
-
-pub fn tokenize(self: *Self, allocator: u.Allocator) !TokensAndRanges {
-    var tokens = u.ArrayList(Token).init(allocator);
-    var ranges = u.ArrayList([2]usize).init(allocator);
-    while (true) {
-        const start_pos = self.pos;
-        const token = try self.next();
-        try tokens.append(token);
-        try ranges.append(.{ start_pos, self.pos });
-        if (token == .eof) break;
-    }
-    return TokensAndRanges{
-        .tokens = tokens.toOwnedSlice(),
-        .ranges = ranges.toOwnedSlice(),
-    };
 }

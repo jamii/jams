@@ -217,12 +217,16 @@ fn parseNamedRule(self: *Self) Error!void {
     self.discardWhitespace();
     self.consume("=");
     self.discardWhitespace();
-    const rule = switch (source[self.pos]) {
+    const rule = try self.parseRule();
+    self.consume(";");
+    try self.rules.append(.{ .name = name, .rule = rule });
+}
+
+fn parseRule(self: *Self) Error!Rule {
+    return switch (source[self.pos]) {
         '|' => try self.parseOneOf(),
         else => try self.parseAllOf(),
     };
-    self.consume(";");
-    try self.rules.append(.{ .name = name, .rule = rule });
 }
 
 fn parseOneOf(self: *Self) Error!Rule {
@@ -293,7 +297,7 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
     var rule_ref = rule_ref: {
         if (source[self.pos] == '(') {
             self.consume("(");
-            const all_of = try self.parseAllOf();
+            const all_of = try self.parseRule();
             self.consume(")");
             const name = try self.makeAnonRule(all_of);
             break :rule_ref RuleRef{
@@ -328,7 +332,7 @@ fn tryParseName(self: *Self) !?[]const u8 {
     const start_pos = self.pos;
     while (true) {
         switch (source[self.pos]) {
-            'a'...'z', 'A'...'Z', '_' => self.pos += 1,
+            'a'...'z', 'A'...'Z', '0'...'9', '_' => self.pos += 1,
             else => break,
         }
     }
