@@ -27,16 +27,17 @@ pub const Database = struct {
         var tokenizer = Tokenizer.init(&arena, sql_z);
         try tokenizer.tokenize();
         var parser = Parser.init(&arena, tokenizer, false);
+        //_ = try parser.parse("root") orelse return error.ParseError;
         _ = (try parser.parse("root")) orelse {
             parser = Parser.init(&arena, tokenizer, true);
             _ = try parser.parse("root");
             u.dump(tokenizer.tokens.items);
-            u.dump(parser.failures.items);
-            u.dump(parser.pos);
+            //u.dump(parser.failures.items);
+            u.dump(parser.greatestFailure());
             u.dump(sql);
             unreachable;
         };
-        u.dump(parser);
+        //u.dump(parser);
         return error.Unimplemented;
     }
 };

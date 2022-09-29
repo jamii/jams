@@ -43,10 +43,11 @@ pub const Node = union(enum) {
     result_column: @field(types, "result_column"),
     anon_27: @field(types, "anon_27"),
     from: @field(types, "from"),
-    table_or_subquery_or_join: @field(types, "table_or_subquery_or_join"),
+    tables_or_subqueries_or_join: @field(types, "tables_or_subqueries_or_join"),
     anon_30: @field(types, "anon_30"),
     tables_or_subqueries: @field(types, "tables_or_subqueries"),
     table_or_subquery: @field(types, "table_or_subquery"),
+    table: @field(types, "table"),
     where: @field(types, "where"),
     group_by: @field(types, "group_by"),
     having: @field(types, "having"),
@@ -54,28 +55,35 @@ pub const Node = union(enum) {
     order_by: @field(types, "order_by"),
     ordering_term: @field(types, "ordering_term"),
     limit: @field(types, "limit"),
-    anon_40: @field(types, "anon_40"),
+    anon_41: @field(types, "anon_41"),
     exprs: @field(types, "exprs"),
     expr: @field(types, "expr"),
-    expr_add_prec: @field(types, "expr_add_prec"),
-    expr_mult_prec: @field(types, "expr_mult_prec"),
+    expr_comp_prec: @field(types, "expr_comp_prec"),
     anon_45: @field(types, "anon_45"),
+    expr_comp: @field(types, "expr_comp"),
+    expr_add_prec: @field(types, "expr_add_prec"),
+    anon_48: @field(types, "anon_48"),
     expr_add: @field(types, "expr_add"),
-    anon_47: @field(types, "anon_47"),
+    expr_mult_prec: @field(types, "expr_mult_prec"),
+    anon_51: @field(types, "anon_51"),
     expr_mult: @field(types, "expr_mult"),
     expr_atom: @field(types, "expr_atom"),
-    anon_50: @field(types, "anon_50"),
-    anon_51: @field(types, "anon_51"),
-    anon_52: @field(types, "anon_52"),
+    anon_54: @field(types, "anon_54"),
+    expr_paren: @field(types, "expr_paren"),
+    subquery: @field(types, "subquery"),
+    subexpr: @field(types, "subexpr"),
+    anon_58: @field(types, "anon_58"),
+    anon_59: @field(types, "anon_59"),
+    anon_60: @field(types, "anon_60"),
     case: @field(types, "case"),
     case_when: @field(types, "case_when"),
     case_else: @field(types, "case_else"),
-    anon_56: @field(types, "anon_56"),
+    anon_64: @field(types, "anon_64"),
     function_call: @field(types, "function_call"),
     function_name: @field(types, "function_name"),
-    anon_59: @field(types, "anon_59"),
-    anon_60: @field(types, "anon_60"),
-    anon_61: @field(types, "anon_61"),
+    anon_67: @field(types, "anon_67"),
+    anon_68: @field(types, "anon_68"),
+    anon_69: @field(types, "anon_69"),
     function_args: @field(types, "function_args"),
     value: @field(types, "value"),
     tokens: @field(types, "tokens"),
@@ -105,7 +113,6 @@ pub const Node = union(enum) {
     PRAGMA: @field(types, "PRAGMA"),
     FILTER: @field(types, "FILTER"),
     THEN: @field(types, "THEN"),
-    tables_or_subqueries_or_join: @field(types, "tables_or_subqueries_or_join"),
     WITH: @field(types, "WITH"),
     UNBOUNDED: @field(types, "UNBOUNDED"),
     FOR: @field(types, "FOR"),
@@ -128,7 +135,7 @@ pub const Node = union(enum) {
     NOTHING: @field(types, "NOTHING"),
     OF: @field(types, "OF"),
     semicolon: @field(types, "semicolon"),
-    RESTRICT: @field(types, "RESTRICT"),
+    greater_than_equal: @field(types, "greater_than_equal"),
     DEFERRABLE: @field(types, "DEFERRABLE"),
     NULLS: @field(types, "NULLS"),
     ON: @field(types, "ON"),
@@ -141,11 +148,12 @@ pub const Node = union(enum) {
     name: @field(types, "name"),
     EACH: @field(types, "EACH"),
     OFFSET: @field(types, "OFFSET"),
-    ROLLBACK: @field(types, "ROLLBACK"),
+    RESTRICT: @field(types, "RESTRICT"),
     shift_right: @field(types, "shift_right"),
+    ROLLBACK: @field(types, "ROLLBACK"),
     SET: @field(types, "SET"),
-    TRANSACTION: @field(types, "TRANSACTION"),
     bitwise_and: @field(types, "bitwise_and"),
+    TRANSACTION: @field(types, "TRANSACTION"),
     COMMIT: @field(types, "COMMIT"),
     VALUES: @field(types, "VALUES"),
     EXCLUSIVE: @field(types, "EXCLUSIVE"),
@@ -372,7 +380,7 @@ pub const rules = struct {
         RuleRef{ .field_name = null, .rule_name = "FROM" },
         RuleRef{ .field_name = "tables_or_subqueries_or_join", .rule_name = "anon_27" },
     } };
-    pub const table_or_subquery_or_join = Rule{ .one_of = &[_]OneOf{
+    pub const tables_or_subqueries_or_join = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "tables_or_subqueries", .rule_name = "tables_or_subqueries" } },
         .{ .choice = RuleRef{ .field_name = "join_clause", .rule_name = "join_clause" } },
     } };
@@ -380,8 +388,12 @@ pub const rules = struct {
     pub const tables_or_subqueries = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "table_or_subquery", .rule_name = "anon_30" },
     } };
-    pub const table_or_subquery = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = null, .rule_name = "TODO" },
+    pub const table_or_subquery = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "table", .rule_name = "table" } },
+        .{ .choice = RuleRef{ .field_name = "subquery", .rule_name = "subquery" } },
+    } };
+    pub const table = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
     pub const where = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = null, .rule_name = "WHERE" },
@@ -412,55 +424,94 @@ pub const rules = struct {
         RuleRef{ .field_name = null, .rule_name = "LIMIT" },
         RuleRef{ .field_name = "exprs", .rule_name = "exprs" },
     } };
-    pub const anon_40 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
+    pub const anon_41 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
     pub const exprs = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "expr", .rule_name = "anon_40" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_41" },
     } };
     pub const expr = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "expr_add_prec", .rule_name = "expr_add_prec" },
+        RuleRef{ .field_name = "expr_comp_prec", .rule_name = "expr_comp_prec" },
+    } };
+    pub const expr_comp_prec = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "expr_comp", .rule_name = "expr_comp" } },
+        .{ .choice = RuleRef{ .field_name = "expr_add_prec", .rule_name = "expr_add_prec" } },
+    } };
+    pub const anon_45 = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "less_than", .rule_name = "less_than" } },
+        .{ .choice = RuleRef{ .field_name = "greater_than", .rule_name = "greater_than" } },
+        .{ .choice = RuleRef{ .field_name = "less_than_or_equal", .rule_name = "less_than_or_equal" } },
+        .{ .choice = RuleRef{ .field_name = "greater_than_equal", .rule_name = "greater_than_equal" } },
+    } };
+    pub const expr_comp = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "left", .rule_name = "expr_add_prec" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_45" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_add_prec" },
     } };
     pub const expr_add_prec = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_add", .rule_name = "expr_add" } },
         .{ .choice = RuleRef{ .field_name = "expr_mult_prec", .rule_name = "expr_mult_prec" } },
     } };
-    pub const expr_mult_prec = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "expr_mult", .rule_name = "expr_mult" } },
-        .{ .choice = RuleRef{ .field_name = "expr_atom", .rule_name = "expr_atom" } },
-    } };
-    pub const anon_45 = Rule{ .one_of = &[_]OneOf{
+    pub const anon_48 = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "plus", .rule_name = "plus" } },
         .{ .choice = RuleRef{ .field_name = "minus", .rule_name = "minus" } },
     } };
     pub const expr_add = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_mult_prec" },
-        RuleRef{ .field_name = "op", .rule_name = "anon_45" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_48" },
         RuleRef{ .field_name = "right", .rule_name = "expr_mult_prec" },
     } };
-    pub const anon_47 = Rule{ .one_of = &[_]OneOf{
+    pub const expr_mult_prec = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "expr_mult", .rule_name = "expr_mult" } },
+        .{ .choice = RuleRef{ .field_name = "expr_atom", .rule_name = "expr_atom" } },
+    } };
+    pub const anon_51 = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
         .{ .choice = RuleRef{ .field_name = "forward_slash", .rule_name = "forward_slash" } },
         .{ .choice = RuleRef{ .field_name = "percent", .rule_name = "percent" } },
     } };
     pub const expr_mult = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_atom" },
-        RuleRef{ .field_name = "op", .rule_name = "anon_47" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_51" },
         RuleRef{ .field_name = "right", .rule_name = "expr_atom" },
     } };
     pub const expr_atom = Rule{ .one_of = &[_]OneOf{
         .{ .committed_choice = .{
             RuleRef{ .field_name = null, .rule_name = "CASE" }, RuleRef{ .field_name = "case", .rule_name = "case" },
         } },
+        .{ .committed_choice = .{
+            RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" }, RuleRef{ .field_name = "expr_paren", .rule_name = "expr_paren" },
+        } },
         .{ .choice = RuleRef{ .field_name = "function_call", .rule_name = "function_call" } },
+        .{ .choice = RuleRef{ .field_name = "name", .rule_name = "name" } },
         .{ .choice = RuleRef{ .field_name = "value", .rule_name = "value" } },
     } };
-    pub const anon_50 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
-    pub const anon_51 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
-    pub const anon_52 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
+    pub const anon_54 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
+        RuleRef{ .field_name = null, .rule_name = "SELECT" },
+    } };
+    pub const expr_paren = Rule{ .one_of = &[_]OneOf{
+        .{ .committed_choice = .{
+            RuleRef{ .field_name = null, .rule_name = "anon_54" }, RuleRef{ .field_name = "subquery", .rule_name = "subquery" },
+        } },
+        .{ .choice = RuleRef{ .field_name = "subexpr", .rule_name = "subexpr" } },
+    } };
+    pub const subquery = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
+        RuleRef{ .field_name = "select", .rule_name = "select" },
+        RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
+    } };
+    pub const subexpr = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
+        RuleRef{ .field_name = "expr", .rule_name = "expr" },
+        RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
+    } };
+    pub const anon_58 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
+    pub const anon_59 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
+    pub const anon_60 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
     pub const case = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = null, .rule_name = "CASE" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_50" },
-        RuleRef{ .field_name = "case_when", .rule_name = "anon_51" },
-        RuleRef{ .field_name = "case_else", .rule_name = "anon_52" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_58" },
+        RuleRef{ .field_name = "case_when", .rule_name = "anon_59" },
+        RuleRef{ .field_name = "case_else", .rule_name = "anon_60" },
         RuleRef{ .field_name = null, .rule_name = "END" },
     } };
     pub const case_when = Rule{ .all_of = &[_]RuleRef{
@@ -473,24 +524,24 @@ pub const rules = struct {
         RuleRef{ .field_name = null, .rule_name = "ELSE" },
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
     } };
-    pub const anon_56 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
+    pub const anon_64 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
     pub const function_call = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "function_name", .rule_name = "function_name" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "function_args", .rule_name = "anon_56" },
+        RuleRef{ .field_name = "function_args", .rule_name = "anon_64" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const function_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_59 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
-    pub const anon_60 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
-    pub const anon_61 = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = null, .rule_name = "anon_59" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_60" },
+    pub const anon_67 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
+    pub const anon_68 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
+    pub const anon_69 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = null, .rule_name = "anon_67" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_68" },
     } };
     pub const function_args = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_61" } },
+        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_69" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
     } };
     pub const value = Rule{ .one_of = &[_]OneOf{
@@ -546,7 +597,6 @@ pub const rules = struct {
     pub const PRAGMA = Rule{ .token = .PRAGMA };
     pub const FILTER = Rule{ .token = .FILTER };
     pub const THEN = Rule{ .token = .THEN };
-    pub const tables_or_subqueries_or_join = Rule{ .token = .tables_or_subqueries_or_join };
     pub const WITH = Rule{ .token = .WITH };
     pub const UNBOUNDED = Rule{ .token = .UNBOUNDED };
     pub const FOR = Rule{ .token = .FOR };
@@ -569,7 +619,7 @@ pub const rules = struct {
     pub const NOTHING = Rule{ .token = .NOTHING };
     pub const OF = Rule{ .token = .OF };
     pub const semicolon = Rule{ .token = .semicolon };
-    pub const RESTRICT = Rule{ .token = .RESTRICT };
+    pub const greater_than_equal = Rule{ .token = .greater_than_equal };
     pub const DEFERRABLE = Rule{ .token = .DEFERRABLE };
     pub const NULLS = Rule{ .token = .NULLS };
     pub const ON = Rule{ .token = .ON };
@@ -582,11 +632,12 @@ pub const rules = struct {
     pub const name = Rule{ .token = .name };
     pub const EACH = Rule{ .token = .EACH };
     pub const OFFSET = Rule{ .token = .OFFSET };
-    pub const ROLLBACK = Rule{ .token = .ROLLBACK };
+    pub const RESTRICT = Rule{ .token = .RESTRICT };
     pub const shift_right = Rule{ .token = .shift_right };
+    pub const ROLLBACK = Rule{ .token = .ROLLBACK };
     pub const SET = Rule{ .token = .SET };
-    pub const TRANSACTION = Rule{ .token = .TRANSACTION };
     pub const bitwise_and = Rule{ .token = .bitwise_and };
+    pub const TRANSACTION = Rule{ .token = .TRANSACTION };
     pub const COMMIT = Rule{ .token = .COMMIT };
     pub const VALUES = Rule{ .token = .VALUES };
     pub const EXCLUSIVE = Rule{ .token = .EXCLUSIVE };
@@ -791,7 +842,7 @@ pub const types = struct {
     pub const from = struct {
         tables_or_subqueries_or_join: sql.Parser.NodeId("anon_27"),
     };
-    pub const table_or_subquery_or_join = union(enum) {
+    pub const tables_or_subqueries_or_join = union(enum) {
         tables_or_subqueries: sql.Parser.NodeId("tables_or_subqueries"),
         join_clause: sql.Parser.NodeId("join_clause"),
     };
@@ -799,7 +850,13 @@ pub const types = struct {
     pub const tables_or_subqueries = struct {
         table_or_subquery: sql.Parser.NodeId("anon_30"),
     };
-    pub const table_or_subquery = struct {};
+    pub const table_or_subquery = union(enum) {
+        table: sql.Parser.NodeId("table"),
+        subquery: sql.Parser.NodeId("subquery"),
+    };
+    pub const table = struct {
+        name: sql.Parser.NodeId("name"),
+    };
     pub const where = struct {
         expr: sql.Parser.NodeId("expr"),
     };
@@ -819,52 +876,86 @@ pub const types = struct {
     pub const limit = struct {
         exprs: sql.Parser.NodeId("exprs"),
     };
-    pub const anon_40 = []const sql.Parser.NodeId("expr");
+    pub const anon_41 = []const sql.Parser.NodeId("expr");
     pub const exprs = struct {
-        expr: sql.Parser.NodeId("anon_40"),
+        expr: sql.Parser.NodeId("anon_41"),
     };
     pub const expr = struct {
+        expr_comp_prec: sql.Parser.NodeId("expr_comp_prec"),
+    };
+    pub const expr_comp_prec = union(enum) {
+        expr_comp: sql.Parser.NodeId("expr_comp"),
         expr_add_prec: sql.Parser.NodeId("expr_add_prec"),
+    };
+    pub const anon_45 = union(enum) {
+        less_than: sql.Parser.NodeId("less_than"),
+        greater_than: sql.Parser.NodeId("greater_than"),
+        less_than_or_equal: sql.Parser.NodeId("less_than_or_equal"),
+        greater_than_equal: sql.Parser.NodeId("greater_than_equal"),
+    };
+    pub const expr_comp = struct {
+        left: sql.Parser.NodeId("expr_add_prec"),
+        op: sql.Parser.NodeId("anon_45"),
+        right: sql.Parser.NodeId("expr_add_prec"),
     };
     pub const expr_add_prec = union(enum) {
         expr_add: sql.Parser.NodeId("expr_add"),
         expr_mult_prec: sql.Parser.NodeId("expr_mult_prec"),
     };
-    pub const expr_mult_prec = union(enum) {
-        expr_mult: sql.Parser.NodeId("expr_mult"),
-        expr_atom: sql.Parser.NodeId("expr_atom"),
-    };
-    pub const anon_45 = union(enum) {
+    pub const anon_48 = union(enum) {
         plus: sql.Parser.NodeId("plus"),
         minus: sql.Parser.NodeId("minus"),
     };
     pub const expr_add = struct {
         left: sql.Parser.NodeId("expr_mult_prec"),
-        op: sql.Parser.NodeId("anon_45"),
+        op: sql.Parser.NodeId("anon_48"),
         right: sql.Parser.NodeId("expr_mult_prec"),
     };
-    pub const anon_47 = union(enum) {
+    pub const expr_mult_prec = union(enum) {
+        expr_mult: sql.Parser.NodeId("expr_mult"),
+        expr_atom: sql.Parser.NodeId("expr_atom"),
+    };
+    pub const anon_51 = union(enum) {
         star: sql.Parser.NodeId("star"),
         forward_slash: sql.Parser.NodeId("forward_slash"),
         percent: sql.Parser.NodeId("percent"),
     };
     pub const expr_mult = struct {
         left: sql.Parser.NodeId("expr_atom"),
-        op: sql.Parser.NodeId("anon_47"),
+        op: sql.Parser.NodeId("anon_51"),
         right: sql.Parser.NodeId("expr_atom"),
     };
     pub const expr_atom = union(enum) {
         case: sql.Parser.NodeId("case"),
+        expr_paren: sql.Parser.NodeId("expr_paren"),
         function_call: sql.Parser.NodeId("function_call"),
+        name: sql.Parser.NodeId("name"),
         value: sql.Parser.NodeId("value"),
     };
-    pub const anon_50 = ?sql.Parser.NodeId("expr");
-    pub const anon_51 = []const sql.Parser.NodeId("case_when");
-    pub const anon_52 = ?sql.Parser.NodeId("case_else");
+    pub const anon_54 = struct {
+        open_paren: sql.Parser.NodeId("open_paren"),
+    };
+    pub const expr_paren = union(enum) {
+        subquery: sql.Parser.NodeId("subquery"),
+        subexpr: sql.Parser.NodeId("subexpr"),
+    };
+    pub const subquery = struct {
+        open_paren: sql.Parser.NodeId("open_paren"),
+        select: sql.Parser.NodeId("select"),
+        close_paren: sql.Parser.NodeId("close_paren"),
+    };
+    pub const subexpr = struct {
+        open_paren: sql.Parser.NodeId("open_paren"),
+        expr: sql.Parser.NodeId("expr"),
+        close_paren: sql.Parser.NodeId("close_paren"),
+    };
+    pub const anon_58 = ?sql.Parser.NodeId("expr");
+    pub const anon_59 = []const sql.Parser.NodeId("case_when");
+    pub const anon_60 = ?sql.Parser.NodeId("case_else");
     pub const case = struct {
-        expr: sql.Parser.NodeId("anon_50"),
-        case_when: sql.Parser.NodeId("anon_51"),
-        case_else: sql.Parser.NodeId("anon_52"),
+        expr: sql.Parser.NodeId("anon_58"),
+        case_when: sql.Parser.NodeId("anon_59"),
+        case_else: sql.Parser.NodeId("anon_60"),
     };
     pub const case_when = struct {
         when: sql.Parser.NodeId("expr"),
@@ -873,23 +964,23 @@ pub const types = struct {
     pub const case_else = struct {
         expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_56 = ?sql.Parser.NodeId("function_args");
+    pub const anon_64 = ?sql.Parser.NodeId("function_args");
     pub const function_call = struct {
         function_name: sql.Parser.NodeId("function_name"),
         open_paren: sql.Parser.NodeId("open_paren"),
-        function_args: sql.Parser.NodeId("anon_56"),
+        function_args: sql.Parser.NodeId("anon_64"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const function_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_59 = ?sql.Parser.NodeId("DISTINCT");
-    pub const anon_60 = []const sql.Parser.NodeId("expr");
-    pub const anon_61 = struct {
-        expr: sql.Parser.NodeId("anon_60"),
+    pub const anon_67 = ?sql.Parser.NodeId("DISTINCT");
+    pub const anon_68 = []const sql.Parser.NodeId("expr");
+    pub const anon_69 = struct {
+        expr: sql.Parser.NodeId("anon_68"),
     };
     pub const function_args = union(enum) {
-        args: sql.Parser.NodeId("anon_61"),
+        args: sql.Parser.NodeId("anon_69"),
         star: sql.Parser.NodeId("star"),
     };
     pub const value = union(enum) {
@@ -945,7 +1036,6 @@ pub const types = struct {
     pub const PRAGMA = void;
     pub const FILTER = void;
     pub const THEN = void;
-    pub const tables_or_subqueries_or_join = void;
     pub const WITH = void;
     pub const UNBOUNDED = void;
     pub const FOR = void;
@@ -968,7 +1058,7 @@ pub const types = struct {
     pub const NOTHING = void;
     pub const OF = void;
     pub const semicolon = void;
-    pub const RESTRICT = void;
+    pub const greater_than_equal = void;
     pub const DEFERRABLE = void;
     pub const NULLS = void;
     pub const ON = void;
@@ -981,11 +1071,12 @@ pub const types = struct {
     pub const name = void;
     pub const EACH = void;
     pub const OFFSET = void;
-    pub const ROLLBACK = void;
+    pub const RESTRICT = void;
     pub const shift_right = void;
+    pub const ROLLBACK = void;
     pub const SET = void;
-    pub const TRANSACTION = void;
     pub const bitwise_and = void;
+    pub const TRANSACTION = void;
     pub const COMMIT = void;
     pub const VALUES = void;
     pub const EXCLUSIVE = void;
@@ -1136,10 +1227,11 @@ pub const is_left_recursive = struct {
     pub const result_column = false;
     pub const anon_27 = false;
     pub const from = false;
-    pub const table_or_subquery_or_join = false;
+    pub const tables_or_subqueries_or_join = false;
     pub const anon_30 = false;
     pub const tables_or_subqueries = false;
     pub const table_or_subquery = false;
+    pub const table = false;
     pub const where = false;
     pub const group_by = false;
     pub const having = false;
@@ -1147,28 +1239,35 @@ pub const is_left_recursive = struct {
     pub const order_by = false;
     pub const ordering_term = false;
     pub const limit = false;
-    pub const anon_40 = false;
+    pub const anon_41 = false;
     pub const exprs = false;
     pub const expr = false;
-    pub const expr_add_prec = false;
-    pub const expr_mult_prec = false;
+    pub const expr_comp_prec = false;
     pub const anon_45 = false;
+    pub const expr_comp = false;
+    pub const expr_add_prec = false;
+    pub const anon_48 = false;
     pub const expr_add = false;
-    pub const anon_47 = false;
+    pub const expr_mult_prec = false;
+    pub const anon_51 = false;
     pub const expr_mult = false;
     pub const expr_atom = false;
-    pub const anon_50 = false;
-    pub const anon_51 = false;
-    pub const anon_52 = false;
+    pub const anon_54 = false;
+    pub const expr_paren = false;
+    pub const subquery = false;
+    pub const subexpr = false;
+    pub const anon_58 = false;
+    pub const anon_59 = false;
+    pub const anon_60 = false;
     pub const case = false;
     pub const case_when = false;
     pub const case_else = false;
-    pub const anon_56 = false;
+    pub const anon_64 = false;
     pub const function_call = false;
     pub const function_name = false;
-    pub const anon_59 = false;
-    pub const anon_60 = false;
-    pub const anon_61 = false;
+    pub const anon_67 = false;
+    pub const anon_68 = false;
+    pub const anon_69 = false;
     pub const function_args = false;
     pub const value = false;
     pub const tokens = false;
@@ -1198,7 +1297,6 @@ pub const is_left_recursive = struct {
     pub const PRAGMA = false;
     pub const FILTER = false;
     pub const THEN = false;
-    pub const tables_or_subqueries_or_join = false;
     pub const WITH = false;
     pub const UNBOUNDED = false;
     pub const FOR = false;
@@ -1221,7 +1319,7 @@ pub const is_left_recursive = struct {
     pub const NOTHING = false;
     pub const OF = false;
     pub const semicolon = false;
-    pub const RESTRICT = false;
+    pub const greater_than_equal = false;
     pub const DEFERRABLE = false;
     pub const NULLS = false;
     pub const ON = false;
@@ -1234,11 +1332,12 @@ pub const is_left_recursive = struct {
     pub const name = false;
     pub const EACH = false;
     pub const OFFSET = false;
-    pub const ROLLBACK = false;
+    pub const RESTRICT = false;
     pub const shift_right = false;
+    pub const ROLLBACK = false;
     pub const SET = false;
-    pub const TRANSACTION = false;
     pub const bitwise_and = false;
+    pub const TRANSACTION = false;
     pub const COMMIT = false;
     pub const VALUES = false;
     pub const EXCLUSIVE = false;
@@ -1386,7 +1485,6 @@ pub const Token = enum {
     PRAGMA,
     FILTER,
     THEN,
-    tables_or_subqueries_or_join,
     WITH,
     UNBOUNDED,
     FOR,
@@ -1409,7 +1507,7 @@ pub const Token = enum {
     NOTHING,
     OF,
     semicolon,
-    RESTRICT,
+    greater_than_equal,
     DEFERRABLE,
     NULLS,
     ON,
@@ -1422,11 +1520,12 @@ pub const Token = enum {
     name,
     EACH,
     OFFSET,
-    ROLLBACK,
+    RESTRICT,
     shift_right,
+    ROLLBACK,
     SET,
-    TRANSACTION,
     bitwise_and,
+    TRANSACTION,
     COMMIT,
     VALUES,
     EXCLUSIVE,

@@ -295,6 +295,15 @@ fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef,
     };
 }
 
+pub fn greatestFailure(self: Self) ?Failure {
+    var result: ?Failure = null;
+    for (self.failures.items) |failure| {
+        if (result == null or result.?.pos < failure.pos)
+            result = failure;
+    }
+    return result;
+}
+
 pub fn getSourceRange(self: Self, id: usize) [2]usize {
     const token_range = self.node_ranges.items[id];
     return .{

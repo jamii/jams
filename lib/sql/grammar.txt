@@ -23,11 +23,14 @@ distinct_or_all =
 result_columns = result_column*comma;
 result_column = expr; # TODO
 from = FROM tables_or_subqueries_or_join*;
-table_or_subquery_or_join =
+tables_or_subqueries_or_join =
   | tables_or_subqueries
   | join_clause;
 tables_or_subqueries = table_or_subquery+comma;
-table_or_subquery = TODO;
+table_or_subquery = 
+  | table
+  | subquery;
+table = name; # TODO
 where = WHERE expr;
 group_by = GROUP BY exprs;
 having = HAVING expr;
@@ -36,19 +39,38 @@ order_by = ORDER BY ordering_term;
 ordering_term = expr;
 limit = LIMIT exprs; # TODO offset
 exprs = expr*comma;
-expr = expr_add_prec;
+expr = expr_comp_prec;
+
+expr_comp_prec = 
+  | expr_comp
+  | expr_add_prec;
+expr_comp = expr_add_prec=left (| less_than | greater_than | less_than_or_equal | greater_than_equal)=op expr_add_prec=right;
+
 expr_add_prec = 
   | expr_add
   | expr_mult_prec;
+expr_add = expr_mult_prec=left (| plus | minus)=op expr_mult_prec=right;
+
 expr_mult_prec =
   | expr_mult
   | expr_atom;
-expr_add = expr_mult_prec=left (| plus | minus)=op expr_mult_prec=right;
 expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_atom=right;
+
 expr_atom =
   | CASE => case
+  | open_paren => expr_paren
   | function_call
+  | name
   | value;
+
+expr_paren = 
+  | (open_paren SELECT) => subquery
+  | subexpr;
+
+subquery = open_paren select close_paren;
+
+subexpr = open_paren expr close_paren;
+
 case = CASE expr? case_when* case_else? END;
 case_when = WHEN expr=when THEN expr=then;
 case_else = ELSE expr;
