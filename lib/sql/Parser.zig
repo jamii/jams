@@ -20,7 +20,7 @@ rule_name_stack: u.ArrayList([]const u8),
 failures: u.ArrayList(Failure),
 
 pub const Failure = struct {
-    rule_names: []const []const u8,
+    rule_name_stack: []const []const u8,
     pos: usize,
     remaining_tokens: []const sql.grammar.Token,
 };
@@ -280,7 +280,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
 fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
     if (self.debug)
         try self.failures.append(.{
-            .rule_names = try self.allocator.dupe([]const u8, self.rule_name_stack.items),
+            .rule_name_stack = try self.allocator.dupe([]const u8, self.rule_name_stack.items),
             .pos = self.pos,
             .remaining_tokens = self.tokenizer.tokens.items[self.pos..],
         });
@@ -298,7 +298,10 @@ fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef,
 pub fn greatestFailure(self: Self) ?Failure {
     var result: ?Failure = null;
     for (self.failures.items) |failure| {
-        if (result == null or result.?.pos < failure.pos)
+        if (result == null or
+            result.?.pos < failure.pos or
+            (result.?.pos == failure.pos and
+            result.?.rule_name_stack.len <= failure.rule_name_stack.len))
             result = failure;
     }
     return result;
