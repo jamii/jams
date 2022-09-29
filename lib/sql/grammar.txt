@@ -30,16 +30,61 @@ tables_or_subqueries = table_or_subquery+comma;
 table_or_subquery = 
   | table
   | subquery;
-table = name; # TODO
+table = name binding?; # TODO
+binding = AS name;
 where = WHERE expr;
 group_by = GROUP BY exprs;
 having = HAVING expr;
 window = WINDOW TODO;
-order_by = ORDER BY ordering_term;
-ordering_term = expr;
+order_by = ORDER BY ordering_terms;
+ordering_terms = ordering_term+comma;
+ordering_term = collate? asc_or_desc? null_first_or_last? expr;
+collate = COLLATE collation_name;
+collation_name = name; # TODO
+asc_or_desc =
+  | ASC
+  | DESC;
+nulls_first_or_last = NULLS first_or_last;
+first_or_last = 
+  | FIRST
+  | LAST;
 limit = LIMIT exprs; # TODO offset
 exprs = expr*comma;
-expr = expr_comp_prec;
+expr = expr_or_prec;
+
+expr_or_prec =
+  | expr_or
+  | expr_and_prec;
+expr_or = expr_and_prec=left OR expr_or_prec=right;
+
+expr_and_prec =
+  | expr_and
+  | expr_not_prec;
+expr_and = expr_not_prec=left AND expr_and_prec=right;
+
+expr_not_prec =
+  | expr_not
+  | expr_incomp_prec;
+expr_not = NOT expr_not_prec=right;
+
+expr_incomp_prec =
+  | expr_incomp
+  | expr_comp_prec;
+expr_incomp =
+  | expr_incomp_binop
+  | expr_incomp_complex
+  | expr_incomp_postop;
+expr_incomp_complex = 
+  | expr_incomp_between
+  | expr_incomp_not_binop;
+expr_incomp_between = expr_comp_prec=left NOT? BETWEEN expr=start AND expr=end;
+expr_income_binop = expr_comp_prec=left (| equal | double_equal | not_equal | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM)=op expr_incomp_prec=right;
+IS_NOT = IS NOT;
+IS_DISTINCT_FROM = IS_DISTINCT_FROM;
+IS_NOT_DISTINCT_FROM = IS_NOT_DISTINCT_FROM;
+expr_income_not_binop = expr_comp_prec=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp_prec=right;
+expr_incomp_postop = expr_comp_prec=left (| ISNULL | NOTNULL | NOT_NULL)=op;
+NOT_NULL = NOT NULL;
 
 expr_comp_prec = 
   | expr_comp
@@ -58,16 +103,24 @@ expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_mult_prec=
 
 expr_atom =
   | CASE => case
-  | open_paren => expr_paren
+  | expr_paren
   | function_call
-  | name
+  | table_column_ref
+  | column_ref
   | value;
 
+table_column_ref = name=table dot name=column;
+column_ref = name;
+
 expr_paren = 
-  | (open_paren SELECT) => subquery
+  | subquery
   | subexpr;
 
-subquery = open_paren select close_paren;
+subquery = exists_or_not_exists? open_paren select close_paren;
+exists_or_not_exists =
+  | EXISTS
+  | NOT_EXISTS;
+NOT_EXISTS = NOT EXISTS;
 
 subexpr = open_paren expr close_paren;
 

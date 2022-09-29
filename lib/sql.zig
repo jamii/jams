@@ -29,6 +29,7 @@ pub const Database = struct {
         var parser = Parser.init(&arena, tokenizer, false);
         //_ = try parser.parse("root") orelse return error.ParseError;
         _ = (try parser.parse("root")) orelse {
+            u.dump("Failure!");
             parser = Parser.init(&arena, tokenizer, true);
             _ = try parser.parse("root");
             u.dump(tokenizer.tokens.items);
