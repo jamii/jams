@@ -44,17 +44,17 @@ expr = expr_comp_prec;
 expr_comp_prec = 
   | expr_comp
   | expr_add_prec;
-expr_comp = expr_add_prec=left (| less_than | greater_than | less_than_or_equal | greater_than_equal)=op expr_add_prec=right;
+expr_comp = expr_add_prec=left (| less_than | greater_than | less_than_or_equal | greater_than_equal)=op expr_comp_prec=right;
 
 expr_add_prec = 
   | expr_add
   | expr_mult_prec;
-expr_add = expr_mult_prec=left (| plus | minus)=op expr_mult_prec=right;
+expr_add = expr_mult_prec=left (| plus | minus)=op expr_add_prec=right;
 
 expr_mult_prec =
   | expr_mult
   | expr_atom;
-expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_atom=right;
+expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_mult_prec=right;
 
 expr_atom =
   | CASE => case

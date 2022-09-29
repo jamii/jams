@@ -444,7 +444,7 @@ pub const rules = struct {
     pub const expr_comp = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_add_prec" },
         RuleRef{ .field_name = "op", .rule_name = "anon_45" },
-        RuleRef{ .field_name = "right", .rule_name = "expr_add_prec" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_comp_prec" },
     } };
     pub const expr_add_prec = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_add", .rule_name = "expr_add" } },
@@ -457,7 +457,7 @@ pub const rules = struct {
     pub const expr_add = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_mult_prec" },
         RuleRef{ .field_name = "op", .rule_name = "anon_48" },
-        RuleRef{ .field_name = "right", .rule_name = "expr_mult_prec" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_add_prec" },
     } };
     pub const expr_mult_prec = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_mult", .rule_name = "expr_mult" } },
@@ -471,7 +471,7 @@ pub const rules = struct {
     pub const expr_mult = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_atom" },
         RuleRef{ .field_name = "op", .rule_name = "anon_51" },
-        RuleRef{ .field_name = "right", .rule_name = "expr_atom" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_mult_prec" },
     } };
     pub const expr_atom = Rule{ .one_of = &[_]OneOf{
         .{ .committed_choice = .{
@@ -896,7 +896,7 @@ pub const types = struct {
     pub const expr_comp = struct {
         left: sql.Parser.NodeId("expr_add_prec"),
         op: sql.Parser.NodeId("anon_45"),
-        right: sql.Parser.NodeId("expr_add_prec"),
+        right: sql.Parser.NodeId("expr_comp_prec"),
     };
     pub const expr_add_prec = union(enum) {
         expr_add: sql.Parser.NodeId("expr_add"),
@@ -909,7 +909,7 @@ pub const types = struct {
     pub const expr_add = struct {
         left: sql.Parser.NodeId("expr_mult_prec"),
         op: sql.Parser.NodeId("anon_48"),
-        right: sql.Parser.NodeId("expr_mult_prec"),
+        right: sql.Parser.NodeId("expr_add_prec"),
     };
     pub const expr_mult_prec = union(enum) {
         expr_mult: sql.Parser.NodeId("expr_mult"),
@@ -923,7 +923,7 @@ pub const types = struct {
     pub const expr_mult = struct {
         left: sql.Parser.NodeId("expr_atom"),
         op: sql.Parser.NodeId("anon_51"),
-        right: sql.Parser.NodeId("expr_atom"),
+        right: sql.Parser.NodeId("expr_mult_prec"),
     };
     pub const expr_atom = union(enum) {
         case: sql.Parser.NodeId("case"),
