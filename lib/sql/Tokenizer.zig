@@ -39,6 +39,9 @@ pub fn next(self: *Self) !Token {
                     self.pos -= 1;
                     return Token.eof;
                 },
+                ',' => return Token.comma,
+                '(' => return Token.open_paren,
+                ')' => return Token.close_paren,
                 '"' => {
                     string_start = '"';
                     state = .string;
@@ -97,7 +100,7 @@ pub fn next(self: *Self) !Token {
             },
             .number => switch (char) {
                 '0'...'9', '.' => {},
-                0, ' ', '\r', '\t', '\n', ')', ']', '}' => {
+                0, ' ', '\r', '\t', '\n', ')', ',' => {
                     self.pos -= 1;
                     return Token.number;
                 },

@@ -35,7 +35,7 @@ pub fn parseRules(self: *Self) Error!void {
     while (true) {
         self.discardWhitespace();
         if (source[self.pos] == 0) break;
-        _ = try self.parseNamedRule();
+        try self.parseNamedRule();
     }
 
     // rule_name_refs gets filled while parsing, because I'm lazy.

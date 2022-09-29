@@ -18,7 +18,7 @@ value_expr =
 value =
 | number
 | string;
-columns_specs = column_spec*comma;
+column_specs = column_spec*comma;
 column_spec = name typ?;
 typ = 
 | INTEGER;

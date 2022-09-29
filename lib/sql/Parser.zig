@@ -33,7 +33,12 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
     const ResultType = @field(types, rule_name);
     switch (@field(rules, rule_name)) {
         .token => |token| {
-            return if (self.tokens[self.pos].token == token) token else null;
+            if (self.tokens[self.pos].token == token) {
+                self.pos += 1;
+                return token;
+            } else {
+                return null;
+            }
         },
         .one_of => |one_ofs| {
             const start_pos = self.pos;
@@ -41,7 +46,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                 switch (one_of) {
                     .choice => |rule_ref| {
                         if (try self.parse(rule_ref.rule_name)) |result| {
-                            return @unionInit(ResultType, rule_ref.field_name.?, result);
+                            return initChoice(ResultType, rule_ref, result);
                         } else {
                             // Try next one_of.
                             self.pos = start_pos;
@@ -52,7 +57,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                             // Reset after lookahead
                             self.pos = start_pos;
                             if (try self.parse(rule_refs[1].rule_name)) |result| {
-                                return @unionInit(ResultType, rule_refs[1].field_name.?, result);
+                                return initChoice(ResultType, rule_refs[1], result);
                             } else {
                                 // Already committed.
                                 return null;
@@ -114,4 +119,12 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                 null;
         },
     }
+}
+
+fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef, result: anytype) ChoiceType {
+    return switch (@typeInfo(ChoiceType)) {
+        .Union => @unionInit(ChoiceType, rule_ref.field_name.?, result),
+        .Enum => @field(ChoiceType, rule_ref.rule_name),
+        else => unreachable,
+    };
 }
