@@ -68,6 +68,7 @@ pub fn next(self: *Self) !Token {
                     string_start = '\'';
                     state = .comment;
                 },
+                ';' => return Token.semicolon,
                 'a'...'z', 'A'...'Z' => state = .name,
                 '0'...'9' => state = .number,
                 '-' => state = .minus,

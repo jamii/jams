@@ -1,4 +1,4 @@
-sql = statement_or_query eof;
+sql = statement_or_query semicolon? eof;
 statement_or_query =
   | statement
   | query;
