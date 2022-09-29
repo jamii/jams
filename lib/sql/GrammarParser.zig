@@ -107,35 +107,11 @@ fn parseAllOf(self: *Self) Error!Rule {
     while (true) {
         self.discardWhitespace();
         var rule_ref = (try self.tryParseRuleRef()) orelse break;
-        try self.tryParseModifier(&rule_ref);
+
         try all_ofs.append(rule_ref);
     }
     self.assert(all_ofs.items.len > 0);
     return Rule{ .all_of = all_ofs.toOwnedSlice() };
-}
-
-fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
-    switch (source[self.pos]) {
-        '*' => {
-            self.consume("*");
-            try self.parseRepeat(0, rule_ref);
-        },
-        '+' => {
-            self.consume("+");
-            try self.parseRepeat(1, rule_ref);
-        },
-        '?' => {
-            self.consume("?");
-            const optional = Rule{ .optional = rule_ref.* };
-            rule_ref.rule_name = try self.makeAnonRule(optional);
-        },
-        '=' => {
-            self.consume("=");
-            const name = try self.parseName();
-            rule_ref.field_name = name;
-        },
-        else => {},
-    }
 }
 
 fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
@@ -165,34 +141,38 @@ fn makeAnonRuleName(self: *Self) Error![]const u8 {
 }
 
 fn parseRuleRef(self: *Self) Error!RuleRef {
-    const rule_ref = try self.tryParseRuleRef();
+    var rule_ref = try self.tryParseRuleRef();
     self.assert(rule_ref != null);
     return rule_ref.?;
 }
 
 fn tryParseRuleRef(self: *Self) Error!?RuleRef {
-    if (source[self.pos] == '(') {
-        self.consume("(");
-        const all_of = try self.parseAllOf();
-        self.consume(")");
-        const name = try self.makeAnonRule(all_of);
-        return RuleRef{
-            .field_name = null,
-            .rule_name = name,
-        };
-    } else {
-        const name = (try self.tryParseName()) orelse return null;
-        var is_token = true;
-        for (name) |char|
-            switch (char) {
-                'A'...'Z', '_' => {},
-                else => is_token = false,
+    var rule_ref = rule_ref: {
+        if (source[self.pos] == '(') {
+            self.consume("(");
+            const all_of = try self.parseAllOf();
+            self.consume(")");
+            const name = try self.makeAnonRule(all_of);
+            break :rule_ref RuleRef{
+                .field_name = null,
+                .rule_name = name,
             };
-        return RuleRef{
-            .field_name = if (is_token) null else name,
-            .rule_name = name,
-        };
-    }
+        } else {
+            const name = (try self.tryParseName()) orelse return null;
+            var is_token = true;
+            for (name) |char|
+                switch (char) {
+                    'A'...'Z', '_' => {},
+                    else => is_token = false,
+                };
+            break :rule_ref RuleRef{
+                .field_name = if (is_token) null else name,
+                .rule_name = name,
+            };
+        }
+    };
+    try self.tryParseModifier(&rule_ref);
+    return rule_ref;
 }
 
 fn parseName(self: *Self) ![]const u8 {
@@ -216,6 +196,30 @@ fn tryParseName(self: *Self) !?[]const u8 {
         const name = source[start_pos..self.pos];
         try self.rule_name_refs.put(name, {});
         return name;
+    }
+}
+
+fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
+    switch (source[self.pos]) {
+        '*' => {
+            self.consume("*");
+            try self.parseRepeat(0, rule_ref);
+        },
+        '+' => {
+            self.consume("+");
+            try self.parseRepeat(1, rule_ref);
+        },
+        '?' => {
+            self.consume("?");
+            const optional = Rule{ .optional = rule_ref.* };
+            rule_ref.rule_name = try self.makeAnonRule(optional);
+        },
+        '=' => {
+            self.consume("=");
+            const name = try self.parseName();
+            rule_ref.field_name = name;
+        },
+        else => {},
     }
 }
 
@@ -388,7 +392,7 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     _ = self;
     switch (rule) {
         .token => {
-            try writer.writeAll("TokenAndRange");
+            try writer.writeAll("[2]usize");
         },
         .one_of => |one_ofs| {
             var is_enum = true;

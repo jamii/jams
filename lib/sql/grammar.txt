@@ -13,12 +13,6 @@ insert = INSERT INTO name open_paren column_specs close_paren table_expr;
 table_expr = 
   | VALUES => values;
 values = VALUES open_paren exprs close_paren;
-exprs = expr*comma;
-expr = # TODO
-  | value;
-value =
-  | number
-  | string;
 column_specs = column_spec*comma;
 column_spec = name typ?;
 typ = name;
@@ -32,7 +26,7 @@ from = FROM tables_or_subqueries_or_join*;
 table_or_subquery_or_join =
   | tables_or_subqueries
   | join_clause;
-tables_or_subqueries = table_or_subquery+comma; #
+tables_or_subqueries = table_or_subquery+comma;
 table_or_subquery = TODO;
 where = WHERE expr;
 group_by = GROUP BY exprs;
@@ -41,6 +35,22 @@ window = WINDOW TODO;
 order_by = ORDER BY ordering_term;
 ordering_term = expr;
 limit = LIMIT exprs; # TODO offset
+exprs = expr*comma;
+expr = # TODO
+  | CASE => case
+  | function_call
+  | value;
+case = CASE expr case_when* case_else? END;
+case_when = WHEN expr=when THEN expr=then;
+case_else = ELSE expr;
+function_call = function_name open_paren function_args? close_paren; # TODO filter/over
+function_name = name; # TODO
+function_args =
+  | (DISTINCT? expr+comma)=args
+  | star;
+value =
+  | number
+  | string;
 
 tokens =
   | less_than

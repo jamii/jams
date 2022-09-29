@@ -35,9 +35,10 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
     //u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
     switch (@field(rules, rule_name)) {
         .token => |token| {
-            if (self.tokens[self.pos].token == token) {
+            const self_token = self.tokens[self.pos];
+            if (self_token.token == token) {
                 self.pos += 1;
-                return self.tokens[self.pos];
+                return self_token.range;
             } else {
                 return null;
             }
