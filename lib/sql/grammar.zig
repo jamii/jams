@@ -57,12 +57,12 @@ pub const Node = union(enum) {
     anon_40: @field(types, "anon_40"),
     exprs: @field(types, "exprs"),
     expr: @field(types, "expr"),
-    expr_mult_prec: @field(types, "expr_mult_prec"),
     expr_add_prec: @field(types, "expr_add_prec"),
+    expr_mult_prec: @field(types, "expr_mult_prec"),
     anon_45: @field(types, "anon_45"),
-    expr_mult: @field(types, "expr_mult"),
-    anon_47: @field(types, "anon_47"),
     expr_add: @field(types, "expr_add"),
+    anon_47: @field(types, "anon_47"),
+    expr_mult: @field(types, "expr_mult"),
     expr_atom: @field(types, "expr_atom"),
     anon_50: @field(types, "anon_50"),
     anon_51: @field(types, "anon_51"),
@@ -417,34 +417,34 @@ pub const rules = struct {
         RuleRef{ .field_name = "expr", .rule_name = "anon_40" },
     } };
     pub const expr = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "expr_mult_prec", .rule_name = "expr_mult_prec" },
-    } };
-    pub const expr_mult_prec = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "expr_mult", .rule_name = "expr_mult" } },
-        .{ .choice = RuleRef{ .field_name = "expr_add_prec", .rule_name = "expr_add_prec" } },
+        RuleRef{ .field_name = "expr_add_prec", .rule_name = "expr_add_prec" },
     } };
     pub const expr_add_prec = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_add", .rule_name = "expr_add" } },
+        .{ .choice = RuleRef{ .field_name = "expr_mult_prec", .rule_name = "expr_mult_prec" } },
+    } };
+    pub const expr_mult_prec = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "expr_mult", .rule_name = "expr_mult" } },
         .{ .choice = RuleRef{ .field_name = "expr_atom", .rule_name = "expr_atom" } },
     } };
     pub const anon_45 = Rule{ .one_of = &[_]OneOf{
+        .{ .choice = RuleRef{ .field_name = "plus", .rule_name = "plus" } },
+        .{ .choice = RuleRef{ .field_name = "minus", .rule_name = "minus" } },
+    } };
+    pub const expr_add = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "left", .rule_name = "expr_mult_prec" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_45" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_mult_prec" },
+    } };
+    pub const anon_47 = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
         .{ .choice = RuleRef{ .field_name = "forward_slash", .rule_name = "forward_slash" } },
         .{ .choice = RuleRef{ .field_name = "percent", .rule_name = "percent" } },
     } };
     pub const expr_mult = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "left", .rule_name = "expr" },
-        RuleRef{ .field_name = "op", .rule_name = "anon_45" },
-        RuleRef{ .field_name = "right", .rule_name = "expr" },
-    } };
-    pub const anon_47 = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "plus", .rule_name = "plus" } },
-        .{ .choice = RuleRef{ .field_name = "minus", .rule_name = "minus" } },
-    } };
-    pub const expr_add = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "left", .rule_name = "expr" },
+        RuleRef{ .field_name = "left", .rule_name = "expr_atom" },
         RuleRef{ .field_name = "op", .rule_name = "anon_47" },
-        RuleRef{ .field_name = "right", .rule_name = "expr" },
+        RuleRef{ .field_name = "right", .rule_name = "expr_atom" },
     } };
     pub const expr_atom = Rule{ .one_of = &[_]OneOf{
         .{ .committed_choice = .{
@@ -824,34 +824,34 @@ pub const types = struct {
         expr: sql.Parser.NodeId("anon_40"),
     };
     pub const expr = struct {
-        expr_mult_prec: sql.Parser.NodeId("expr_mult_prec"),
-    };
-    pub const expr_mult_prec = union(enum) {
-        expr_mult: sql.Parser.NodeId("expr_mult"),
         expr_add_prec: sql.Parser.NodeId("expr_add_prec"),
     };
     pub const expr_add_prec = union(enum) {
         expr_add: sql.Parser.NodeId("expr_add"),
+        expr_mult_prec: sql.Parser.NodeId("expr_mult_prec"),
+    };
+    pub const expr_mult_prec = union(enum) {
+        expr_mult: sql.Parser.NodeId("expr_mult"),
         expr_atom: sql.Parser.NodeId("expr_atom"),
     };
     pub const anon_45 = union(enum) {
+        plus: sql.Parser.NodeId("plus"),
+        minus: sql.Parser.NodeId("minus"),
+    };
+    pub const expr_add = struct {
+        left: sql.Parser.NodeId("expr_mult_prec"),
+        op: sql.Parser.NodeId("anon_45"),
+        right: sql.Parser.NodeId("expr_mult_prec"),
+    };
+    pub const anon_47 = union(enum) {
         star: sql.Parser.NodeId("star"),
         forward_slash: sql.Parser.NodeId("forward_slash"),
         percent: sql.Parser.NodeId("percent"),
     };
     pub const expr_mult = struct {
-        left: sql.Parser.NodeId("expr"),
-        op: sql.Parser.NodeId("anon_45"),
-        right: sql.Parser.NodeId("expr"),
-    };
-    pub const anon_47 = union(enum) {
-        plus: sql.Parser.NodeId("plus"),
-        minus: sql.Parser.NodeId("minus"),
-    };
-    pub const expr_add = struct {
-        left: sql.Parser.NodeId("expr"),
+        left: sql.Parser.NodeId("expr_atom"),
         op: sql.Parser.NodeId("anon_47"),
-        right: sql.Parser.NodeId("expr"),
+        right: sql.Parser.NodeId("expr_atom"),
     };
     pub const expr_atom = union(enum) {
         case: sql.Parser.NodeId("case"),
@@ -1149,13 +1149,13 @@ pub const is_left_recursive = struct {
     pub const limit = false;
     pub const anon_40 = false;
     pub const exprs = false;
-    pub const expr = true;
-    pub const expr_mult_prec = true;
-    pub const expr_add_prec = true;
+    pub const expr = false;
+    pub const expr_add_prec = false;
+    pub const expr_mult_prec = false;
     pub const anon_45 = false;
-    pub const expr_mult = true;
+    pub const expr_add = false;
     pub const anon_47 = false;
-    pub const expr_add = true;
+    pub const expr_mult = false;
     pub const expr_atom = false;
     pub const anon_50 = false;
     pub const anon_51 = false;

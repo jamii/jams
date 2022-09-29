@@ -36,15 +36,15 @@ order_by = ORDER BY ordering_term;
 ordering_term = expr;
 limit = LIMIT exprs; # TODO offset
 exprs = expr*comma;
-expr = expr_mult_prec;
-expr_mult_prec =
-  | expr_mult
-  | expr_add_prec;
+expr = expr_add_prec;
 expr_add_prec = 
   | expr_add
+  | expr_mult_prec;
+expr_mult_prec =
+  | expr_mult
   | expr_atom;
-expr_mult = expr=left (| star | forward_slash | percent)=op expr=right;
-expr_add = expr=left (| plus | minus)=op expr=right;
+expr_add = expr_mult_prec=left (| plus | minus)=op expr_mult_prec=right;
+expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_atom=right;
 expr_atom =
   | CASE => case
   | function_call
