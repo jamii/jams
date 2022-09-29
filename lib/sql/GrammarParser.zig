@@ -544,7 +544,7 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     _ = self;
     switch (rule) {
         .token => {
-            try writer.writeAll("[2]usize");
+            try writer.writeAll("void");
         },
         .one_of => |one_ofs| {
             var is_enum = true;

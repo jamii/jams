@@ -188,18 +188,23 @@ pub fn next(self: *Self) !Token {
     }
 }
 
-pub const TokenAndRange = struct {
-    token: Token,
-    range: [2]usize,
+pub const TokensAndRanges = struct {
+    tokens: []const Token,
+    ranges: []const [2]usize,
 };
 
-pub fn tokenize(self: *Self, allocator: u.Allocator) ![]const TokenAndRange {
-    var tokens = u.ArrayList(TokenAndRange).init(allocator);
+pub fn tokenize(self: *Self, allocator: u.Allocator) !TokensAndRanges {
+    var tokens = u.ArrayList(Token).init(allocator);
+    var ranges = u.ArrayList([2]usize).init(allocator);
     while (true) {
         const start_pos = self.pos;
         const token = try self.next();
-        try tokens.append(.{ .token = token, .range = .{ start_pos, self.pos } });
+        try tokens.append(token);
+        try ranges.append(.{ start_pos, self.pos });
         if (token == .eof) break;
     }
-    return tokens.toOwnedSlice();
+    return TokensAndRanges{
+        .tokens = tokens.toOwnedSlice(),
+        .ranges = ranges.toOwnedSlice(),
+    };
 }

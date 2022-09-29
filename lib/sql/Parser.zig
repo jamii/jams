@@ -9,7 +9,7 @@ const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 // Last token is .eof. We don't use a sentinel type because I got lazy when trying to figure out the correct casts.
-tokens: []const sql.Tokenizer.TokenAndRange,
+tokens: []const sql.grammar.Token,
 debug: bool,
 pos: usize,
 nodes: u.ArrayList(Node),
@@ -21,7 +21,7 @@ failures: u.ArrayList(Failure),
 pub const Failure = struct {
     rule_names: []const []const u8,
     pos: usize,
-    remaining_tokens: []const sql.Tokenizer.TokenAndRange,
+    remaining_tokens: []const sql.grammar.Token,
 };
 
 pub const Error = error{
@@ -79,7 +79,7 @@ pub const MemoEntry = struct {
 
 pub fn init(
     arena: *u.ArenaAllocator,
-    tokens: []const sql.Tokenizer.TokenAndRange,
+    tokens: []const sql.grammar.Token,
     debug: bool,
 ) Self {
     const allocator = arena.allocator();
@@ -176,15 +176,15 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
         _ = self.rule_name_stack.pop();
     };
     if (self.debug)
-        u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
+        u.dump(.{ rule_name, self.pos, self.tokens[self.pos] });
 
     const ResultType = @field(types, rule_name);
     switch (@field(rules, rule_name)) {
         .token => |token| {
             const self_token = self.tokens[self.pos];
-            if (self_token.token == token) {
+            if (self_token == token) {
                 self.pos += 1;
-                return self_token.range;
+                return {};
             } else {
                 return self.fail(rule_name);
             }

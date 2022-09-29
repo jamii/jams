@@ -25,10 +25,10 @@ pub const Database = struct {
         defer arena.deinit();
         const sql_z = try arena.allocator().dupeZ(u8, sql);
         var tokenizer = Tokenizer.init(sql_z);
-        const tokens = try tokenizer.tokenize(arena.allocator());
-        var parser = Parser.init(&arena, tokens, false);
+        const tokens_and_ranges = try tokenizer.tokenize(arena.allocator());
+        var parser = Parser.init(&arena, tokens_and_ranges.tokens, false);
         const parsed = (try parser.parse("root")) orelse {
-            parser = Parser.init(&arena, tokens, true);
+            parser = Parser.init(&arena, tokens_and_ranges.tokens, true);
             _ = try parser.parse("root");
             u.dump(parser.tokens);
             u.dump(parser.failures.items);
