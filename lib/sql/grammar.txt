@@ -21,3 +21,27 @@ value =
 column_specs = column_spec*comma;
 column_spec = name typ?;
 typ = name;
+
+tokens =
+  | less_than
+  | greater_than
+  | less_than_or_equal
+  | greater_than_or_equal
+  | not_less_than
+  | not_greater_than
+  | equal
+  | double_equal
+  | not_equal
+  | plus
+  | minus
+  | star
+  | forward_slash
+  | dot
+  | modulus
+  | bitwise_and
+  | bitwise_or
+  | bitwise_not
+  | string_concat
+  | shift_left
+  | shift_right
+;

@@ -17,6 +17,11 @@ const State = enum {
     comment,
     whitespace,
     minus,
+    less_than,
+    greater_than,
+    equal,
+    not,
+    bitwise_or,
 };
 
 pub fn init(source: [:0]const u8) Self {
@@ -43,6 +48,18 @@ pub fn next(self: *Self) !Token {
                 ',' => return Token.comma,
                 '(' => return Token.open_paren,
                 ')' => return Token.close_paren,
+                '>' => state = .less_than,
+                '<' => state = .greater_than,
+                '+' => return Token.plus,
+                '*' => return Token.star,
+                '/' => return Token.forward_slash,
+                '=' => state = .equal,
+                '.' => return Token.dot,
+                '%' => return Token.modulus,
+                '!' => state = .not,
+                '|' => state = .bitwise_or,
+                '&' => return Token.bitwise_and,
+                '~' => return Token.bitwise_not,
                 '"' => {
                     string_start = '"';
                     state = .string;
@@ -56,6 +73,46 @@ pub fn next(self: *Self) !Token {
                 '-' => state = .minus,
                 ' ', '\r', '\t', '\n' => state = .whitespace,
                 else => return error.TokenizerError,
+            },
+            .less_than => switch (char) {
+                '=' => return Token.less_than_or_equal,
+                '>' => return Token.not_equal,
+                '<' => return Token.shift_left,
+                else => {
+                    self.pos -= 1;
+                    return Token.less_than;
+                },
+            },
+            .greater_than => switch (char) {
+                '=' => return Token.greater_than_or_equal,
+                '>' => return Token.shift_right,
+                else => {
+                    self.pos -= 1;
+                    return Token.greater_than;
+                },
+            },
+            .equal => switch (char) {
+                '=' => return Token.double_equal,
+                else => {
+                    self.pos -= 1;
+                    return Token.equal;
+                },
+            },
+            .not => switch (char) {
+                '=' => return Token.not_equal,
+                '<' => return Token.not_less_than,
+                '>' => return Token.not_greater_than,
+                else => {
+                    self.pos -= 1;
+                    return error.TokenizerError;
+                },
+            },
+            .bitwise_or => switch (char) {
+                '|' => return Token.string_concat,
+                else => {
+                    self.pos -= 1;
+                    return Token.bitwise_or;
+                },
             },
             .string => switch (char) {
                 0 => return error.TokenizerError,
@@ -101,11 +158,12 @@ pub fn next(self: *Self) !Token {
             },
             .number => switch (char) {
                 '0'...'9', '.' => {},
-                0, ' ', '\r', '\t', '\n', ')', ',' => {
+                // This looks too much like a name
+                'a'...'z', 'A'...'Z' => return error.TokenizerError,
+                else => {
                     self.pos -= 1;
                     return Token.number;
                 },
-                else => return error.TokenizerError,
             },
             .name => switch (char) {
                 'a'...'z', 'A'...'Z', '0'...'9', '_' => {},
@@ -119,9 +177,11 @@ pub fn next(self: *Self) !Token {
                 },
             },
             .minus => switch (char) {
-                '0'...'9' => state = .number,
                 '-' => state = .comment,
-                else => return error.TokenizerError,
+                else => {
+                    self.pos -= 1;
+                    return Token.minus;
+                },
             },
         }
     }
