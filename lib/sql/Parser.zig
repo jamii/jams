@@ -10,6 +10,12 @@ allocator: u.Allocator,
 // Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
 tokens: []const sql.grammar.TokenAndRange,
 pos: usize,
+failures: u.ArrayList(Failure),
+
+pub const Failure = struct {
+    rule_name: []const u8,
+    pos: usize,
+};
 
 pub const Error = error{
     OutOfMemory,
@@ -25,6 +31,7 @@ pub fn init(
         .allocator = arena.allocator(),
         .tokens = tokens,
         .pos = 0,
+        .failures = u.ArrayList(Failure).init(arena.allocator()),
     };
 }
 
@@ -40,7 +47,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                 self.pos += 1;
                 return self_token.range;
             } else {
-                return null;
+                return self.fail(rule_name);
             }
         },
         .one_of => |one_ofs| {
@@ -63,7 +70,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                                 return initChoice(ResultType, rule_refs[1], result);
                             } else {
                                 // Already committed.
-                                return null;
+                                return self.fail(rule_name);
                             }
                         } else {
                             // Try next one_of.
@@ -72,7 +79,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                     },
                 }
             }
-            return null;
+            return self.fail(rule_name);
         },
         .all_of => |all_ofs| {
             var result: ResultType = undefined;
@@ -84,16 +91,18 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                         @field(result, field_name) = field_result_ptr;
                     }
                 } else {
-                    return null;
+                    return self.fail(rule_name);
                 }
             }
             return result;
         },
         .optional => |optional| {
+            const start_pos = self.pos;
             if (try self.parse(optional.rule_name)) |optional_result| {
                 return optional_result;
             } else {
-                // This cast leads to returning Some(null) instead of null.
+                self.pos = start_pos;
+                // This is a succesful null, not a failure.
                 return @as(ResultType, null);
             }
         },
@@ -116,12 +125,17 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?@field(types, r
                     break;
                 }
             }
-            return if (results.items.len >= repeat.min_count)
-                results.toOwnedSlice()
+            if (results.items.len >= repeat.min_count)
+                return results.toOwnedSlice()
             else
-                null;
+                return self.fail(rule_name);
         },
     }
+}
+
+fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_name) {
+    try self.failures.append(.{ .rule_name = rule_name, .pos = self.pos });
+    return null;
 }
 
 fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef, result: anytype) ChoiceType {
