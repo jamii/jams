@@ -10,6 +10,7 @@ rules: u.ArrayList(NamedRule),
 rule_name_defs: u.DeepHashSet([]const u8),
 rule_name_refs: u.DeepHashSet([]const u8),
 tokens: u.DeepHashSet([]const u8),
+left_recursive_rules: u.DeepHashSet([]const u8),
 pos: usize,
 
 const Error = error{OutOfMemory};
@@ -44,13 +45,15 @@ pub const RuleRef = struct {
 };
 
 pub fn init(arena: *u.ArenaAllocator) Self {
+    const allocator = arena.allocator();
     return Self{
         .arena = arena,
-        .allocator = arena.allocator(),
-        .rules = u.ArrayList(NamedRule).init(arena.allocator()),
-        .rule_name_defs = u.DeepHashSet([]const u8).init(arena.allocator()),
-        .rule_name_refs = u.DeepHashSet([]const u8).init(arena.allocator()),
-        .tokens = u.DeepHashSet([]const u8).init(arena.allocator()),
+        .allocator = allocator,
+        .rules = u.ArrayList(NamedRule).init(allocator),
+        .rule_name_defs = u.DeepHashSet([]const u8).init(allocator),
+        .rule_name_refs = u.DeepHashSet([]const u8).init(allocator),
+        .tokens = u.DeepHashSet([]const u8).init(allocator),
+        .left_recursive_rules = u.DeepHashSet([]const u8).init(allocator),
         .pos = 0,
     };
 }
@@ -91,6 +94,122 @@ pub fn parseRules(self: *Self) Error!void {
             .name = token.*,
             .rule = .{ .token = token.* },
         });
+
+    {
+        // Figure out which rules might match empty strings
+        var may_be_empty = u.DeepHashSet([]const u8).init(self.allocator);
+        for (self.rules.items) |rule|
+            if (rule.rule == .optional or (rule.rule == .repeat and rule.rule.repeat.min_count == 0))
+                try may_be_empty.put(rule.name, {});
+        while (true) {
+            var changed = false;
+            for (self.rules.items) |rule1|
+                if (!may_be_empty.contains(rule1.name)) {
+                    const may_be_empty1 = b: {
+                        switch (rule1.rule) {
+                            .token => break :b false,
+                            .one_of => |one_ofs| {
+                                var b = false;
+                                for (one_ofs) |one_of| {
+                                    switch (one_of) {
+                                        .choice => |choice| {
+                                            b = b or
+                                                may_be_empty.contains(choice.rule_name);
+                                        },
+                                        .committed_choice => |committed_choice| {
+                                            b = b or
+                                                (may_be_empty.contains(committed_choice[0].rule_name) and
+                                                may_be_empty.contains(committed_choice[1].rule_name));
+                                        },
+                                    }
+                                }
+                                break :b b;
+                            },
+                            .all_of => |all_ofs| {
+                                var b = true;
+                                for (all_ofs) |all_of|
+                                    b = b and may_be_empty.contains(all_of.rule_name);
+                                break :b b;
+                            },
+                            .optional => break :b true,
+                            .repeat => |repeat| {
+                                break :b (repeat.min_count == 0) or (may_be_empty.contains(repeat.element.rule_name) and
+                                    (repeat.separator == null or
+                                    may_be_empty.contains(repeat.separator.?.rule_name)));
+                            },
+                        }
+                    };
+                    if (may_be_empty1) {
+                        try may_be_empty.put(rule1.name, {});
+                        changed = true;
+                    }
+                };
+            if (!changed) break;
+        }
+
+        // Figure out which rules are left recursive
+        var reach = u.DeepHashMap([]const u8, u.DeepHashSet([]const u8)).init(self.allocator);
+        for (self.rules.items) |rule| {
+            var init_reach = u.DeepHashSet([]const u8).init(self.allocator);
+            switch (rule.rule) {
+                .token => {},
+                .one_of => |one_ofs| {
+                    for (one_ofs) |one_of| {
+                        switch (one_of) {
+                            .choice => |choice| {
+                                try init_reach.put(choice.rule_name, {});
+                            },
+                            .committed_choice => |committed_choice| {
+                                try init_reach.put(committed_choice[0].rule_name, {});
+                                try init_reach.put(committed_choice[1].rule_name, {});
+                            },
+                        }
+                    }
+                },
+                .all_of => |all_ofs| {
+                    for (all_ofs) |all_of| {
+                        try init_reach.put(all_of.rule_name, {});
+                        if (!may_be_empty.contains(all_of.rule_name)) break;
+                    }
+                },
+                .optional => |optional| {
+                    try init_reach.put(optional.rule_name, {});
+                },
+                .repeat => |repeat| {
+                    try init_reach.put(repeat.element.rule_name, {});
+                    if (!may_be_empty.contains(repeat.element.rule_name))
+                        if (repeat.separator) |separator|
+                            try init_reach.put(separator.rule_name, {});
+                },
+            }
+            try reach.put(rule.name, init_reach);
+        }
+        while (true) {
+            var changed = false;
+            for (self.rules.items) |rule_1| {
+                var new_reach1 = u.ArrayList([]const u8).init(self.allocator);
+                const reach1 = reach.getPtr(rule_1.name).?;
+                var iter1 = reach1.keyIterator();
+                while (iter1.next()) |rule2_name| {
+                    const reach2 = reach.getPtr(rule2_name.*).?;
+                    var iter2 = reach2.keyIterator();
+                    while (iter2.next()) |rule3_name| {
+                        if (!reach1.contains(rule3_name.*)) {
+                            // append to new_reach1 to avoid invalidating iter1
+                            changed = true;
+                            try new_reach1.append(rule3_name.*);
+                        }
+                    }
+                }
+                for (new_reach1.items) |rule3_name|
+                    try reach1.put(rule3_name, {});
+            }
+            if (!changed) break;
+        }
+        for (self.rules.items) |rule|
+            if (reach.get(rule.name).?.contains(rule.name))
+                try self.left_recursive_rules.put(rule.name, {});
+    }
 }
 
 fn parseNamedRule(self: *Self) Error!void {
@@ -304,6 +423,8 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("\n\n");
     try self.writeTypes(writer);
     try writer.writeAll("\n\n");
+    try self.writeIsLeftRecursive(writer);
+    try writer.writeAll("\n\n");
     {
         try writer.writeAll("pub const Token = enum {");
         var iter = self.tokens.keyIterator();
@@ -467,4 +588,11 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
             try std.fmt.format(writer, "[]const sql.Parser.NodeId(\"{s}\")", .{repeat.element.rule_name});
         },
     }
+}
+
+fn writeIsLeftRecursive(self: *Self, writer: anytype) anyerror!void {
+    try writer.writeAll("pub const is_left_recursive = struct {\n");
+    for (self.rules.items) |rule|
+        try std.fmt.format(writer, "pub const {s} = {};", .{ rule.name, self.left_recursive_rules.contains(rule.name) });
+    try writer.writeAll("};");
 }

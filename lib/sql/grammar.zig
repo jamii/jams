@@ -57,18 +57,19 @@ pub const Node = union(enum) {
     anon_40: @field(types, "anon_40"),
     exprs: @field(types, "exprs"),
     expr: @field(types, "expr"),
-    anon_43: @field(types, "anon_43"),
+    expr_plus: @field(types, "expr_plus"),
     anon_44: @field(types, "anon_44"),
     anon_45: @field(types, "anon_45"),
+    anon_46: @field(types, "anon_46"),
     case: @field(types, "case"),
     case_when: @field(types, "case_when"),
     case_else: @field(types, "case_else"),
-    anon_49: @field(types, "anon_49"),
+    anon_50: @field(types, "anon_50"),
     function_call: @field(types, "function_call"),
     function_name: @field(types, "function_name"),
-    anon_52: @field(types, "anon_52"),
     anon_53: @field(types, "anon_53"),
     anon_54: @field(types, "anon_54"),
+    anon_55: @field(types, "anon_55"),
     function_args: @field(types, "function_args"),
     value: @field(types, "value"),
     tokens: @field(types, "tokens"),
@@ -83,22 +84,23 @@ pub const Node = union(enum) {
     when: @field(types, "when"),
     WINDOW: @field(types, "WINDOW"),
     NATURAL: @field(types, "NATURAL"),
+    right: @field(types, "right"),
     BY: @field(types, "BY"),
     COLLATE: @field(types, "COLLATE"),
     IF: @field(types, "IF"),
     DEFERRED: @field(types, "DEFERRED"),
     WHERE: @field(types, "WHERE"),
     args: @field(types, "args"),
+    left: @field(types, "left"),
     modulus: @field(types, "modulus"),
     ATTACH: @field(types, "ATTACH"),
-    GLOB: @field(types, "GLOB"),
     bitwise_not: @field(types, "bitwise_not"),
+    GLOB: @field(types, "GLOB"),
     NOT: @field(types, "NOT"),
-    PRAGMA: @field(types, "PRAGMA"),
     FILTER: @field(types, "FILTER"),
     THEN: @field(types, "THEN"),
     tables_or_subqueries_or_join: @field(types, "tables_or_subqueries_or_join"),
-    WITH: @field(types, "WITH"),
+    PRAGMA: @field(types, "PRAGMA"),
     UNBOUNDED: @field(types, "UNBOUNDED"),
     FOR: @field(types, "FOR"),
     join_clause: @field(types, "join_clause"),
@@ -138,6 +140,7 @@ pub const Node = union(enum) {
     SET: @field(types, "SET"),
     TRANSACTION: @field(types, "TRANSACTION"),
     bitwise_and: @field(types, "bitwise_and"),
+    WITH: @field(types, "WITH"),
     COMMIT: @field(types, "COMMIT"),
     VALUES: @field(types, "VALUES"),
     EXCLUSIVE: @field(types, "EXCLUSIVE"),
@@ -411,16 +414,22 @@ pub const rules = struct {
             RuleRef{ .field_name = null, .rule_name = "CASE" }, RuleRef{ .field_name = "case", .rule_name = "case" },
         } },
         .{ .choice = RuleRef{ .field_name = "function_call", .rule_name = "function_call" } },
+        .{ .choice = RuleRef{ .field_name = "expr_plus", .rule_name = "expr_plus" } },
         .{ .choice = RuleRef{ .field_name = "value", .rule_name = "value" } },
     } };
-    pub const anon_43 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
-    pub const anon_44 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
-    pub const anon_45 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
+    pub const expr_plus = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "left", .rule_name = "expr" },
+        RuleRef{ .field_name = "plus", .rule_name = "plus" },
+        RuleRef{ .field_name = "right", .rule_name = "expr" },
+    } };
+    pub const anon_44 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
+    pub const anon_45 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
+    pub const anon_46 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
     pub const case = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = null, .rule_name = "CASE" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_43" },
-        RuleRef{ .field_name = "case_when", .rule_name = "anon_44" },
-        RuleRef{ .field_name = "case_else", .rule_name = "anon_45" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_44" },
+        RuleRef{ .field_name = "case_when", .rule_name = "anon_45" },
+        RuleRef{ .field_name = "case_else", .rule_name = "anon_46" },
         RuleRef{ .field_name = null, .rule_name = "END" },
     } };
     pub const case_when = Rule{ .all_of = &[_]RuleRef{
@@ -433,24 +442,24 @@ pub const rules = struct {
         RuleRef{ .field_name = null, .rule_name = "ELSE" },
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
     } };
-    pub const anon_49 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
+    pub const anon_50 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
     pub const function_call = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "function_name", .rule_name = "function_name" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "function_args", .rule_name = "anon_49" },
+        RuleRef{ .field_name = "function_args", .rule_name = "anon_50" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const function_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_52 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
-    pub const anon_53 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
-    pub const anon_54 = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = null, .rule_name = "anon_52" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_53" },
+    pub const anon_53 = Rule{ .optional = RuleRef{ .field_name = null, .rule_name = "DISTINCT" } };
+    pub const anon_54 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = null, .rule_name = "comma" } } };
+    pub const anon_55 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = null, .rule_name = "anon_53" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_54" },
     } };
     pub const function_args = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_54" } },
+        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_55" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
     } };
     pub const value = Rule{ .one_of = &[_]OneOf{
@@ -491,22 +500,23 @@ pub const rules = struct {
     pub const when = Rule{ .token = .when };
     pub const WINDOW = Rule{ .token = .WINDOW };
     pub const NATURAL = Rule{ .token = .NATURAL };
+    pub const right = Rule{ .token = .right };
     pub const BY = Rule{ .token = .BY };
     pub const COLLATE = Rule{ .token = .COLLATE };
     pub const IF = Rule{ .token = .IF };
     pub const DEFERRED = Rule{ .token = .DEFERRED };
     pub const WHERE = Rule{ .token = .WHERE };
     pub const args = Rule{ .token = .args };
+    pub const left = Rule{ .token = .left };
     pub const modulus = Rule{ .token = .modulus };
     pub const ATTACH = Rule{ .token = .ATTACH };
-    pub const GLOB = Rule{ .token = .GLOB };
     pub const bitwise_not = Rule{ .token = .bitwise_not };
+    pub const GLOB = Rule{ .token = .GLOB };
     pub const NOT = Rule{ .token = .NOT };
-    pub const PRAGMA = Rule{ .token = .PRAGMA };
     pub const FILTER = Rule{ .token = .FILTER };
     pub const THEN = Rule{ .token = .THEN };
     pub const tables_or_subqueries_or_join = Rule{ .token = .tables_or_subqueries_or_join };
-    pub const WITH = Rule{ .token = .WITH };
+    pub const PRAGMA = Rule{ .token = .PRAGMA };
     pub const UNBOUNDED = Rule{ .token = .UNBOUNDED };
     pub const FOR = Rule{ .token = .FOR };
     pub const join_clause = Rule{ .token = .join_clause };
@@ -546,6 +556,7 @@ pub const rules = struct {
     pub const SET = Rule{ .token = .SET };
     pub const TRANSACTION = Rule{ .token = .TRANSACTION };
     pub const bitwise_and = Rule{ .token = .bitwise_and };
+    pub const WITH = Rule{ .token = .WITH };
     pub const COMMIT = Rule{ .token = .COMMIT };
     pub const VALUES = Rule{ .token = .VALUES };
     pub const EXCLUSIVE = Rule{ .token = .EXCLUSIVE };
@@ -783,15 +794,21 @@ pub const types = struct {
     pub const expr = union(enum) {
         case: sql.Parser.NodeId("case"),
         function_call: sql.Parser.NodeId("function_call"),
+        expr_plus: sql.Parser.NodeId("expr_plus"),
         value: sql.Parser.NodeId("value"),
     };
-    pub const anon_43 = ?sql.Parser.NodeId("expr");
-    pub const anon_44 = []const sql.Parser.NodeId("case_when");
-    pub const anon_45 = ?sql.Parser.NodeId("case_else");
+    pub const expr_plus = struct {
+        left: sql.Parser.NodeId("expr"),
+        plus: sql.Parser.NodeId("plus"),
+        right: sql.Parser.NodeId("expr"),
+    };
+    pub const anon_44 = ?sql.Parser.NodeId("expr");
+    pub const anon_45 = []const sql.Parser.NodeId("case_when");
+    pub const anon_46 = ?sql.Parser.NodeId("case_else");
     pub const case = struct {
-        expr: sql.Parser.NodeId("anon_43"),
-        case_when: sql.Parser.NodeId("anon_44"),
-        case_else: sql.Parser.NodeId("anon_45"),
+        expr: sql.Parser.NodeId("anon_44"),
+        case_when: sql.Parser.NodeId("anon_45"),
+        case_else: sql.Parser.NodeId("anon_46"),
     };
     pub const case_when = struct {
         when: sql.Parser.NodeId("expr"),
@@ -800,23 +817,23 @@ pub const types = struct {
     pub const case_else = struct {
         expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_49 = ?sql.Parser.NodeId("function_args");
+    pub const anon_50 = ?sql.Parser.NodeId("function_args");
     pub const function_call = struct {
         function_name: sql.Parser.NodeId("function_name"),
         open_paren: sql.Parser.NodeId("open_paren"),
-        function_args: sql.Parser.NodeId("anon_49"),
+        function_args: sql.Parser.NodeId("anon_50"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const function_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_52 = ?sql.Parser.NodeId("DISTINCT");
-    pub const anon_53 = []const sql.Parser.NodeId("expr");
-    pub const anon_54 = struct {
-        expr: sql.Parser.NodeId("anon_53"),
+    pub const anon_53 = ?sql.Parser.NodeId("DISTINCT");
+    pub const anon_54 = []const sql.Parser.NodeId("expr");
+    pub const anon_55 = struct {
+        expr: sql.Parser.NodeId("anon_54"),
     };
     pub const function_args = union(enum) {
-        args: sql.Parser.NodeId("anon_54"),
+        args: sql.Parser.NodeId("anon_55"),
         star: sql.Parser.NodeId("star"),
     };
     pub const value = union(enum) {
@@ -857,22 +874,23 @@ pub const types = struct {
     pub const when = [2]usize;
     pub const WINDOW = [2]usize;
     pub const NATURAL = [2]usize;
+    pub const right = [2]usize;
     pub const BY = [2]usize;
     pub const COLLATE = [2]usize;
     pub const IF = [2]usize;
     pub const DEFERRED = [2]usize;
     pub const WHERE = [2]usize;
     pub const args = [2]usize;
+    pub const left = [2]usize;
     pub const modulus = [2]usize;
     pub const ATTACH = [2]usize;
-    pub const GLOB = [2]usize;
     pub const bitwise_not = [2]usize;
+    pub const GLOB = [2]usize;
     pub const NOT = [2]usize;
-    pub const PRAGMA = [2]usize;
     pub const FILTER = [2]usize;
     pub const THEN = [2]usize;
     pub const tables_or_subqueries_or_join = [2]usize;
-    pub const WITH = [2]usize;
+    pub const PRAGMA = [2]usize;
     pub const UNBOUNDED = [2]usize;
     pub const FOR = [2]usize;
     pub const join_clause = [2]usize;
@@ -912,6 +930,7 @@ pub const types = struct {
     pub const SET = [2]usize;
     pub const TRANSACTION = [2]usize;
     pub const bitwise_and = [2]usize;
+    pub const WITH = [2]usize;
     pub const COMMIT = [2]usize;
     pub const VALUES = [2]usize;
     pub const EXCLUSIVE = [2]usize;
@@ -1030,6 +1049,252 @@ pub const types = struct {
     pub const NO = [2]usize;
 };
 
+pub const is_left_recursive = struct {
+    pub const anon_0 = false;
+    pub const root = false;
+    pub const statement_or_query = false;
+    pub const anon_3 = false;
+    pub const create = false;
+    pub const create_table = false;
+    pub const insert = false;
+    pub const table_expr = false;
+    pub const values = false;
+    pub const anon_9 = false;
+    pub const column_specs = false;
+    pub const anon_11 = false;
+    pub const column_spec = false;
+    pub const typ = false;
+    pub const anon_14 = false;
+    pub const anon_15 = false;
+    pub const anon_16 = false;
+    pub const anon_17 = false;
+    pub const anon_18 = false;
+    pub const anon_19 = false;
+    pub const anon_20 = false;
+    pub const anon_21 = false;
+    pub const select = false;
+    pub const distinct_or_all = false;
+    pub const anon_24 = false;
+    pub const result_columns = false;
+    pub const result_column = false;
+    pub const anon_27 = false;
+    pub const from = false;
+    pub const table_or_subquery_or_join = false;
+    pub const anon_30 = false;
+    pub const tables_or_subqueries = false;
+    pub const table_or_subquery = false;
+    pub const where = false;
+    pub const group_by = false;
+    pub const having = false;
+    pub const window = false;
+    pub const order_by = false;
+    pub const ordering_term = false;
+    pub const limit = false;
+    pub const anon_40 = false;
+    pub const exprs = false;
+    pub const expr = true;
+    pub const expr_plus = true;
+    pub const anon_44 = false;
+    pub const anon_45 = false;
+    pub const anon_46 = false;
+    pub const case = false;
+    pub const case_when = false;
+    pub const case_else = false;
+    pub const anon_50 = false;
+    pub const function_call = false;
+    pub const function_name = false;
+    pub const anon_53 = false;
+    pub const anon_54 = false;
+    pub const anon_55 = false;
+    pub const function_args = false;
+    pub const value = false;
+    pub const tokens = false;
+    pub const FROM = false;
+    pub const string = false;
+    pub const not_greater_than = false;
+    pub const DO = false;
+    pub const INSTEAD = false;
+    pub const TEMPORARY = false;
+    pub const DELETE = false;
+    pub const DISTINCT = false;
+    pub const when = false;
+    pub const WINDOW = false;
+    pub const NATURAL = false;
+    pub const right = false;
+    pub const BY = false;
+    pub const COLLATE = false;
+    pub const IF = false;
+    pub const DEFERRED = false;
+    pub const WHERE = false;
+    pub const args = false;
+    pub const left = false;
+    pub const modulus = false;
+    pub const ATTACH = false;
+    pub const bitwise_not = false;
+    pub const GLOB = false;
+    pub const NOT = false;
+    pub const FILTER = false;
+    pub const THEN = false;
+    pub const tables_or_subqueries_or_join = false;
+    pub const PRAGMA = false;
+    pub const UNBOUNDED = false;
+    pub const FOR = false;
+    pub const join_clause = false;
+    pub const shift_left = false;
+    pub const EXISTS = false;
+    pub const AND = false;
+    pub const double_equal = false;
+    pub const BETWEEN = false;
+    pub const INSERT = false;
+    pub const CASCADE = false;
+    pub const INITIALLY = false;
+    pub const RECURSIVE = false;
+    pub const REPLACE = false;
+    pub const CREATE = false;
+    pub const open_paren = false;
+    pub const UNIQUE = false;
+    pub const greater_than = false;
+    pub const WHEN = false;
+    pub const NOTHING = false;
+    pub const OF = false;
+    pub const semicolon = false;
+    pub const RESTRICT = false;
+    pub const DEFERRABLE = false;
+    pub const NULLS = false;
+    pub const ON = false;
+    pub const close_paren = false;
+    pub const EXPLAIN = false;
+    pub const INTERSECT = false;
+    pub const FULL = false;
+    pub const PLAN = false;
+    pub const PRIMARY = false;
+    pub const name = false;
+    pub const EACH = false;
+    pub const OFFSET = false;
+    pub const ROLLBACK = false;
+    pub const shift_right = false;
+    pub const SET = false;
+    pub const TRANSACTION = false;
+    pub const bitwise_and = false;
+    pub const WITH = false;
+    pub const COMMIT = false;
+    pub const VALUES = false;
+    pub const EXCLUSIVE = false;
+    pub const ALL = false;
+    pub const ADD = false;
+    pub const ACTION = false;
+    pub const dot = false;
+    pub const AFTER = false;
+    pub const CONFLICT = false;
+    pub const DEFAULT = false;
+    pub const INNER = false;
+    pub const IS = false;
+    pub const IMMEDIATE = false;
+    pub const SAVEPOINT = false;
+    pub const FOLLOWING = false;
+    pub const RAISE = false;
+    pub const HAVING = false;
+    pub const TEMP = false;
+    pub const less_than = false;
+    pub const CHECK = false;
+    pub const RETURNING = false;
+    pub const INDEX = false;
+    pub const CONSTRAINT = false;
+    pub const then = false;
+    pub const CURRENT_TIME = false;
+    pub const ISNULL = false;
+    pub const ROW = false;
+    pub const plus = false;
+    pub const FAIL = false;
+    pub const USING = false;
+    pub const NOTNULL = false;
+    pub const CAST = false;
+    pub const AS = false;
+    pub const SELECT = false;
+    pub const COLUMN = false;
+    pub const END = false;
+    pub const IN = false;
+    pub const INDEXED = false;
+    pub const LEFT = false;
+    pub const QUERY = false;
+    pub const BEFORE = false;
+    pub const equal = false;
+    pub const OTHERS = false;
+    pub const REFERENCES = false;
+    pub const ORDER = false;
+    pub const ROWS = false;
+    pub const comma = false;
+    pub const TIES = false;
+    pub const LIMIT = false;
+    pub const bitwise_or = false;
+    pub const ABORT = false;
+    pub const DETACH = false;
+    pub const DROP = false;
+    pub const LAST = false;
+    pub const not_equal = false;
+    pub const INTO = false;
+    pub const CURRENT_TIMESTAMP = false;
+    pub const PRECEDING = false;
+    pub const RANGE = false;
+    pub const MATERIALIZED = false;
+    pub const OUTER = false;
+    pub const GENERATED = false;
+    pub const string_concat = false;
+    pub const REGEXP = false;
+    pub const AUTOINCREMENT = false;
+    pub const CROSS = false;
+    pub const CURRENT_DATE = false;
+    pub const BEGIN = false;
+    pub const ASC = false;
+    pub const EXCEPT = false;
+    pub const OR = false;
+    pub const RIGHT = false;
+    pub const TRIGGER = false;
+    pub const EXCLUDE = false;
+    pub const UPDATE = false;
+    pub const ESCAPE = false;
+    pub const RELEASE = false;
+    pub const LIKE = false;
+    pub const FIRST = false;
+    pub const minus = false;
+    pub const TODO = false;
+    pub const eof = false;
+    pub const WITHOUT = false;
+    pub const GROUPS = false;
+    pub const number = false;
+    pub const GROUP = false;
+    pub const CURRENT = false;
+    pub const FOREIGN = false;
+    pub const KEY = false;
+    pub const DATABASE = false;
+    pub const REINDEX = false;
+    pub const UNION = false;
+    pub const not_less_than = false;
+    pub const OVER = false;
+    pub const RENAME = false;
+    pub const PARTITION = false;
+    pub const forward_slash = false;
+    pub const ANALYZE = false;
+    pub const VACUUM = false;
+    pub const DESC = false;
+    pub const VIRTUAL = false;
+    pub const JOIN = false;
+    pub const NULL = false;
+    pub const ALWAYS = false;
+    pub const TO = false;
+    pub const star = false;
+    pub const MATCH = false;
+    pub const ELSE = false;
+    pub const greater_than_or_equal = false;
+    pub const VIEW = false;
+    pub const CASE = false;
+    pub const ALTER = false;
+    pub const IGNORE = false;
+    pub const TABLE = false;
+    pub const less_than_or_equal = false;
+    pub const NO = false;
+};
+
 pub const Token = enum {
     FROM,
     string,
@@ -1042,22 +1307,23 @@ pub const Token = enum {
     when,
     WINDOW,
     NATURAL,
+    right,
     BY,
     COLLATE,
     IF,
     DEFERRED,
     WHERE,
     args,
+    left,
     modulus,
     ATTACH,
-    GLOB,
     bitwise_not,
+    GLOB,
     NOT,
-    PRAGMA,
     FILTER,
     THEN,
     tables_or_subqueries_or_join,
-    WITH,
+    PRAGMA,
     UNBOUNDED,
     FOR,
     join_clause,
@@ -1097,6 +1363,7 @@ pub const Token = enum {
     SET,
     TRANSACTION,
     bitwise_and,
+    WITH,
     COMMIT,
     VALUES,
     EXCLUSIVE,

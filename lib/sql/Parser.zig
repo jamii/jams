@@ -8,14 +8,26 @@ const Node = sql.grammar.Node;
 const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
-// Last token is .eof. We don't use a sentinel type because I could lazy when trying to figure out the correct casts.
+// Last token is .eof. We don't use a sentinel type because I got lazy when trying to figure out the correct casts.
 tokens: []const sql.Tokenizer.TokenAndRange,
 debug: bool,
 pos: usize,
 nodes: u.ArrayList(Node),
+memo: u.DeepHashMap(MemoKey, MemoValue),
 // debug only
 rule_name_stack: u.ArrayList([]const u8),
 failures: u.ArrayList(Failure),
+
+pub const MemoKey = struct {
+    rule_name: []const u8,
+    start_pos: usize,
+};
+
+pub const MemoValue = struct {
+    node_id: ?usize,
+    end_pos: usize,
+    was_used: bool,
+};
 
 pub const Failure = struct {
     rule_names: []const []const u8,
@@ -43,20 +55,19 @@ pub fn init(
     tokens: []const sql.Tokenizer.TokenAndRange,
     debug: bool,
 ) Self {
-    //u.dump(tokens);
+    const allocator = arena.allocator();
     return Self{
         .arena = arena,
-        .allocator = arena.allocator(),
+        .allocator = allocator,
         .tokens = tokens,
         .debug = debug,
         .pos = 0,
-        .nodes = u.ArrayList(Node).init(arena.allocator()),
-        .rule_name_stack = u.ArrayList([]const u8).init(arena.allocator()),
-        .failures = u.ArrayList(Failure).init(arena.allocator()),
+        .nodes = u.ArrayList(Node).init(allocator),
+        .memo = u.DeepHashMap(MemoKey, MemoValue).init(allocator),
+        .rule_name_stack = u.ArrayList([]const u8).init(allocator),
+        .failures = u.ArrayList(Failure).init(allocator),
     };
 }
-
-// TODO memoize for left-recursion where needed
 
 pub fn push(self: *Self, comptime rule_name: []const u8, node: @field(types, rule_name)) !NodeId(rule_name) {
     const id = self.nodes.items.len;
@@ -80,9 +91,10 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8) Error!?@field(type
     defer if (self.debug) {
         _ = self.rule_name_stack.pop();
     };
-    const ResultType = @field(types, rule_name);
     if (self.debug)
         u.dump(.{ rule_name, self.pos, self.tokens[self.pos].token });
+
+    const ResultType = @field(types, rule_name);
     switch (@field(rules, rule_name)) {
         .token => |token| {
             const self_token = self.tokens[self.pos];

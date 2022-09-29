@@ -39,7 +39,9 @@ exprs = expr*comma;
 expr = # TODO
   | CASE => case
   | function_call
+  | expr_plus
   | value;
+expr_plus = expr=left plus expr=right;
 case = CASE expr? case_when* case_else? END;
 case_when = WHEN expr=when THEN expr=then;
 case_else = ELSE expr;
