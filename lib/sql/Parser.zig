@@ -13,21 +13,10 @@ tokens: []const sql.Tokenizer.TokenAndRange,
 debug: bool,
 pos: usize,
 nodes: u.ArrayList(Node),
-memo: u.DeepHashMap(MemoKey, MemoValue),
+memo: Memo,
 // debug only
 rule_name_stack: u.ArrayList([]const u8),
 failures: u.ArrayList(Failure),
-
-pub const MemoKey = struct {
-    rule_name: []const u8,
-    start_pos: usize,
-};
-
-pub const MemoValue = struct {
-    node_id: ?usize,
-    end_pos: usize,
-    was_used: bool,
-};
 
 pub const Failure = struct {
     rule_names: []const []const u8,
@@ -50,6 +39,44 @@ pub fn NodeId(comptime rule_name_: []const u8) type {
     };
 }
 
+pub const Memo = struct {
+    entries: u.ArrayList(MemoEntry),
+
+    pub fn get(self: Memo, rule_name: []const u8, start_pos: usize) ?*MemoEntry {
+        var i: usize = self.entries.items.len;
+        while (i > 0) : (i -= 1) {
+            const entry = &self.entries.items[i - 1];
+            if (entry.start_pos == start_pos and
+                u.deepEqual(entry.rule_name, rule_name))
+                return entry;
+            if (entry.start_pos < start_pos) break;
+        }
+        return null;
+    }
+
+    pub fn push(self: *Memo, rule_name: []const u8, start_pos: usize) !void {
+        try self.entries.append(.{
+            .rule_name = rule_name,
+            .start_pos = start_pos,
+            .end_pos = start_pos,
+            .node_id = null,
+            .was_used = false,
+        });
+    }
+
+    pub fn pop(self: *Memo) void {
+        _ = self.entries.pop();
+    }
+};
+
+pub const MemoEntry = struct {
+    rule_name: []const u8,
+    start_pos: usize,
+    node_id: ?usize,
+    end_pos: usize,
+    was_used: bool,
+};
+
 pub fn init(
     arena: *u.ArenaAllocator,
     tokens: []const sql.Tokenizer.TokenAndRange,
@@ -63,7 +90,7 @@ pub fn init(
         .debug = debug,
         .pos = 0,
         .nodes = u.ArrayList(Node).init(allocator),
-        .memo = u.DeepHashMap(MemoKey, MemoValue).init(allocator),
+        .memo = .{ .entries = u.ArrayList(MemoEntry).init(allocator) },
         .rule_name_stack = u.ArrayList([]const u8).init(allocator),
         .failures = u.ArrayList(Failure).init(allocator),
     };
@@ -82,44 +109,48 @@ pub fn get(self: *Self, node_id: anytype) @TypeOf(node_id).T {
 pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
     if (@field(sql.grammar.is_left_recursive, rule_name)) {
         const start_pos = self.pos;
-        const memo_key = MemoKey{
-            .rule_name = rule_name,
-            .start_pos = start_pos,
-        };
-        if (self.memo.getEntry(memo_key)) |entry| {
-            entry.value_ptr.was_used = true;
-            self.pos = entry.value_ptr.end_pos;
-            return if (entry.value_ptr.node_id) |id|
+        if (self.memo.get(rule_name, start_pos)) |entry| {
+            entry.was_used = true;
+            self.pos = entry.end_pos;
+            return if (entry.node_id) |id|
                 NodeId(rule_name){ .id = id }
             else
                 null;
         } else {
+            try self.memo.push(rule_name, start_pos);
+            defer self.memo.pop();
             var last_end_pos: usize = self.pos;
             var last_node_id: ?usize = null;
             while (true) {
-                try self.memo.put(memo_key, .{
-                    .end_pos = last_end_pos,
-                    .node_id = last_node_id,
-                    .was_used = false,
-                });
+                if (self.debug)
+                    u.dump(.{
+                        .rule_name = rule_name,
+                        .last_node_id = last_node_id,
+                        .last_end_pos = last_end_pos,
+                    });
+
+                const entry = self.memo.get(rule_name, start_pos).?;
+                entry.end_pos = last_end_pos;
+                entry.node_id = last_node_id;
+                entry.was_used = false;
+
                 self.pos = start_pos;
                 const node_id = if (try self.parsePush(rule_name)) |id| id.id else null;
                 const end_pos = self.pos;
 
+                if (self.debug)
+                    u.dump(.{ .rule_name = rule_name, .last_node_id = last_node_id, .last_end_pos = last_end_pos, .node_id = node_id, .end_pos = end_pos });
+
                 if (node_id == null or end_pos < last_end_pos)
                     break;
+
+                const cant_improve = end_pos == last_end_pos or !self.memo.get(rule_name, start_pos).?.was_used;
 
                 last_end_pos = end_pos;
                 last_node_id = node_id;
 
-                if (!self.memo.get(memo_key).?.was_used) {
-                    try self.memo.put(memo_key, .{
-                        .end_pos = last_end_pos,
-                        .node_id = last_node_id,
-                        .was_used = false,
-                    });
+                if (cant_improve)
                     break;
-                }
             }
             self.pos = last_end_pos;
             return if (last_node_id) |id|
