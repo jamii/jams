@@ -1,3 +1,0 @@
-[submodule "deps/Zig-ImGui"]
-	path = deps/zig-imgui
-	url = git@github.com:SpexGuy/Zig-ImGui.git

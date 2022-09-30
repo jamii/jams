@@ -1,5 +1,4 @@
 const std = @import("std");
-const imgui = @import("deps/zig-imgui/zig-imgui/imgui_build.zig");
 
 pub fn build(b: *std.build.Builder) !void {
     const mode = b.standardReleaseOptions();
@@ -16,12 +15,6 @@ pub fn build(b: *std.build.Builder) !void {
     const test_unit_run = test_unit_bin.run();
     const test_unit_step = b.step("test_unit", "Run unit tests");
     test_unit_step.dependOn(&test_unit_run.step);
-
-    const debugger = addBin(b, mode, target, "run_debugger", "Run the debugger", "./debugger/debugger.zig");
-    imgui.link(debugger.bin);
-    linkGlfw(debugger.bin, target);
-    linkGlad(debugger.bin, target);
-    debugger.bin.install();
 }
 
 fn addBin(
@@ -59,21 +52,4 @@ fn commonSetup(
 fn getRelativePath() []const u8 {
     comptime var src: std.builtin.SourceLocation = @src();
     return std.fs.path.dirname(src.file).? ++ std.fs.path.sep_str;
-}
-
-fn linkGlad(exe: *std.build.LibExeObjStep, target: std.zig.CrossTarget) void {
-    _ = target;
-    exe.addIncludeDir("debugger/imgui_impl/");
-    exe.addCSourceFile("debugger/imgui_impl/glad.c", &[_][]const u8{"-std=c99"});
-    //exe.linkSystemLibrary("opengl");
-}
-
-fn linkGlfw(exe: *std.build.LibExeObjStep, target: std.zig.CrossTarget) void {
-    if (target.isWindows()) {
-        exe.addObjectFile(if (target.getAbi() == .msvc) "debugger/imgui_impl/glfw3.lib" else "debugger/imgui_impl/libglfw3.a");
-        exe.linkSystemLibrary("gdi32");
-        exe.linkSystemLibrary("shell32");
-    } else {
-        exe.linkSystemLibrary("glfw");
-    }
 }
