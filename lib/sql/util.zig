@@ -48,7 +48,7 @@ pub fn dump(thing: anytype) void {
     writer.writeAll("\n") catch return;
 }
 
-pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
+pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) @TypeOf(writer).Error!void {
     const T = @TypeOf(thing);
     switch (@typeInfo(T)) {
         .Struct, .Enum, .Union => {

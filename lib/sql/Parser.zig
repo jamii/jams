@@ -240,7 +240,7 @@ pub fn getFailureSourcePos(self: Self, failure: Failure) usize {
     return self.tokenizer.token_ranges.items[failure.pos][0];
 }
 
-pub fn dumpInto(writer: anytype, indent: u32, self: Self) anyerror!void {
+pub fn dumpInto(writer: anytype, indent: u32, self: Self) @TypeOf(writer).Error!void {
     if (self.nodes.items.len == 0)
         try writer.writeAll("<empty>\n")
     else
@@ -251,7 +251,7 @@ pub const DumpNode = struct {
     self: Self,
     node_id: usize,
 
-    pub fn dumpInto(writer: anytype, indent: u32, self: DumpNode) anyerror!void {
+    pub fn dumpInto(writer: anytype, indent: u32, self: DumpNode) @TypeOf(writer).Error!void {
         const node = self.self.nodes.items[self.node_id];
         const source_range = self.self.getSourceRange(self.node_id);
         const source = self.self.tokenizer.source[source_range[0]..source_range[1]];

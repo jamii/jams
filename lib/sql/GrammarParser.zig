@@ -412,7 +412,7 @@ pub fn discardWhitespace(self: *Self) void {
     }
 }
 
-pub fn write(self: *Self, writer: anytype) anyerror!void {
+pub fn write(self: *Self, writer: anytype) @TypeOf(writer).Error!void {
     try writer.writeAll(
         \\const std = @import("std");
         \\const sql = @import("../sql.zig");
@@ -459,7 +459,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     }
 }
 
-fn writeNode(self: *Self, writer: anytype) anyerror!void {
+fn writeNode(self: *Self, writer: anytype) @TypeOf(writer).Error!void {
     try writer.writeAll("pub const Node = union(enum) {\n");
     for (self.rules.items) |rule| {
         try std.fmt.format(writer, "{s}: @field(types, \"{s}\"),\n", .{ rule.name, rule.name });
@@ -467,7 +467,7 @@ fn writeNode(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("};");
 }
 
-fn writeRules(self: *Self, writer: anytype) anyerror!void {
+fn writeRules(self: *Self, writer: anytype) @TypeOf(writer).Error!void {
     try writer.writeAll("pub const rules = struct {\n");
     for (self.rules.items) |rule| {
         try std.fmt.format(writer, "pub const {s} = ", .{rule.name});
@@ -477,7 +477,7 @@ fn writeRules(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("};");
 }
 
-fn writeRule(self: *Self, writer: anytype, rule: Rule) anyerror!void {
+fn writeRule(self: *Self, writer: anytype, rule: Rule) @TypeOf(writer).Error!void {
     switch (rule) {
         .token => |token| {
             try std.fmt.format(writer, "Rule{{.token = .{s}}}", .{token});
@@ -528,7 +528,7 @@ fn writeRule(self: *Self, writer: anytype, rule: Rule) anyerror!void {
     }
 }
 
-fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
+fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) @TypeOf(writer).Error!void {
     _ = self;
     try std.fmt.format(writer, "RuleRef{{.field_name = \"{}\", .rule_name = \"{}\"}}", .{
         std.zig.fmtEscapes(rule_ref.field_name),
@@ -536,7 +536,7 @@ fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
     });
 }
 
-fn writeTypes(self: *Self, writer: anytype) anyerror!void {
+fn writeTypes(self: *Self, writer: anytype) @TypeOf(writer).Error!void {
     try writer.writeAll("pub const types = struct {\n");
     for (self.rules.items) |rule| {
         try std.fmt.format(writer, "pub const {s} = ", .{rule.name});
@@ -546,7 +546,7 @@ fn writeTypes(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("};");
 }
 
-fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
+fn writeType(self: *Self, writer: anytype, rule: Rule) @TypeOf(writer).Error!void {
     _ = self;
     switch (rule) {
         .token => {
