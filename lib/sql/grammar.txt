@@ -50,72 +50,46 @@ first_or_last =
   | LAST;
 limit = LIMIT exprs; # TODO offset
 exprs = expr*comma;
-expr = expr_or_prec;
 
-expr_or_prec =
-  | expr_or
-  | expr_and_prec;
-expr_or = expr_and_prec=left OR expr_or_prec=right;
+expr = expr_or;
+expr_or = expr_and=left ((OR expr_or)?)=right;
+expr_and = expr_not=left ((AND expr_and)?)=right;
+expr_not = NOT* expr_incomp;
+expr_incomp = expr_comp=left ((op_incomp=op expr_incomp)?)=right;
+expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
+expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
+expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
 
-expr_and_prec =
-  | expr_and
-  | expr_not_prec;
-expr_and = expr_not_prec=left AND expr_and_prec=right;
-
-expr_not_prec =
-  | expr_not
-  | expr_incomp_prec;
-expr_not = NOT expr_not_prec=right;
-
-expr_incomp_prec =
-  | expr_incomp
-  | expr_comp_prec;
-expr_incomp =
-  | expr_incomp_binop
-  | expr_incomp_complex
-  | expr_incomp_postop;
-expr_incomp_complex = 
-  | expr_incomp_between
-  | expr_incomp_not_binop;
-expr_incomp_between = expr_comp_prec=left NOT? BETWEEN expr=start AND expr=end;
-expr_income_binop = expr_comp_prec=left (| equal | double_equal | not_equal | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM)=op expr_incomp_prec=right;
-IS_NOT = IS NOT;
-IS_DISTINCT_FROM = IS DISTINCT FROM;
-IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
-expr_income_not_binop = expr_comp_prec=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp_prec=right;
-expr_incomp_postop = expr_comp_prec=left (| ISNULL | NOTNULL | NOT_NULL)=op;
-NOT_NULL = NOT NULL;
-
-expr_comp_prec = 
-  | expr_comp
-  | expr_add_prec;
-expr_comp = expr_add_prec=left (| less_than | greater_than | less_than_or_equal | greater_than_equal)=op expr_comp_prec=right;
-
-expr_add_prec = 
-  | expr_add
-  | expr_mult_prec;
-expr_add = expr_mult_prec=left (| plus | minus)=op expr_add_prec=right;
-
-expr_mult_prec =
-  | expr_mult
-  | expr_atom;
-expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_mult_prec=right;
+op_incomp = | equal | double_equal | not_equal; # | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM;
+op_comp = | less_than | greater_than | less_than_or_equal | greater_than_equal;
+op_add = | plus | minus;
+op_mult = | star | forward_slash | percent;
 
 expr_atom =
   | CASE => case
-  | subquery
+  | subquery_prefix => subquery
   | open_paren => subexpr
   | function_call
   | table_column_ref
   | column_ref
   | value;
 
+expr_incomp_complex = 
+  | expr_incomp_between
+  | expr_incomp_not_binop;
+expr_incomp_between = expr_comp=left NOT? BETWEEN expr=start AND expr=end;
+IS_NOT = IS NOT;
+IS_DISTINCT_FROM = IS DISTINCT FROM;
+IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
+expr_income_not_binop = expr_comp=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp=right;
+expr_incomp_postop = expr_comp=left (| ISNULL | NOTNULL | NOT_NULL)=op;
+NOT_NULL = NOT NULL;
+
 table_column_ref = name=table dot name=column;
 column_ref = name;
 
 subquery_prefix = exists_or_not_exists? open_paren SELECT;
-subquery = #exists_or_not_exists? 
-open_paren select close_paren;
+subquery = exists_or_not_exists? open_paren select close_paren;
 exists_or_not_exists =
   | EXISTS
   | NOT_EXISTS;
