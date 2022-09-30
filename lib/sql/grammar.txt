@@ -9,11 +9,12 @@ statement_or_query =
   | DELETE => delete
   | DROP => drop;
 
-select = select_or_values+compound_operator order_by? limit?;
+select = select_or_values_compounded order_by? limit?;
+select_or_values_compounded = select_or_values+compound_operator;
 select_or_values = 
   | SELECT => select_body
   | VALUES => values;
-select_body = SELECT distinct_or_all? result_columns from? where? group_by? having? window?;
+select_body = SELECT distinct_or_all? result_column+comma from? where? group_by? having? window?;
 compound_operator =
   | UNION_ALL
   | UNION
@@ -23,7 +24,6 @@ UNION_ALL = UNION ALL;
 distinct_or_all =
   | DISTINCT
   | ALL;
-result_columns = result_column*comma;
 result_column = # TODO
   | result_expr
   | star
@@ -93,7 +93,7 @@ table_name = name;
 column_name = name;
 column_defs = open_paren column_def*comma close_paren;
 column_def = column_name typ? column_constraint?;
-create_index = CREATE UNIQUE? INDEX IF_NOT_EXISTS? index_name ON table_name open_paren indexed_column+comma close_paren (WHERE expr)?;
+create_index = CREATE UNIQUE? INDEX IF_NOT_EXISTS? index_name ON table_name open_paren indexed_column+comma close_paren (WHERE expr)?=where;
 index_name = table_name;
 indexed_column = column_name asc_or_desc?; # TODO
 create_view = CREATE TEMP_OR_TEMPORARY? VIEW IF_NOT_EXISTS? table_name column_defs? AS select;
@@ -104,7 +104,7 @@ values_or_select =
   | VALUES => values
   | select;
 typ = name typ_length?;
-typ_length = open_paren number (comma number)? close_paren;
+typ_length = open_paren number (comma number)?=numbers close_paren;
 column_constraint = 
   | primary_key;
 primary_key = PRIMARY KEY asc_or_desc?;
@@ -127,8 +127,8 @@ if_exists = IF EXISTS;
 
 exprs = expr*comma;
 expr = expr_or;
-expr_or = expr_and=left ((OR expr_or)?)=right;
-expr_and = expr_not=left ((AND expr_and)?)=right;
+expr_or = expr_and=left (OR expr_or)?=right;
+expr_and = expr_not=left (AND expr_and)?=right;
 expr_not = NOT* expr_incomp;
 expr_incomp = expr_comp=left (expr_incomp_right?)=right;
 expr_incomp_right =
@@ -143,9 +143,9 @@ expr_incomp_in_right =
   | select;
 expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_incomp=end;
 expr_incomp_postop = op_incomp_post+;
-expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
-expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
-expr_mult = expr_unary=left ((op_mult=op expr_mult)?)=right;
+expr_comp = expr_add=left (op_comp=op expr_comp)?=right;
+expr_add = expr_mult=left (op_add=op expr_add)?=right;
+expr_mult = expr_unary=left (op_mult=op expr_mult)?=right;
 expr_unary = op_unary* expr_atom;
 
 op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;

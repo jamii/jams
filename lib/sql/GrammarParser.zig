@@ -277,22 +277,6 @@ fn parseAllOf(self: *Self) Error!Rule {
     return Rule{ .all_of = all_ofs.toOwnedSlice() };
 }
 
-fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
-    const separator = if (self.tryParseName()) |name|
-        RuleRef{
-            .field_name = name,
-            .rule_name = name,
-        }
-    else
-        null;
-    const repeat = Rule{ .repeat = .{
-        .min_count = min_count,
-        .element = rule_ref.*,
-        .separator = separator,
-    } };
-    rule_ref.rule_name = try self.makeAnonRule(repeat);
-}
-
 fn makeAnonRule(self: *Self, rule: Rule) Error![]const u8 {
     const name = try self.makeAnonRuleName();
     try self.rules.append(.{ .name = name, .rule = rule });
@@ -357,27 +341,45 @@ fn tryParseName(self: *Self) ?[]const u8 {
 }
 
 fn tryParseModifier(self: *Self, rule_ref: *RuleRef) Error!void {
-    switch (source[self.pos]) {
-        '*' => {
-            self.consume("*");
-            try self.parseRepeat(0, rule_ref);
-        },
-        '+' => {
-            self.consume("+");
-            try self.parseRepeat(1, rule_ref);
-        },
-        '?' => {
-            self.consume("?");
-            const optional = Rule{ .optional = rule_ref.* };
-            rule_ref.rule_name = try self.makeAnonRule(optional);
-        },
-        '=' => {
-            self.consume("=");
-            const name = try self.parseName();
-            rule_ref.field_name = name;
-        },
-        else => {},
+    while (true) {
+        switch (source[self.pos]) {
+            '*' => {
+                self.consume("*");
+                try self.parseRepeat(0, rule_ref);
+            },
+            '+' => {
+                self.consume("+");
+                try self.parseRepeat(1, rule_ref);
+            },
+            '?' => {
+                self.consume("?");
+                const optional = Rule{ .optional = rule_ref.* };
+                rule_ref.rule_name = try self.makeAnonRule(optional);
+            },
+            '=' => {
+                self.consume("=");
+                const name = try self.parseName();
+                rule_ref.field_name = name;
+            },
+            else => break,
+        }
     }
+}
+
+fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
+    const separator = if (self.tryParseName()) |name|
+        RuleRef{
+            .field_name = name,
+            .rule_name = name,
+        }
+    else
+        null;
+    const repeat = Rule{ .repeat = .{
+        .min_count = min_count,
+        .element = rule_ref.*,
+        .separator = separator,
+    } };
+    rule_ref.rule_name = try self.makeAnonRule(repeat);
 }
 
 pub fn assert(self: *Self, cond: bool) void {
