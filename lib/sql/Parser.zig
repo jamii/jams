@@ -64,13 +64,13 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
     defer if (self.debug) {
         _ = self.rule_name_stack.pop();
     };
-    if (self.debug)
-        u.dump(.{
-            //self.rule_name_stack.items,
-            rule_name,
-            self.pos,
-            self.tokenizer.tokens.items[self.pos],
-        });
+    //if (self.debug)
+    //    u.dump(.{
+    //        //self.rule_name_stack.items,
+    //        rule_name,
+    //        self.pos,
+    //        self.tokenizer.tokens.items[self.pos],
+    //    });
 
     const start_pos = self.pos;
     var children = u.ArrayList(usize).init(self.allocator);
@@ -80,25 +80,25 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
         try self.node_ranges.append(.{ start_pos, self.pos });
         try self.node_children.append(children.toOwnedSlice());
 
-        if (self.debug)
-            u.dump(.{
-                //self.rule_name_stack.items,
-                rule_name,
-                self.pos,
-                self.tokenizer.tokens.items[self.pos],
-                .pass,
-            });
+        //if (self.debug)
+        //    u.dump(.{
+        //        //self.rule_name_stack.items,
+        //        rule_name,
+        //        self.pos,
+        //        self.tokenizer.tokens.items[self.pos],
+        //        .pass,
+        //    });
 
         return .{ .id = id };
     } else {
-        if (self.debug)
-            u.dump(.{
-                //self.rule_name_stack.items,
-                rule_name,
-                self.pos,
-                self.tokenizer.tokens.items[self.pos],
-                .fail,
-            });
+        //if (self.debug)
+        //    u.dump(.{
+        //        //self.rule_name_stack.items,
+        //        rule_name,
+        //        self.pos,
+        //        self.tokenizer.tokens.items[self.pos],
+        //        .fail,
+        //    });
 
         return null;
     }
