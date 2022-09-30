@@ -130,7 +130,7 @@ pub fn main() !void {
     u.dump(errors);
     std.debug.print("skips => {}\n", .{skips});
     std.debug.print("passes => {}", .{passes});
-    try sql.dumpRuleUsage();
+    //try sql.dumpRuleUsage();
 }
 
 fn incCount(hash_map: anytype, key: anytype) !void {

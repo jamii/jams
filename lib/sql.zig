@@ -44,7 +44,7 @@ pub const Database = struct {
         //    }
         //    unreachable;
         //};
-        try countRuleUsage(parser, root_id);
+        //try countRuleUsage(parser, root_id);
         //u.dump(parser);
         return error.Unimplemented;
     }
