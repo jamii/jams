@@ -73,6 +73,7 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
     //    });
 
     const start_pos = self.pos;
+    const start_id = self.nodes.items.len;
     var children = u.ArrayList(usize).init(self.allocator);
     if (try self.parseNode(rule_name, &children)) |node| {
         const id = self.nodes.items.len;
@@ -100,6 +101,12 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
         //        .fail,
         //    });
 
+        self.nodes.shrinkRetainingCapacity(start_id);
+        self.node_ranges.shrinkRetainingCapacity(start_id);
+        children.deinit();
+        for (self.node_children.items[start_id..]) |other_children|
+            self.allocator.free(other_children); // doesn't do much with the arena :)
+        self.node_children.shrinkRetainingCapacity(start_id);
         return null;
     }
 }
