@@ -30,17 +30,38 @@ result_column = # TODO
   | table_star; 
 result_expr = expr (AS column_name)?;
 table_star = table_name dot star;
-from = FROM tables_or_subqueries_or_join*;
-tables_or_subqueries_or_join =
+from = FROM tables_or_subqueries_or_joins*;
+tables_or_subqueries_or_joins = 
   | tables_or_subqueries
   | join_clause;
 tables_or_subqueries = table_or_subquery+comma;
 table_or_subquery = 
-  | table
-  | subquery;
-table = name binding?; # TODO
-binding = AS name;
-join_clause = TODO;
+  | table_as
+  | subquery_as
+  | tables_or_subqueries_or_joins_paren;
+tables_or_subqueries_or_joins_paren = open_paren tables_or_subqueries_or_joins close_paren;
+table_as = name as?;
+subquery_as = subquery as?;
+as = AS name;
+join_clause = table_or_subquery join_clause_right+;
+join_clause_right = join_op table_or_subquery join_constraint?;
+join_op = 
+  | comma # TODO Why do we need tables_or_subqueries if we have a comma op here? Precedence?
+  | left_join_op
+  | right_join_op
+  | full_join_op
+  | inner_join_op
+  | cross_join_op;
+left_join_op = NATURAL? LEFT OUTER? JOIN;
+right_join_op = NATURAL? RIGHT OUTER? JOIN;
+full_join_op = NATURAL? FULL OUTER? JOIN;
+inner_join_op = NATURAL? INNER JOIN;
+cross_join_op = CROSS JOIN;
+join_constraint = 
+  | join_constraint_on
+  | join_constraint_using;
+join_constraint_on = ON expr;
+join_constraint_using = USING column_names;
 where = WHERE expr;
 group_by = GROUP BY exprs;
 having = HAVING expr;
@@ -112,10 +133,10 @@ expr_and = expr_not=left ((AND expr_and)?)=right;
 expr_not = NOT* expr_incomp;
 expr_incomp = expr_comp=left (expr_incomp_right?)=right;
 expr_incomp_right =
+  | expr_incomp_postop
   | expr_incomp_binop
   | expr_incomp_in
-  | expr_incomp_between
-  | expr_incomp_postop;
+  | expr_incomp_between;
 expr_incomp_binop = op_incomp=op expr_incomp=right;
 expr_incomp_in = NOT? IN open_paren expr_incomp_in_right=right close_paren;
 expr_incomp_in_right = 
@@ -127,7 +148,7 @@ expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
 expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
 expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
 
-op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS | IS_NOT | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
+op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
 IS_NOT = IS NOT;
 IS_DISTINCT_FROM = IS DISTINCT FROM;
 IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
