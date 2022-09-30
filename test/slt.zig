@@ -22,6 +22,7 @@ pub fn main() !void {
 
     file: while (args.next()) |slt_path| {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
+        var skip = false;
 
         var database = try sql.Database.init(allocator);
         defer database.deinit();
@@ -38,8 +39,6 @@ pub fn main() !void {
 
         var cases = std.mem.split(u8, bytes.items, "\n\n");
         while (cases.next()) |case_untrimmed| {
-            var skip = false;
-
             const case = std.mem.trim(u8, case_untrimmed, " \n");
             if (case.len == 0) continue;
 
