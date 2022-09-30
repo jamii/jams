@@ -9,8 +9,8 @@ arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 rules: u.ArrayList(NamedRule),
 tokens: u.DeepHashSet([]const u8),
-rule_name_defs: u.DeepHashSet([]const u8),
-rule_name_refs: u.DeepHashSet([]const u8),
+rule_defs: u.DeepHashMap([]const u8, Rule),
+rule_refs: u.DeepHashSet([]const u8),
 pos: usize,
 
 const Error = error{OutOfMemory};
@@ -40,7 +40,7 @@ pub const Repeat = struct {
 };
 
 pub const RuleRef = struct {
-    field_name: ?[]const u8,
+    field_name: []const u8,
     rule_name: []const u8,
 };
 
@@ -51,8 +51,8 @@ pub fn init(arena: *u.ArenaAllocator) Self {
         .allocator = allocator,
         .rules = u.ArrayList(NamedRule).init(allocator),
         .tokens = u.DeepHashSet([]const u8).init(allocator),
-        .rule_name_defs = u.DeepHashSet([]const u8).init(allocator),
-        .rule_name_refs = u.DeepHashSet([]const u8).init(allocator),
+        .rule_defs = u.DeepHashMap([]const u8, Rule).init(allocator),
+        .rule_refs = u.DeepHashSet([]const u8).init(allocator),
         .pos = 0,
     };
 }
@@ -65,37 +65,10 @@ pub fn parseRules(self: *Self) Error!void {
     }
 
     // Fill tokens
-    {
-        var iter = std.mem.tokenize(u8, tokens_raw, "\n");
+    for ([_][]const u8{ tokens_raw, keywords_raw }) |raw| {
+        var iter = std.mem.tokenize(u8, raw, "\n");
         while (iter.next()) |token|
             try self.tokens.put(token, {});
-    }
-    {
-        var iter = std.mem.tokenize(u8, keywords_raw, "\n");
-        while (iter.next()) |keyword|
-            try self.tokens.put(keyword, {});
-    }
-
-    // rule_name_refs gets filled while parsing, because I'm lazy.
-
-    // fill rule_name_defs
-    for (self.rules.items) |rule|
-        try self.rule_name_defs.put(rule.name, {});
-
-    // Look for names that have been ref'ed but not def'ed
-    {
-        var any_missing_defs = false;
-        var iter = self.rule_name_refs.keyIterator();
-        while (iter.next()) |name| {
-            if (!self.rule_name_defs.contains(name.*) and
-                !self.tokens.contains(name.*))
-            {
-                any_missing_defs = true;
-                std.debug.print("{s}\n", .{name.*});
-            }
-        }
-        if (any_missing_defs)
-            u.panic("The above rules were used but not defined", .{});
     }
 
     // Generate a rule for each token.
@@ -106,6 +79,28 @@ pub fn parseRules(self: *Self) Error!void {
                 .name = token.*,
                 .rule = .{ .token = token.* },
             });
+    }
+
+    // rule_refs gets filled while parsing, because I'm lazy.
+
+    // fill rule_defs
+    for (self.rules.items) |rule|
+        try self.rule_defs.put(rule.name, rule.rule);
+
+    // Look for names that have been ref'ed but not def'ed
+    {
+        var any_missing_defs = false;
+        var iter = self.rule_refs.keyIterator();
+        while (iter.next()) |name| {
+            if (!self.rule_defs.contains(name.*) and
+                !self.tokens.contains(name.*))
+            {
+                any_missing_defs = true;
+                std.debug.print("{s}\n", .{name.*});
+            }
+        }
+        if (any_missing_defs)
+            u.panic("The above rules were used but not defined", .{});
     }
 
     // Check for left-recursive rules
@@ -285,7 +280,7 @@ fn parseAllOf(self: *Self) Error!Rule {
 fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
     const separator = if (self.tryParseName()) |name|
         RuleRef{
-            .field_name = null,
+            .field_name = name,
             .rule_name = name,
         }
     else
@@ -321,22 +316,16 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
             const all_of = try self.parseRule();
             self.consume(")");
             const name = try self.makeAnonRule(all_of);
-            try self.rule_name_refs.put(name, {});
+            try self.rule_refs.put(name, {});
             break :rule_ref RuleRef{
-                .field_name = null,
+                .field_name = name,
                 .rule_name = name,
             };
         } else {
             const name = self.tryParseName() orelse return null;
-            var is_token = true;
-            for (name) |char|
-                switch (char) {
-                    'A'...'Z', '_' => {},
-                    else => is_token = false,
-                };
-            try self.rule_name_refs.put(name, {});
+            try self.rule_refs.put(name, {});
             break :rule_ref RuleRef{
-                .field_name = if (is_token) null else name,
+                .field_name = name,
                 .rule_name = name,
             };
         }
@@ -541,16 +530,10 @@ fn writeRule(self: *Self, writer: anytype, rule: Rule) anyerror!void {
 
 fn writeRuleRef(self: *Self, writer: anytype, rule_ref: RuleRef) anyerror!void {
     _ = self;
-    if (rule_ref.field_name) |field_name|
-        try std.fmt.format(writer, "RuleRef{{.field_name = \"{}\", .rule_name = \"{}\"}}", .{
-            std.zig.fmtEscapes(field_name),
-            std.zig.fmtEscapes(rule_ref.rule_name),
-        })
-    else
-        try std.fmt.format(writer, "RuleRef{{.field_name = {}, .rule_name = \"{}\"}}", .{
-            null,
-            std.zig.fmtEscapes(rule_ref.rule_name),
-        });
+    try std.fmt.format(writer, "RuleRef{{.field_name = \"{}\", .rule_name = \"{}\"}}", .{
+        std.zig.fmtEscapes(rule_ref.field_name),
+        std.zig.fmtEscapes(rule_ref.rule_name),
+    });
 }
 
 fn writeTypes(self: *Self, writer: anytype) anyerror!void {
@@ -570,37 +553,28 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
             try writer.writeAll("void");
         },
         .one_of => |one_ofs| {
-            var is_enum = true;
+            try std.fmt.format(writer, "union(enum) {{\n", .{});
             for (one_ofs) |one_of| {
                 const rule_ref = switch (one_of) {
                     .choice => |choice| choice,
                     .committed_choice => |committed_choice| committed_choice[1],
                 };
-                if (rule_ref.field_name != null)
-                    is_enum = false;
-            }
-            if (is_enum)
-                try std.fmt.format(writer, "enum {{\n", .{})
-            else
-                try std.fmt.format(writer, "union(enum) {{\n", .{});
-            for (one_ofs) |one_of| {
-                const rule_ref = switch (one_of) {
-                    .choice => |choice| choice,
-                    .committed_choice => |committed_choice| committed_choice[1],
-                };
-                if (rule_ref.field_name) |field_name|
-                    try std.fmt.format(writer, "{s}: sql.Parser.NodeId(\"{s}\"),", .{ field_name, rule_ref.rule_name })
-                else
-                    try std.fmt.format(writer, "{s},", .{rule_ref.rule_name});
+                try std.fmt.format(
+                    writer,
+                    "{s}: sql.Parser.NodeId(\"{s}\"),",
+                    .{ rule_ref.field_name, rule_ref.rule_name },
+                );
             }
             try writer.writeAll("}");
         },
         .all_of => |all_ofs| {
             try std.fmt.format(writer, "struct {{\n", .{});
             for (all_ofs) |all_of| {
-                if (all_of.field_name) |field_name| {
-                    try std.fmt.format(writer, "{s}: sql.Parser.NodeId(\"{s}\"),", .{ field_name, all_of.rule_name });
-                }
+                try std.fmt.format(
+                    writer,
+                    "{s}: sql.Parser.NodeId(\"{s}\"),",
+                    .{ all_of.field_name, all_of.rule_name },
+                );
             }
             try writer.writeAll("}");
         },

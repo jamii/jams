@@ -127,7 +127,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
                     .choice => |rule_ref| {
                         if (try self.parse(rule_ref.rule_name)) |result| {
                             try children.append(result.id);
-                            return initChoice(ResultType, rule_ref, result);
+                            return @unionInit(ResultType, rule_ref.field_name, result);
                         } else {
                             // Try next one_of.
                             self.pos = start_pos;
@@ -139,7 +139,7 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
                             self.pos = start_pos;
                             if (try self.parse(rule_refs[1].rule_name)) |result| {
                                 try children.append(result.id);
-                                return initChoice(ResultType, rule_refs[1], result);
+                                return @unionInit(ResultType, rule_refs[1].field_name, result);
                             } else {
                                 // Already committed.
                                 return self.fail(rule_name);
@@ -157,9 +157,9 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
             var result: ResultType = undefined;
             inline for (all_ofs) |all_of| {
                 if (try self.parse(all_of.rule_name)) |field_result| {
-                    if (all_of.field_name) |field_name| {
+                    if (@hasField(ResultType, all_of.field_name)) {
                         try children.append(field_result.id);
-                        @field(result, field_name) = field_result;
+                        @field(result, all_of.field_name) = field_result;
                     }
                 } else {
                     return self.fail(rule_name);
@@ -214,14 +214,6 @@ fn fail(self: *Self, comptime rule_name: []const u8) Error!?@field(types, rule_n
             .remaining_tokens = self.tokenizer.tokens.items[self.pos..],
         });
     return null;
-}
-
-fn initChoice(comptime ChoiceType: type, comptime rule_ref: sql.grammar.RuleRef, result: anytype) ChoiceType {
-    return switch (@typeInfo(ChoiceType)) {
-        .Union => @unionInit(ChoiceType, rule_ref.field_name.?, result),
-        .Enum => @field(ChoiceType, rule_ref.rule_name),
-        else => unreachable,
-    };
 }
 
 pub fn greatestFailure(self: Self) ?Failure {
