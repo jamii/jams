@@ -2,15 +2,24 @@
 
 root = statement_or_query semicolon? eof;
 statement_or_query =
-  | SELECT => select
-  | VALUES => values
+  | select
   | CREATE => create
   | INSERT => insert
   | UPDATE => update
   | DELETE => delete
   | DROP => drop;
 
-select = SELECT distinct_or_all? result_columns from? where? group_by? having? window? order_by? limit?;
+select = select_or_values+compound_operator order_by? limit?;
+select_or_values = 
+  | SELECT => select_body
+  | VALUES => values;
+select_body = SELECT distinct_or_all? result_columns from? where? group_by? having? window?;
+compound_operator =
+  | UNION_ALL
+  | UNION
+  | INTERSECT
+  | EXCEPT;
+UNION_ALL = UNION ALL;
 distinct_or_all =
   | DISTINCT
   | ALL;
@@ -118,7 +127,7 @@ expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
 expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
 expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
 
-op_incomp = | equal | double_equal | not_equal | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
+op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS | IS_NOT | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
 IS_NOT = IS NOT;
 IS_DISTINCT_FROM = IS DISTINCT FROM;
 IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
