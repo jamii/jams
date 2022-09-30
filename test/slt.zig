@@ -16,6 +16,7 @@ pub fn main() !void {
     _ = args.next(); // discard executable name
 
     var passes: usize = 0;
+    var skips: usize = 0;
     var errors = u.DeepHashMap(TestError, usize).init(allocator);
     defer errors.deinit();
 
@@ -37,6 +38,8 @@ pub fn main() !void {
 
         var cases = std.mem.split(u8, bytes.items, "\n\n");
         while (cases.next()) |case_untrimmed| {
+            var skip = false;
+
             const case = std.mem.trim(u8, case_untrimmed, " \n");
             if (case.len == 0) continue;
 
@@ -75,8 +78,11 @@ pub fn main() !void {
                     const statement = std.mem.trim(u8, case[lines.index.?..], "\n");
                     if (runStatement(&database, statement, expected)) |_|
                         passes += 1
-                    else |err|
+                    else |err| {
                         try incCount(&errors, err);
+                        // Once we fail on one statement, the rest of the file is unlikely to pass anyway
+                        skip = true;
+                    }
                     break :header;
                 } else if (std.mem.eql(u8, kind, "query")) {
                     // Queries look like
@@ -111,8 +117,11 @@ pub fn main() !void {
                     const expected = std.mem.trim(u8, query_and_expected_iter.next() orelse "", "\n");
                     if (runQuery(&database, query, types, sort_mode, label, expected)) |_|
                         passes += 1
-                    else |err|
+                    else |err| {
+                        if (skip)
+                            skips += 1;
                         try incCount(&errors, err);
+                    }
                     break :header;
                 } else return error.UnexpectedInput;
             }
@@ -120,6 +129,7 @@ pub fn main() !void {
     }
 
     u.dump(errors);
+    std.debug.print("skips => {}\n", .{skips});
     std.debug.print("passes => {}", .{passes});
 }
 
