@@ -80,8 +80,8 @@ expr_incomp_complex =
 expr_incomp_between = expr_comp_prec=left NOT? BETWEEN expr=start AND expr=end;
 expr_income_binop = expr_comp_prec=left (| equal | double_equal | not_equal | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM)=op expr_incomp_prec=right;
 IS_NOT = IS NOT;
-IS_DISTINCT_FROM = IS_DISTINCT_FROM;
-IS_NOT_DISTINCT_FROM = IS_NOT_DISTINCT_FROM;
+IS_DISTINCT_FROM = IS DISTINCT FROM;
+IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
 expr_income_not_binop = expr_comp_prec=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp_prec=right;
 expr_incomp_postop = expr_comp_prec=left (| ISNULL | NOTNULL | NOT_NULL)=op;
 NOT_NULL = NOT NULL;
