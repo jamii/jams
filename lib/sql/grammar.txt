@@ -30,33 +30,31 @@ result_column = # TODO
   | table_star; 
 result_expr = expr (AS column_name)?;
 table_star = table_name dot star;
-from = FROM tables_or_subqueries_or_joins*;
-tables_or_subqueries_or_joins = 
-  | tables_or_subqueries
-  | join_clause;
-tables_or_subqueries = table_or_subquery+comma;
+from = FROM joins;
+joins = table_or_subquery join_clause*;
 table_or_subquery = 
   | table_as
   | subquery_as
-  | tables_or_subqueries_or_joins_paren;
-tables_or_subqueries_or_joins_paren = open_paren tables_or_subqueries_or_joins close_paren;
-table_as = name as?;
+  | sub_joins;
+sub_joins = open_paren joins close_paren;
+table_as = table_name as?;
 subquery_as = subquery as?;
-as = AS name;
-join_clause = table_or_subquery join_clause_right+;
-join_clause_right = join_op table_or_subquery join_constraint?;
+as = AS? table_name;
+join_clause = join_op table_or_subquery join_constraint?;
 join_op = 
-  | comma # TODO Why do we need tables_or_subqueries if we have a comma op here? Precedence?
-  | left_join_op
-  | right_join_op
-  | full_join_op
-  | inner_join_op
-  | cross_join_op;
-left_join_op = NATURAL? LEFT OUTER? JOIN;
-right_join_op = NATURAL? RIGHT OUTER? JOIN;
-full_join_op = NATURAL? FULL OUTER? JOIN;
-inner_join_op = NATURAL? INNER JOIN;
-cross_join_op = CROSS JOIN;
+  | comma
+  | join
+  | left_join
+  | right_join
+  | full_join
+  | inner_join
+  | cross_join;
+join = NATURAL? JOIN;
+left_join = NATURAL? LEFT OUTER? JOIN;
+right_join = NATURAL? RIGHT OUTER? JOIN;
+full_join = NATURAL? FULL OUTER? JOIN;
+inner_join = NATURAL? INNER JOIN;
+cross_join = CROSS JOIN;
 join_constraint = 
   | join_constraint_on
   | join_constraint_using;
@@ -146,7 +144,8 @@ expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_incomp=end;
 expr_incomp_postop = op_incomp_post+;
 expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
 expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
-expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
+expr_mult = expr_unary=left ((op_mult=op expr_mult)?)=right;
+expr_unary = op_unary* expr_atom;
 
 op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
 IS_NOT = IS NOT;
@@ -162,6 +161,7 @@ NOT_NULL = NOT NULL;
 op_comp = | less_than | greater_than | less_than_or_equal | greater_than_or_equal;
 op_add = | plus | minus;
 op_mult = | star | forward_slash | percent;
+op_unary = | bitwise_not | plus | minus;
 
 expr_atom =
   | CASE => case
@@ -187,7 +187,7 @@ subexpr = open_paren expr close_paren;
 case = CASE expr? case_when* case_else? END;
 case_when = WHEN expr=when THEN expr=then;
 case_else = ELSE expr;
-function_call = function_name open_paren function_args? close_paren; # TODO filter/over
+function_call = function_name open_paren distinct_or_all? function_args? close_paren; # TODO filter/over
 function_name = name; # TODO
 function_args =
   | (DISTINCT? expr+comma)=args
