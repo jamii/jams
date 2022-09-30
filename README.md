@@ -220,6 +220,18 @@ Executed in   11.85 secs    fish           external
 
 I'm going to spend tomorrow fleshing out as much of the parsing as possible and then switch to trying to analyze and execute some of the simpler tests.
 
+## Day 4
+
+I lost a lot of time in the morning to segfaults in the zig compiler. I eventually worked around it by moving more stuff from comptime to codegen.
+
+I fleshed out the parser and grammar a bunch more. I added memoization again to handle left recursion, as well as a ton of debugging output.
+
+I was making pretty good progress through parsing more and more queries when something I added caused some queries to loop seemingly forever in the parser. I've been bangind my head against this for hours and getting nowhere.
+
+I suspect something in the interaction between memoization and the stack of expr_* types that handle precedence in the grammar. Maybe I'll figure it out tomorrow.
+
+It's not looking good for passing any tests at all, let alone all of them :|
+
 &nbsp;
 
 &nbsp;
