@@ -185,10 +185,14 @@ pub fn next(self: *Self) !?Token {
                 else => {
                     self.pos -= 1;
                     const name = self.source[start_pos..self.pos];
-                    return if (sql.grammar.keywords.get(name)) |token|
-                        token
-                    else
-                        Token.name;
+                    const max_token_len = sql.grammar.keywords.kvs[sql.grammar.keywords.kvs.len - 1].key.len;
+                    if (name.len <= max_token_len) {
+                        var buffer: [max_token_len]u8 = undefined;
+                        const upper_name = std.ascii.upperString(&buffer, name);
+                        if (sql.grammar.keywords.get(upper_name)) |token|
+                            return token;
+                    }
+                    return Token.name;
                 },
             },
             .minus => switch (char) {
