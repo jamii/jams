@@ -28,7 +28,8 @@ result_column = # TODO
   | result_expr
   | star
   | table_star; 
-result_expr = expr (AS column_name)?;
+result_expr = expr as_column?;
+as_column = AS? column_name;
 table_star = table_name dot star;
 from = FROM joins;
 joins = table_or_subquery join_clause*;
@@ -37,9 +38,9 @@ table_or_subquery =
   | subquery_as
   | sub_joins;
 sub_joins = open_paren joins close_paren;
-table_as = table_name as?;
-subquery_as = subquery as?;
-as = AS? table_name;
+table_as = table_name as_table?;
+subquery_as = subquery as_table?;
+as_table = AS? table_name;
 join_clause = join_op table_or_subquery join_constraint?;
 join_op = 
   | comma
