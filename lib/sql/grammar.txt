@@ -103,7 +103,8 @@ expr_mult = expr_atom=left (| star | forward_slash | percent)=op expr_mult_prec=
 
 expr_atom =
   | CASE => case
-  | expr_paren
+  | subquery
+  | open_paren => subexpr
   | function_call
   | table_column_ref
   | column_ref
@@ -112,11 +113,9 @@ expr_atom =
 table_column_ref = name=table dot name=column;
 column_ref = name;
 
-expr_paren = 
-  | subquery
-  | subexpr;
-
-subquery = exists_or_not_exists? open_paren select close_paren;
+subquery_prefix = exists_or_not_exists? open_paren SELECT;
+subquery = #exists_or_not_exists? 
+open_paren select close_paren;
 exists_or_not_exists =
   | EXISTS
   | NOT_EXISTS;

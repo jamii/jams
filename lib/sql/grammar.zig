@@ -104,8 +104,8 @@ pub const Node = union(enum) {
     expr_atom: @field(types, "expr_atom"),
     table_column_ref: @field(types, "table_column_ref"),
     column_ref: @field(types, "column_ref"),
-    expr_paren: @field(types, "expr_paren"),
-    anon_91: @field(types, "anon_91"),
+    anon_90: @field(types, "anon_90"),
+    subquery_prefix: @field(types, "subquery_prefix"),
     subquery: @field(types, "subquery"),
     exists_or_not_exists: @field(types, "exists_or_not_exists"),
     NOT_EXISTS: @field(types, "NOT_EXISTS"),
@@ -508,14 +508,14 @@ pub const rules = struct {
         RuleRef{ .field_name = "expr", .rule_name = "anon_53" },
     } };
     pub const expr = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "expr_or_prec", .rule_name = "expr_or_prec" },
+        RuleRef{ .field_name = "expr_comp_prec", .rule_name = "expr_comp_prec" },
     } };
     pub const expr_or_prec = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_or", .rule_name = "expr_or" } },
-        .{ .choice = RuleRef{ .field_name = "expr_and_prec", .rule_name = "expr_and_prec" } },
+        .{ .choice = RuleRef{ .field_name = "expr_comp_prec", .rule_name = "expr_comp_prec" } },
     } };
     pub const expr_or = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "left", .rule_name = "expr_and_prec" },
+        RuleRef{ .field_name = "left", .rule_name = "expr_comp_prec" },
         RuleRef{ .field_name = null, .rule_name = "OR" },
         RuleRef{ .field_name = "right", .rule_name = "expr_or_prec" },
     } };
@@ -655,7 +655,10 @@ pub const rules = struct {
         .{ .committed_choice = .{
             RuleRef{ .field_name = null, .rule_name = "CASE" }, RuleRef{ .field_name = "case", .rule_name = "case" },
         } },
-        .{ .choice = RuleRef{ .field_name = "expr_paren", .rule_name = "expr_paren" } },
+        .{ .choice = RuleRef{ .field_name = "subquery", .rule_name = "subquery" } },
+        .{ .committed_choice = .{
+            RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" }, RuleRef{ .field_name = "subexpr", .rule_name = "subexpr" },
+        } },
         .{ .choice = RuleRef{ .field_name = "function_call", .rule_name = "function_call" } },
         .{ .choice = RuleRef{ .field_name = "table_column_ref", .rule_name = "table_column_ref" } },
         .{ .choice = RuleRef{ .field_name = "column_ref", .rule_name = "column_ref" } },
@@ -669,13 +672,13 @@ pub const rules = struct {
     pub const column_ref = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const expr_paren = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "subquery", .rule_name = "subquery" } },
-        .{ .choice = RuleRef{ .field_name = "subexpr", .rule_name = "subexpr" } },
+    pub const anon_90 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
+    pub const subquery_prefix = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_90" },
+        RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
+        RuleRef{ .field_name = null, .rule_name = "SELECT" },
     } };
-    pub const anon_91 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
     pub const subquery = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_91" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
         RuleRef{ .field_name = "select", .rule_name = "select" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
@@ -1108,14 +1111,14 @@ pub const types = struct {
         expr: sql.Parser.NodeId("anon_53"),
     };
     pub const expr = struct {
-        expr_or_prec: sql.Parser.NodeId("expr_or_prec"),
+        expr_comp_prec: sql.Parser.NodeId("expr_comp_prec"),
     };
     pub const expr_or_prec = union(enum) {
         expr_or: sql.Parser.NodeId("expr_or"),
-        expr_and_prec: sql.Parser.NodeId("expr_and_prec"),
+        expr_comp_prec: sql.Parser.NodeId("expr_comp_prec"),
     };
     pub const expr_or = struct {
-        left: sql.Parser.NodeId("expr_and_prec"),
+        left: sql.Parser.NodeId("expr_comp_prec"),
         right: sql.Parser.NodeId("expr_or_prec"),
     };
     pub const expr_and_prec = union(enum) {
@@ -1236,7 +1239,8 @@ pub const types = struct {
     };
     pub const expr_atom = union(enum) {
         case: sql.Parser.NodeId("case"),
-        expr_paren: sql.Parser.NodeId("expr_paren"),
+        subquery: sql.Parser.NodeId("subquery"),
+        subexpr: sql.Parser.NodeId("subexpr"),
         function_call: sql.Parser.NodeId("function_call"),
         table_column_ref: sql.Parser.NodeId("table_column_ref"),
         column_ref: sql.Parser.NodeId("column_ref"),
@@ -1250,13 +1254,12 @@ pub const types = struct {
     pub const column_ref = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const expr_paren = union(enum) {
-        subquery: sql.Parser.NodeId("subquery"),
-        subexpr: sql.Parser.NodeId("subexpr"),
+    pub const anon_90 = ?sql.Parser.NodeId("exists_or_not_exists");
+    pub const subquery_prefix = struct {
+        exists_or_not_exists: sql.Parser.NodeId("anon_90"),
+        open_paren: sql.Parser.NodeId("open_paren"),
     };
-    pub const anon_91 = ?sql.Parser.NodeId("exists_or_not_exists");
     pub const subquery = struct {
-        exists_or_not_exists: sql.Parser.NodeId("anon_91"),
         open_paren: sql.Parser.NodeId("open_paren"),
         select: sql.Parser.NodeId("select"),
         close_paren: sql.Parser.NodeId("close_paren"),
@@ -1616,8 +1619,8 @@ pub const is_left_recursive = struct {
     pub const expr_atom = false;
     pub const table_column_ref = false;
     pub const column_ref = false;
-    pub const expr_paren = false;
-    pub const anon_91 = false;
+    pub const anon_90 = false;
+    pub const subquery_prefix = false;
     pub const subquery = false;
     pub const exists_or_not_exists = false;
     pub const NOT_EXISTS = false;

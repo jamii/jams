@@ -161,6 +161,18 @@ pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_nam
 }
 
 pub fn parsePush(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
+    if (self.debug) try self.rule_name_stack.append(rule_name);
+    defer if (self.debug) {
+        _ = self.rule_name_stack.pop();
+    };
+    if (self.debug)
+        u.dump(.{
+            //self.rule_name_stack.items,
+            rule_name,
+            self.pos,
+            self.tokenizer.tokens.items[self.pos],
+        });
+
     const start_pos = self.pos;
     var children = u.ArrayList(usize).init(self.allocator);
     if (try self.parseNode(rule_name, &children)) |node| {
@@ -168,18 +180,32 @@ pub fn parsePush(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule
         try self.nodes.append(@unionInit(Node, rule_name, node));
         try self.node_ranges.append(.{ start_pos, self.pos });
         try self.node_children.append(children.toOwnedSlice());
+
+        if (self.debug)
+            u.dump(.{
+                //self.rule_name_stack.items,
+                rule_name,
+                self.pos,
+                self.tokenizer.tokens.items[self.pos],
+                .pass,
+            });
+
         return .{ .id = id };
-    } else return null;
+    } else {
+        if (self.debug)
+            u.dump(.{
+                //self.rule_name_stack.items,
+                rule_name,
+                self.pos,
+                self.tokenizer.tokens.items[self.pos],
+                .fail,
+            });
+
+        return null;
+    }
 }
 
 pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.ArrayList(usize)) Error!?@field(types, rule_name) {
-    if (self.debug) try self.rule_name_stack.append(rule_name);
-    defer if (self.debug) {
-        _ = self.rule_name_stack.pop();
-    };
-    if (self.debug)
-        u.dump(.{ rule_name, self.pos, self.tokenizer.tokens.items[self.pos] });
-
     const ResultType = @field(types, rule_name);
     switch (@field(rules, rule_name)) {
         .token => |token| {
