@@ -65,7 +65,9 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) @TypeOf(writer).Er
         try writer.writeAll("ArenaAllocator{}");
     } else if (comptime std.mem.startsWith(u8, @typeName(T), "array_list.ArrayList")) {
         try dumpInto(writer, indent, thing.items);
-    } else if (comptime std.mem.startsWith(u8, @typeName(T), "hash_map.HashMap")) {
+    } else if (comptime std.mem.startsWith(u8, @typeName(T), "hash_map.HashMap") and
+        !std.mem.endsWith(u8, @typeName(T), "Entry"))
+    {
         var iter = thing.iterator();
         const is_set = @TypeOf(iter.next().?.value_ptr.*) == void;
         try writer.writeAll(if (is_set) "HashSet(\n" else "HashMap(\n");

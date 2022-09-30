@@ -33,8 +33,8 @@ pub fn NodeId(comptime rule_name_: []const u8) type {
         pub const rule_name = rule_name_;
         pub const T = @field(types, rule_name);
         id: usize,
-        pub fn get(self: @This(), nodes: []const Node) T {
-            return @field(nodes[self.id], rule_name);
+        pub fn get(self: @This(), parser: Self) T {
+            return @field(parser.nodes.items[self.id], rule_name);
         }
     };
 }
@@ -57,10 +57,6 @@ pub fn init(
         .rule_name_stack = u.ArrayList([]const u8).init(allocator),
         .failures = u.ArrayList(Failure).init(allocator),
     };
-}
-
-pub fn get(self: *Self, node_id: anytype) @TypeOf(node_id).T {
-    return @field(self.nodes.items[node_id.id], @TypeOf(node_id).rule_name);
 }
 
 pub fn parse(self: *Self, comptime rule_name: []const u8) Error!?NodeId(rule_name) {
