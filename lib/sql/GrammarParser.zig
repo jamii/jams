@@ -3,13 +3,14 @@ const u = @import("./util.zig");
 
 const Self = @This();
 const source = @embedFile("./grammar.txt");
-const keywords = @embedFile("./keywords.txt");
+const keywords_raw = @embedFile("./keywords.txt");
+const tokens_raw = @embedFile("./tokens.txt");
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 rules: u.ArrayList(NamedRule),
+tokens: u.DeepHashSet([]const u8),
 rule_name_defs: u.DeepHashSet([]const u8),
 rule_name_refs: u.DeepHashSet([]const u8),
-tokens: u.DeepHashSet([]const u8),
 pos: usize,
 
 const Error = error{OutOfMemory};
@@ -49,9 +50,9 @@ pub fn init(arena: *u.ArenaAllocator) Self {
         .arena = arena,
         .allocator = allocator,
         .rules = u.ArrayList(NamedRule).init(allocator),
+        .tokens = u.DeepHashSet([]const u8).init(allocator),
         .rule_name_defs = u.DeepHashSet([]const u8).init(allocator),
         .rule_name_refs = u.DeepHashSet([]const u8).init(allocator),
-        .tokens = u.DeepHashSet([]const u8).init(allocator),
         .pos = 0,
     };
 }
@@ -63,36 +64,51 @@ pub fn parseRules(self: *Self) Error!void {
         try self.parseNamedRule();
     }
 
+    // Fill tokens
+    {
+        var iter = std.mem.tokenize(u8, tokens_raw, "\n");
+        while (iter.next()) |token|
+            try self.tokens.put(token, {});
+    }
+    {
+        var iter = std.mem.tokenize(u8, keywords_raw, "\n");
+        while (iter.next()) |keyword|
+            try self.tokens.put(keyword, {});
+    }
+
     // rule_name_refs gets filled while parsing, because I'm lazy.
 
     // fill rule_name_defs
     for (self.rules.items) |rule|
         try self.rule_name_defs.put(rule.name, {});
 
-    // Any name that is reffed but not deffed is assumed to be a token.
+    // Look for names that have been ref'ed but not def'ed
     {
+        var any_missing_defs = false;
         var iter = self.rule_name_refs.keyIterator();
         while (iter.next()) |name| {
-            if (!self.rule_name_defs.contains(name.*))
-                try self.tokens.put(name.*, {});
+            if (!self.rule_name_defs.contains(name.*) and
+                !self.tokens.contains(name.*))
+            {
+                any_missing_defs = true;
+                std.debug.print("{s}\n", .{name.*});
+            }
         }
-    }
-
-    // Add keywords to tokens list too.
-    {
-        var iter = std.mem.tokenize(u8, keywords, "\n");
-        while (iter.next()) |keyword|
-            try self.tokens.put(keyword, {});
+        if (any_missing_defs)
+            u.panic("The above rules were used but not defined", .{});
     }
 
     // Generate a rule for each token.
-    var iter = self.tokens.keyIterator();
-    while (iter.next()) |token|
-        try self.rules.append(.{
-            .name = token.*,
-            .rule = .{ .token = token.* },
-        });
+    {
+        var iter = self.tokens.keyIterator();
+        while (iter.next()) |token|
+            try self.rules.append(.{
+                .name = token.*,
+                .rule = .{ .token = token.* },
+            });
+    }
 
+    // Check for left-recursive rules
     {
         // Figure out which rules might match empty strings
         var may_be_empty = u.DeepHashSet([]const u8).init(self.allocator);
@@ -145,7 +161,7 @@ pub fn parseRules(self: *Self) Error!void {
             if (!changed) break;
         }
 
-        // Figure out which rules are left recursive
+        // Figure out which rules can reach which other rules without consuming tokens
         var reach = u.DeepHashMap([]const u8, u.DeepHashSet([]const u8)).init(self.allocator);
         for (self.rules.items) |rule| {
             var init_reach = u.DeepHashSet([]const u8).init(self.allocator);
@@ -204,6 +220,8 @@ pub fn parseRules(self: *Self) Error!void {
             }
             if (!changed) break;
         }
+
+        // Warn about any left-recursive rules
         var any_left_recursive_rules = false;
         for (self.rules.items) |rule|
             if (reach.get(rule.name).?.contains(rule.name)) {
@@ -265,7 +283,7 @@ fn parseAllOf(self: *Self) Error!Rule {
 }
 
 fn parseRepeat(self: *Self, min_count: usize, rule_ref: *RuleRef) Error!void {
-    const separator = if (try self.tryParseName()) |name|
+    const separator = if (self.tryParseName()) |name|
         RuleRef{
             .field_name = null,
             .rule_name = name,
@@ -303,18 +321,20 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
             const all_of = try self.parseRule();
             self.consume(")");
             const name = try self.makeAnonRule(all_of);
+            try self.rule_name_refs.put(name, {});
             break :rule_ref RuleRef{
                 .field_name = null,
                 .rule_name = name,
             };
         } else {
-            const name = (try self.tryParseName()) orelse return null;
+            const name = self.tryParseName() orelse return null;
             var is_token = true;
             for (name) |char|
                 switch (char) {
                     'A'...'Z', '_' => {},
                     else => is_token = false,
                 };
+            try self.rule_name_refs.put(name, {});
             break :rule_ref RuleRef{
                 .field_name = if (is_token) null else name,
                 .rule_name = name,
@@ -326,12 +346,12 @@ fn tryParseRuleRef(self: *Self) Error!?RuleRef {
 }
 
 fn parseName(self: *Self) ![]const u8 {
-    const name = try self.tryParseName();
+    const name = self.tryParseName();
     self.assert(name != null);
     return name.?;
 }
 
-fn tryParseName(self: *Self) !?[]const u8 {
+fn tryParseName(self: *Self) ?[]const u8 {
     const start_pos = self.pos;
     while (true) {
         switch (source[self.pos]) {
@@ -343,9 +363,7 @@ fn tryParseName(self: *Self) !?[]const u8 {
     if (self.pos == start_pos) {
         return null;
     } else {
-        const name = source[start_pos..self.pos];
-        try self.rule_name_refs.put(name, {});
-        return name;
+        return source[start_pos..self.pos];
     }
 }
 
@@ -445,7 +463,7 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
             \\    break :keywords std.ComptimeStringMap(Token, .{
             \\
         );
-        var keywords_iter = std.mem.tokenize(u8, keywords, "\n");
+        var keywords_iter = std.mem.tokenize(u8, keywords_raw, "\n");
         while (keywords_iter.next()) |keyword|
             try std.fmt.format(writer, ".{{\"{}\", Token.{s}}},\n", .{ std.zig.fmtEscapes(keyword), keyword });
         try writer.writeAll("});};");

@@ -32,13 +32,14 @@ table_or_subquery =
   | subquery;
 table = name binding?; # TODO
 binding = AS name;
+join_clause = TODO;
 where = WHERE expr;
 group_by = GROUP BY exprs;
 having = HAVING expr;
 window = WINDOW TODO;
 order_by = ORDER BY ordering_terms;
 ordering_terms = ordering_term+comma;
-ordering_term = collate? asc_or_desc? null_first_or_last? expr;
+ordering_term = collate? asc_or_desc? nulls_first_or_last? expr;
 collate = COLLATE collation_name;
 collation_name = name; # TODO
 asc_or_desc =
@@ -61,7 +62,7 @@ expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
 expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
 
 op_incomp = | equal | double_equal | not_equal; # | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM;
-op_comp = | less_than | greater_than | less_than_or_equal | greater_than_equal;
+op_comp = | less_than | greater_than | less_than_or_equal | greater_than_or_equal;
 op_add = | plus | minus;
 op_mult = | star | forward_slash | percent;
 
@@ -81,7 +82,7 @@ expr_incomp_between = expr_comp=left NOT? BETWEEN expr=start AND expr=end;
 IS_NOT = IS NOT;
 IS_DISTINCT_FROM = IS DISTINCT FROM;
 IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
-expr_income_not_binop = expr_comp=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp=right;
+expr_incomp_not_binop = expr_comp=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB)=op expr_incomp=right;
 expr_incomp_postop = expr_comp=left (| ISNULL | NOTNULL | NOT_NULL)=op;
 NOT_NULL = NOT NULL;
 
@@ -107,28 +108,5 @@ function_args =
   | star;
 value =
   | number
-  | string;
-
-tokens =
-  | less_than
-  | greater_than
-  | less_than_or_equal
-  | greater_than_or_equal
-  | not_less_than
-  | not_greater_than
-  | equal
-  | double_equal
-  | not_equal
-  | plus
-  | minus
-  | star
-  | forward_slash
-  | dot
-  | percent
-  | bitwise_and
-  | bitwise_or
-  | bitwise_not
-  | string_concat
-  | shift_left
-  | shift_right
-;
+  | string
+  | NULL;
