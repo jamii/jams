@@ -5,23 +5,21 @@ statement_or_query =
   | SELECT => select
   | VALUES => values
   | CREATE => create
-  | INSERT => insert;
-create =
-  | (CREATE TABLE) => create_table;
-create_table = CREATE TABLE name open_paren column_specs close_paren;
-insert = INSERT INTO name open_paren column_specs close_paren table_expr;
-table_expr = 
-  | VALUES => values;
-values = VALUES open_paren exprs close_paren;
-column_specs = column_spec*comma;
-column_spec = name typ?;
-typ = name;
+  | INSERT => insert
+  | UPDATE => update
+  | DROP => drop;
+
 select = SELECT distinct_or_all? result_columns from? where? group_by? having? window? order_by? limit?;
 distinct_or_all =
   | DISTINCT
   | ALL;
 result_columns = result_column*comma;
-result_column = expr; # TODO
+result_column = # TODO
+  | result_expr
+  | star
+  | table_star; 
+result_expr = expr (AS column_name)?;
+table_star = table_name dot star;
 from = FROM tables_or_subqueries_or_join*;
 tables_or_subqueries_or_join =
   | tables_or_subqueries
@@ -50,8 +48,52 @@ first_or_last =
   | FIRST
   | LAST;
 limit = LIMIT exprs; # TODO offset
-exprs = expr*comma;
 
+values = VALUES row+comma;
+row = open_paren exprs close_paren;
+
+create =
+  | create_table
+  | create_index
+  | create_view;
+create_table = CREATE TEMP_OR_TEMPORARY? TABLE IF_NOT_EXISTS? table_name column_defs;
+TEMP_OR_TEMPORARY = | TEMP | TEMPORARY;
+IF_NOT_EXISTS = IF NOT EXISTS;
+table_name = name;
+column_name = name;
+column_defs = open_paren column_def*comma close_paren;
+column_def = column_name typ? column_constraint?;
+create_index = CREATE UNIQUE? INDEX IF_NOT_EXISTS? index_name ON table_name open_paren indexed_column+comma close_paren (WHERE expr)?;
+index_name = table_name;
+indexed_column = column_name asc_or_desc?; # TODO
+create_view = CREATE TEMP_OR_TEMPORARY? VIEW IF_NOT_EXISTS? table_name column_defs? AS select;
+
+insert = INSERT INTO table_name column_names? values_or_select;
+column_names = open_paren column_name*comma close_paren;
+values_or_select =
+  | VALUES => values
+  | select;
+typ = name typ_length?;
+typ_length = open_paren number (comma number)? close_paren;
+column_constraint = 
+  | primary_key;
+primary_key = PRIMARY KEY asc_or_desc?;
+
+update = UPDATE table_name SET column_name equal expr update_from? update_where?; # TODO
+update_from = TODO;
+update_where = WHERE expr;
+
+drop =
+  | drop_table
+  | drop_index
+  | drop_view;
+drop_table = DROP TABLE if_exists? table_name;
+drop_index = DROP INDEX if_exists? table_name;
+drop_view = DROP VIEW if_exists? table_name;
+if_exists = IF EXISTS;
+
+
+exprs = expr*comma;
 expr = expr_or;
 expr_or = expr_and=left ((OR expr_or)?)=right;
 expr_and = expr_not=left ((AND expr_and)?)=right;
@@ -61,7 +103,12 @@ expr_comp = expr_add=left ((op_comp=op expr_comp)?)=right;
 expr_add = expr_mult=left ((op_add=op expr_add)?)=right;
 expr_mult = expr_atom=left ((op_mult=op expr_atom)?)=right;
 
-op_incomp = | equal | double_equal | not_equal; # | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM;
+op_incomp = | equal | double_equal | not_equal | IS | IS_NOT | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
+NOT_IN = NOT IN;
+NOT_MATCH = NOT MATCH;
+NOT_LIKE = NOT LIKE;
+NOT_REGEXP = NOT REGEXP;
+NOT_GLOB = NOT GLOB;
 op_comp = | less_than | greater_than | less_than_or_equal | greater_than_or_equal;
 op_add = | plus | minus;
 op_mult = | star | forward_slash | percent;
@@ -86,8 +133,8 @@ expr_incomp_not_binop = expr_comp=left NOT? (| IN | MATCH | LIKE | REGEXP | GLOB
 expr_incomp_postop = expr_comp=left (| ISNULL | NOTNULL | NOT_NULL)=op;
 NOT_NULL = NOT NULL;
 
-table_column_ref = name=table dot name=column;
-column_ref = name;
+column_ref = column_name;
+table_column_ref = table_name dot column_name;
 
 subquery_prefix = exists_or_not_exists? open_paren SELECT;
 subquery = exists_or_not_exists? open_paren select close_paren;

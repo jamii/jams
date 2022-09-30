@@ -79,13 +79,9 @@ pub fn next(self: *Self) !?Token {
                 '|' => state = .bitwise_or,
                 '&' => return Token.bitwise_and,
                 '~' => return Token.bitwise_not,
-                '"' => {
-                    string_start = '"';
+                '"', '\'' => {
+                    string_start = char;
                     state = .string;
-                },
-                '\'' => {
-                    string_start = '\'';
-                    state = .comment;
                 },
                 ';' => return Token.semicolon,
                 'a'...'z', 'A'...'Z' => state = .name,
@@ -146,10 +142,6 @@ pub fn next(self: *Self) !?Token {
                 else => {},
             },
             .string_maybe_end => switch (char) {
-                0 => {
-                    self.pos -= 1;
-                    return Token.string;
-                },
                 '\'', '"' => {
                     if (char == string_start) {
                         state = .string;
@@ -158,7 +150,10 @@ pub fn next(self: *Self) !?Token {
                         return Token.string;
                     }
                 },
-                else => state = .string,
+                else => {
+                    self.pos -= 1;
+                    return Token.string;
+                },
             },
             .comment => switch (char) {
                 0, '\r', '\n' => {
