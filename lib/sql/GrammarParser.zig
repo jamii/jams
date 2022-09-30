@@ -10,7 +10,6 @@ rules: u.ArrayList(NamedRule),
 rule_name_defs: u.DeepHashSet([]const u8),
 rule_name_refs: u.DeepHashSet([]const u8),
 tokens: u.DeepHashSet([]const u8),
-left_recursive_rules: u.DeepHashSet([]const u8),
 pos: usize,
 
 const Error = error{OutOfMemory};
@@ -53,7 +52,6 @@ pub fn init(arena: *u.ArenaAllocator) Self {
         .rule_name_defs = u.DeepHashSet([]const u8).init(allocator),
         .rule_name_refs = u.DeepHashSet([]const u8).init(allocator),
         .tokens = u.DeepHashSet([]const u8).init(allocator),
-        .left_recursive_rules = u.DeepHashSet([]const u8).init(allocator),
         .pos = 0,
     };
 }
@@ -206,9 +204,14 @@ pub fn parseRules(self: *Self) Error!void {
             }
             if (!changed) break;
         }
+        var any_left_recursive_rules = false;
         for (self.rules.items) |rule|
-            if (reach.get(rule.name).?.contains(rule.name))
-                try self.left_recursive_rules.put(rule.name, {});
+            if (reach.get(rule.name).?.contains(rule.name)) {
+                any_left_recursive_rules = true;
+                std.debug.print("{s}", .{rule.name});
+            };
+        if (any_left_recursive_rules)
+            u.panic("The above rules are left-recursive.", .{});
     }
 }
 
@@ -427,8 +430,6 @@ pub fn write(self: *Self, writer: anytype) anyerror!void {
     try writer.writeAll("\n\n");
     try self.writeTypes(writer);
     try writer.writeAll("\n\n");
-    try self.writeIsLeftRecursive(writer);
-    try writer.writeAll("\n\n");
     {
         try writer.writeAll("pub const Token = enum {");
         var iter = self.tokens.keyIterator();
@@ -592,11 +593,4 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) anyerror!void {
             try std.fmt.format(writer, "[]const sql.Parser.NodeId(\"{s}\")", .{repeat.element.rule_name});
         },
     }
-}
-
-fn writeIsLeftRecursive(self: *Self, writer: anytype) anyerror!void {
-    try writer.writeAll("pub const is_left_recursive = struct {\n");
-    for (self.rules.items) |rule|
-        try std.fmt.format(writer, "pub const {s} = {};", .{ rule.name, self.left_recursive_rules.contains(rule.name) });
-    try writer.writeAll("};");
 }
