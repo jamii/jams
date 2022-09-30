@@ -162,7 +162,7 @@ NOT_NULL = NOT NULL;
 op_comp = | less_than | greater_than | less_than_or_equal | greater_than_or_equal;
 op_add = | plus | minus;
 op_mult = | star | forward_slash | percent;
-op_unary = | bitwise_not | plus | minus;
+op_unary = | bit_not | plus | minus;
 
 expr_atom =
   | CASE => case

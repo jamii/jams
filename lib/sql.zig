@@ -3,6 +3,7 @@ pub const GrammarParser = @import("sql/GrammarParser.zig");
 pub const grammar = @import("sql/grammar.zig");
 pub const Tokenizer = @import("sql/Tokenizer.zig");
 pub const Parser = @import("sql/Parser.zig");
+pub const Planner = @import("sql/Planner.zig");
 
 const std = @import("std");
 const u = util;
@@ -44,10 +45,12 @@ pub const Database = struct {
         //    }
         //    unreachable;
         //};
-        _ = root_id;
         //try countRuleUsage(parser, root_id);
         //u.dump(parser);
-        return error.Unimplemented;
+        var planner = Planner.init(&arena, tokenizer, parser);
+        const plan = try planner.planStatement(root_id.get(parser).statement_or_query);
+        _ = plan;
+        return error.NoExecution;
     }
 };
 
