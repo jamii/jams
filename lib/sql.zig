@@ -27,17 +27,23 @@ pub const Database = struct {
         var tokenizer = Tokenizer.init(&arena, sql_z);
         try tokenizer.tokenize();
         var parser = Parser.init(&arena, tokenizer, false);
-        //_ = try parser.parse("root") orelse return error.ParseError;
-        _ = (try parser.parse("root")) orelse {
-            u.dump("Failure!");
-            parser = Parser.init(&arena, tokenizer, true);
-            _ = try parser.parse("root");
-            u.dump(tokenizer.tokens.items);
-            //u.dump(parser.failures.items);
-            u.dump(parser.greatestFailure());
-            u.dump(sql);
-            unreachable;
-        };
+        _ = try parser.parse("root") orelse return error.ParseError;
+        //_ = (try parser.parse("root")) orelse {
+        //    u.dump("Failure!");
+        //    parser = Parser.init(&arena, tokenizer, true);
+        //    _ = try parser.parse("root");
+        //    u.dump(tokenizer.tokens.items);
+        //    //u.dump(parser.failures.items);
+        //    if (parser.greatestFailure()) |failure| {
+        //        u.dump(failure);
+        //        const failure_pos = parser.getFailureSourcePos(failure);
+        //        std.debug.print("{s} !!! {s}", .{
+        //            sql[0..failure_pos],
+        //            sql[failure_pos..],
+        //        });
+        //    }
+        //    unreachable;
+        //};
         //u.dump(parser);
         return error.Unimplemented;
     }

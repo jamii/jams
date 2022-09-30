@@ -236,6 +236,10 @@ pub fn getSourceRange(self: Self, id: usize) [2]usize {
     };
 }
 
+pub fn getFailureSourcePos(self: Self, failure: Failure) usize {
+    return self.tokenizer.token_ranges.items[failure.pos][0];
+}
+
 pub fn dumpInto(writer: anytype, indent: u32, self: Self) anyerror!void {
     if (self.nodes.items.len == 0)
         try writer.writeAll("<empty>\n")
