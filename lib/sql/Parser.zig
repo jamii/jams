@@ -175,12 +175,18 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
             }
         },
         .repeat => |repeat| {
-            var results = u.ArrayList(NodeId(repeat.element.rule_name)).init(self.allocator);
+            var elements = u.ArrayList(NodeId(repeat.element.rule_name)).init(self.allocator);
+            var separators = if (repeat.separator) |separator|
+                u.ArrayList(NodeId(separator.rule_name)).init(self.allocator)
+            else {};
             while (true) {
                 const start_pos = self.pos;
                 if (repeat.separator) |separator| {
-                    if (results.items.len > 0) {
-                        if (try self.parse(separator.rule_name) == null) {
+                    if (elements.items.len > 0) {
+                        if (try self.parse(separator.rule_name)) |result| {
+                            try children.append(result.id);
+                            try separators.append(result);
+                        } else {
                             self.pos = start_pos;
                             break;
                         }
@@ -188,14 +194,33 @@ pub fn parseNode(self: *Self, comptime rule_name: []const u8, children: *u.Array
                 }
                 if (try self.parse(repeat.element.rule_name)) |result| {
                     try children.append(result.id);
-                    try results.append(result);
+                    try elements.append(result);
                 } else {
+                    if (repeat.separator) |_| {
+                        if (elements.items.len > 0) {
+                            _ = separators.pop();
+                        }
+                    }
                     self.pos = start_pos;
                     break;
                 }
             }
-            if (results.items.len >= repeat.min_count)
-                return results.toOwnedSlice()
+            if (elements.items.len >= repeat.min_count)
+                if (repeat.separator) |_|
+                    return @as(
+                        ResultType,
+                        .{
+                            .elements = elements.toOwnedSlice(),
+                            .separators = separators.toOwnedSlice(),
+                        },
+                    )
+                else
+                    return @as(
+                        ResultType,
+                        .{
+                            .elements = elements.toOwnedSlice(),
+                        },
+                    )
             else
                 return self.fail(rule_name);
         },

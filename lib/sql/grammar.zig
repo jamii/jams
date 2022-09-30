@@ -1349,7 +1349,10 @@ pub const types = struct {
         delete: sql.Parser.NodeId("delete"),
         drop: sql.Parser.NodeId("drop"),
     };
-    pub const anon_3 = []const sql.Parser.NodeId("select_or_values");
+    pub const anon_3 = struct {
+        elements: []const sql.Parser.NodeId("select_or_values"),
+        separators: []const sql.Parser.NodeId("compound_operator"),
+    };
     pub const anon_4 = ?sql.Parser.NodeId("order_by");
     pub const anon_5 = ?sql.Parser.NodeId("limit");
     pub const select = struct {
@@ -1391,7 +1394,10 @@ pub const types = struct {
         DISTINCT: sql.Parser.NodeId("DISTINCT"),
         ALL: sql.Parser.NodeId("ALL"),
     };
-    pub const anon_18 = []const sql.Parser.NodeId("result_column");
+    pub const anon_18 = struct {
+        elements: []const sql.Parser.NodeId("result_column"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const result_columns = struct {
         result_column: sql.Parser.NodeId("anon_18"),
     };
@@ -1419,7 +1425,7 @@ pub const types = struct {
         FROM: sql.Parser.NodeId("FROM"),
         joins: sql.Parser.NodeId("joins"),
     };
-    pub const anon_27 = []const sql.Parser.NodeId("join_clause");
+    pub const anon_27 = struct { elements: []const sql.Parser.NodeId("join_clause") };
     pub const joins = struct {
         table_or_subquery: sql.Parser.NodeId("table_or_subquery"),
         join_clause: sql.Parser.NodeId("anon_27"),
@@ -1537,7 +1543,10 @@ pub const types = struct {
         BY: sql.Parser.NodeId("BY"),
         ordering_terms: sql.Parser.NodeId("ordering_terms"),
     };
-    pub const anon_62 = []const sql.Parser.NodeId("ordering_term");
+    pub const anon_62 = struct {
+        elements: []const sql.Parser.NodeId("ordering_term"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const ordering_terms = struct {
         ordering_term: sql.Parser.NodeId("anon_62"),
     };
@@ -1573,7 +1582,10 @@ pub const types = struct {
         LIMIT: sql.Parser.NodeId("LIMIT"),
         exprs: sql.Parser.NodeId("exprs"),
     };
-    pub const anon_74 = []const sql.Parser.NodeId("row");
+    pub const anon_74 = struct {
+        elements: []const sql.Parser.NodeId("row"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const values = struct {
         VALUES: sql.Parser.NodeId("VALUES"),
         row: sql.Parser.NodeId("anon_74"),
@@ -1613,7 +1625,10 @@ pub const types = struct {
     pub const column_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_85 = []const sql.Parser.NodeId("column_def");
+    pub const anon_85 = struct {
+        elements: []const sql.Parser.NodeId("column_def"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const column_defs = struct {
         open_paren: sql.Parser.NodeId("open_paren"),
         column_def: sql.Parser.NodeId("anon_85"),
@@ -1628,7 +1643,10 @@ pub const types = struct {
     };
     pub const anon_90 = ?sql.Parser.NodeId("UNIQUE");
     pub const anon_91 = ?sql.Parser.NodeId("IF_NOT_EXISTS");
-    pub const anon_92 = []const sql.Parser.NodeId("indexed_column");
+    pub const anon_92 = struct {
+        elements: []const sql.Parser.NodeId("indexed_column"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const anon_93 = struct {
         WHERE: sql.Parser.NodeId("WHERE"),
         expr: sql.Parser.NodeId("expr"),
@@ -1676,7 +1694,10 @@ pub const types = struct {
         column_names: sql.Parser.NodeId("anon_103"),
         values_or_select: sql.Parser.NodeId("values_or_select"),
     };
-    pub const anon_105 = []const sql.Parser.NodeId("column_name");
+    pub const anon_105 = struct {
+        elements: []const sql.Parser.NodeId("column_name"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const column_names = struct {
         open_paren: sql.Parser.NodeId("open_paren"),
         column_name: sql.Parser.NodeId("anon_105"),
@@ -1771,7 +1792,10 @@ pub const types = struct {
         IF: sql.Parser.NodeId("IF"),
         EXISTS: sql.Parser.NodeId("EXISTS"),
     };
-    pub const anon_132 = []const sql.Parser.NodeId("expr");
+    pub const anon_132 = struct {
+        elements: []const sql.Parser.NodeId("expr"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const exprs = struct {
         expr: sql.Parser.NodeId("anon_132"),
     };
@@ -1802,7 +1826,7 @@ pub const types = struct {
         left: sql.Parser.NodeId("expr_not"),
         right: sql.Parser.NodeId("anon_141"),
     };
-    pub const anon_143 = []const sql.Parser.NodeId("NOT");
+    pub const anon_143 = struct { elements: []const sql.Parser.NodeId("NOT") };
     pub const expr_not = struct {
         NOT: sql.Parser.NodeId("anon_143"),
         expr_incomp: sql.Parser.NodeId("expr_incomp"),
@@ -1845,7 +1869,7 @@ pub const types = struct {
         AND: sql.Parser.NodeId("AND"),
         end: sql.Parser.NodeId("expr_incomp"),
     };
-    pub const anon_155 = []const sql.Parser.NodeId("op_incomp_post");
+    pub const anon_155 = struct { elements: []const sql.Parser.NodeId("op_incomp_post") };
     pub const expr_incomp_postop = struct {
         op_incomp_post: sql.Parser.NodeId("anon_155"),
     };
@@ -1885,7 +1909,7 @@ pub const types = struct {
         left: sql.Parser.NodeId("expr_unary"),
         right: sql.Parser.NodeId("anon_167"),
     };
-    pub const anon_169 = []const sql.Parser.NodeId("op_unary");
+    pub const anon_169 = struct { elements: []const sql.Parser.NodeId("op_unary") };
     pub const expr_unary = struct {
         op_unary: sql.Parser.NodeId("anon_169"),
         expr_atom: sql.Parser.NodeId("expr_atom"),
@@ -2017,7 +2041,7 @@ pub const types = struct {
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const anon_196 = ?sql.Parser.NodeId("expr");
-    pub const anon_197 = []const sql.Parser.NodeId("case_when");
+    pub const anon_197 = struct { elements: []const sql.Parser.NodeId("case_when") };
     pub const anon_198 = ?sql.Parser.NodeId("case_else");
     pub const case = struct {
         CASE: sql.Parser.NodeId("CASE"),
@@ -2049,7 +2073,10 @@ pub const types = struct {
         name: sql.Parser.NodeId("name"),
     };
     pub const anon_206 = ?sql.Parser.NodeId("DISTINCT");
-    pub const anon_207 = []const sql.Parser.NodeId("expr");
+    pub const anon_207 = struct {
+        elements: []const sql.Parser.NodeId("expr"),
+        separators: []const sql.Parser.NodeId("comma"),
+    };
     pub const anon_208 = struct {
         DISTINCT: sql.Parser.NodeId("anon_206"),
         expr: sql.Parser.NodeId("anon_207"),

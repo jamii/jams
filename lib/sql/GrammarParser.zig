@@ -582,7 +582,10 @@ fn writeType(self: *Self, writer: anytype, rule: Rule) @TypeOf(writer).Error!voi
             try std.fmt.format(writer, "?sql.Parser.NodeId(\"{s}\")", .{optional.rule_name});
         },
         .repeat => |repeat| {
-            try std.fmt.format(writer, "[]const sql.Parser.NodeId(\"{s}\")", .{repeat.element.rule_name});
+            if (repeat.separator) |separator|
+                try std.fmt.format(writer, "struct {{elements: []const sql.Parser.NodeId(\"{s}\"), separators: []const sql.Parser.NodeId(\"{s}\"),}}", .{ repeat.element.rule_name, separator.rule_name })
+            else
+                try std.fmt.format(writer, "struct {{elements: []const sql.Parser.NodeId(\"{s}\")}}", .{repeat.element.rule_name});
         },
     }
 }
