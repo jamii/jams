@@ -232,6 +232,32 @@ I suspect something in the interaction between memoization and the stack of expr
 
 It's not looking good for passing any tests at all, let alone all of them :|
 
+---
+
+I figured it out at home.
+
+I was barking up totally the wrong tree. The `expr` grammar is actually not left-recursive after the changes I made, which means the memo is not being applied. But the memo was covering up the fact that I wrote the grammar in a silly way that required exponential time to parse with memoization.
+
+Which means I actually don't need to memoization (which I spent most of today working on) at all for my grammar.
+
+This whole left-recursive memoization thing has been a total dead end. I should have stuck with techniques I'm familiar with from the start. This is not the time to be trying experimental new things.
+
+The silver lining is this:
+
+```
+HashMap(
+    error.ParseError => 3725149,
+    error.Unimplemented => 533916,
+)
+passes => 0
+________________________________________________________
+Executed in   50.07 secs    fish           external
+   usr time   49.83 secs    1.75 millis   49.82 secs
+   sys time    0.23 secs    1.90 millis    0.23 secs
+```
+
+That's about 12.5% of the tests parsing!
+
 &nbsp;
 
 &nbsp;
