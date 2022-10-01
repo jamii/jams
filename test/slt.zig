@@ -190,11 +190,7 @@ fn runQuery(database: *sql.Database, file: []const u8, query: []const u8, types:
     defer arena.deinit();
 
     const rows = if (database.run(&arena, query)) |rows| rows else |err| {
-        _ = file;
-        switch (err) {
-            //error.ParseError => u.dump(query),
-            else => {},
-        }
+        u.dump(.{ .err = err, .query = query, .file = file });
         return err;
     };
 
