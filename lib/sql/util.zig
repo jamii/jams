@@ -35,6 +35,14 @@ pub fn assert(b: bool, message: anytype) void {
     }
 }
 
+pub fn comptimeAssert(comptime condition: bool, comptime arg: anytype) void {
+    if (!condition) compileError("Assert failed. {}", .{arg});
+}
+
+pub fn compileError(comptime message: []const u8, comptime args: anytype) void {
+    @compileError(comptime std.fmt.comptimePrint(message, args));
+}
+
 pub fn oom() noreturn {
     @panic("Out of memory");
 }
@@ -532,8 +540,4 @@ pub fn binarySearch(
     }
 
     return .{ .NotFound = left };
-}
-
-pub fn compileError(comptime message: []const u8, comptime args: anytype) void {
-    @compileError(comptime std.fmt.comptimePrint(message, args));
 }

@@ -48,6 +48,7 @@ pub const UnaryOp = enum {
     not,
     is_null,
     is_not_null,
+    bool_not,
     bit_not,
     plus,
     minus,
@@ -82,9 +83,13 @@ pub const BinaryOp = enum {
     star,
     forward_slash,
     percent,
-    bit_not,
     bit_and,
     bit_or,
+};
+
+pub const Error = error{
+    OutOfMemory,
+    NoPlan,
 };
 
 pub fn init(
@@ -113,42 +118,162 @@ pub fn planStatement(self: *Self, node_id: NodeId("statement_or_query")) !Statem
     }
 }
 
-pub fn pushRelation(self: *Self, relation: RelationExpr) !RelationExprId {
+pub fn pushRelation(self: *Self, relation: RelationExpr) Error!RelationExprId {
     const id = self.relation_exprs.items.len;
     try self.relation_exprs.append(relation);
     return id;
 }
 
-pub fn pushScalar(self: *Self, scalar: ScalarExpr) !ScalarExprId {
+pub fn pushScalar(self: *Self, scalar: ScalarExpr) Error!ScalarExprId {
     const id = self.scalar_exprs.items.len;
     try self.scalar_exprs.append(scalar);
     return id;
 }
 
-pub fn planRelation(self: *Self, node_id: anytype) !RelationExprId {
+pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
     const p = self.parser;
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
-        N.select => return error.NoPlan,
-        else => @compileError("planRelation " ++ @typeName(@TypeOf(node))),
+        N.select => {
+            try self.noPlan(node.order_by);
+            try self.noPlan(node.limit);
+            const select_or_values = node.select_or_values.get(p);
+            if (select_or_values.elements.len > 1) return error.NoPlan;
+            return self.planRelation(select_or_values.elements[0]);
+        },
+        N.select_or_values => switch (node) {
+            .select_body => |select_body| return self.planRelation(select_body),
+            .values => |values| return self.planRelation(values),
+        },
+        N.values => return error.NoPlan,
+        N.select_body => {
+            try self.noPlan(node.distinct_or_all);
+            try self.noPlan(node.from);
+            try self.noPlan(node.where);
+            try self.noPlan(node.group_by);
+            try self.noPlan(node.having);
+            try self.noPlan(node.window);
+            var plan = try self.pushRelation(.some);
+            for (node.result_column.get(p).elements) |result_column|
+                plan = try self.pushRelation(.{ .map = .{
+                    .input = plan,
+                    .column_id = self.nextColumnId(),
+                    .expr = try self.planScalar(result_column),
+                } });
+            return plan;
+        },
+        else => @compileError("planRelation not implemented for " ++ @typeName(@TypeOf(node))),
     }
 }
 
-pub fn planScalar(self: *Self, node_id: anytype) !ScalarExprId {
+pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
+    comptime {
+        u.comptimeAssert(@hasDecl(@TypeOf(node_id), "is_node_id"), @TypeOf(node_id));
+    }
     const p = self.parser;
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
-        else => @compileError("planRelation " ++ @typeName(@TypeOf(node))),
+        N.result_column => switch (node) {
+            .result_expr => |result_expr| return self.planScalar(result_expr),
+            .star, .table_star => return error.NoPlan,
+        },
+        N.result_expr => return self.planScalar(node.expr),
+        N.expr => return self.planScalar(node.expr_or),
+        N.expr_or, N.expr_and, N.expr_comp, N.expr_add, N.expr_mult => {
+            const left = try self.planScalar(node.left);
+            return self.planScalarBinary(node, left, node.right.get(p));
+        },
+        N.expr_not, N.expr_unary => {
+            var plan = try self.planScalar(node.expr);
+            for (node.op.get(p).elements) |op|
+                plan = try self.pushScalar(.{ .unary = .{ .input = plan, .op = switch (@TypeOf(node)) {
+                    N.expr_not => .bool_not,
+                    N.expr_unary => switch (op.get(p)) {
+                        .bit_not => .bit_not,
+                        .plus => .plus,
+                        .minus => .minus,
+                    },
+                    else => unreachable,
+                } } });
+            return plan;
+        },
+        N.expr_incomp => {
+            var plan = try self.planScalar(node.left);
+            if (node.right.get(p)) |right_expr| {
+                switch (right_expr.get(p)) {
+                    .expr_incomp_postop => |_| return error.NoPlan,
+                    .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, @as(?NodeId("expr_incomp_binop"), binop)),
+                    .expr_incomp_in => |_| return error.NoPlan,
+                    .expr_incomp_between => |_| return error.NoPlan,
+                }
+            }
+            return plan;
+        },
+        N.expr_atom => switch (node) {
+            .value => |value| return self.planScalar(value),
+            else => return error.NoPlan,
+        },
+        N.value => return error.NoPlan, // TODO parse value
+        else => @compileError("planScalar not implemented for " ++ @typeName(@TypeOf(node))),
     }
 }
 
-fn nextColumn(self: *Self) ColumnId {
+fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_maybe: anytype) Error!ScalarExprId {
+    const p = self.parser;
+    const right_expr = right_expr_maybe.?.get(p);
+    const right = try self.planScalar(right_expr.right);
+    return self.pushScalar(.{ .binary = .{
+        .inputs = .{ left, right },
+        .op = switch (@TypeOf(parent)) {
+            N.expr_or => .bool_or,
+            N.expr_and => .bool_and,
+            N.expr_incomp => switch (right_expr.op.get(p)) {
+                .equal => .equal,
+                .double_equal => .double_equal,
+                .not_equal => .not_equal,
+                .IS_DISTINCT_FROM => .is_distinct_from,
+                .IS_NOT_DISTINCT_FROM => .is_not_distinct_from,
+                .IS_NOT => .is_not,
+                .IS => .is,
+                .IN => .in,
+                .MATCH => .match,
+                .LIKE => .like,
+                .REGEXP => .regexp,
+                .GLOB => .glob,
+                .NOT_IN => .not_in,
+                .NOT_MATCH => .not_match,
+                .NOT_LIKE => .not_like,
+                .NOT_REGEXP => .not_regexp,
+                .NOT_GLOB => .not_glob,
+            },
+            N.expr_comp => switch (right_expr.op.get(p)) {
+                .less_than => .less_than,
+                .greater_than => .greater_than,
+                .less_than_or_equal => .less_than_or_equal,
+                .greater_than_or_equal => .greater_than_or_equal,
+            },
+            N.expr_add => switch (right_expr.op.get(p)) {
+                .plus => .plus,
+                .minus => .minus,
+            },
+            N.expr_mult => switch (right_expr.op.get(p)) {
+                .star => .star,
+                .forward_slash => .forward_slash,
+                .percent => .percent,
+            },
+            else => unreachable,
+        },
+    } });
+}
+
+fn nextColumnId(self: *Self) ColumnId {
     const id = self.next_column_id;
     self.next_column_id += 1;
     return id;
 }
 
-fn noPlan(self: *Self, thing: anytype) !void {
-    _ = self;
-    if (thing != null) return error.NoPlan;
+fn noPlan(self: *Self, node_id: anytype) Error!void {
+    const p = self.parser;
+    const node = node_id.get(p);
+    if (node != null) return error.NoPlan;
 }

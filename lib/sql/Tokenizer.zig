@@ -25,7 +25,7 @@ const State = enum {
     greater_than,
     equal,
     not,
-    bitwise_or,
+    bit_or,
 };
 
 pub fn init(arena: *u.ArenaAllocator, source: [:0]const u8) Self {
@@ -76,9 +76,9 @@ pub fn next(self: *Self) !?Token {
                 '.' => return Token.dot,
                 '%' => return Token.percent,
                 '!' => state = .not,
-                '|' => state = .bitwise_or,
-                '&' => return Token.bitwise_and,
-                '~' => return Token.bitwise_not,
+                '|' => state = .bit_or,
+                '&' => return Token.bit_and,
+                '~' => return Token.bit_not,
                 '"', '\'' => {
                     string_start = char;
                     state = .string;
@@ -123,11 +123,11 @@ pub fn next(self: *Self) !?Token {
                     return error.TokenizerError;
                 },
             },
-            .bitwise_or => switch (char) {
+            .bit_or => switch (char) {
                 '|' => return Token.string_concat,
                 else => {
                     self.pos -= 1;
-                    return Token.bitwise_or;
+                    return Token.bit_or;
                 },
             },
             .string => switch (char) {

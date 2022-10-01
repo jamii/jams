@@ -16,9 +16,9 @@ star
 forward_slash
 dot
 percent
-bitwise_and
-bitwise_or
-bitwise_not
+bit_and
+bit_or
+bit_not
 string_concat
 shift_left
 shift_right

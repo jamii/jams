@@ -30,6 +30,7 @@ pub const Error = error{
 
 pub fn NodeId(comptime rule_name_: []const u8) type {
     return struct {
+        pub const is_node_id = true;
         pub const rule_name = rule_name_;
         pub const T = @field(types, rule_name);
         id: usize,
