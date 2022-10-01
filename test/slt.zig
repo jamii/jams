@@ -139,7 +139,7 @@ pub fn main() !void {
     std.debug.print("total => {}\n", .{total});
     u.dump(errors);
     std.debug.print("skips => {}\n", .{skips});
-    std.debug.print("passes => {}\n", .{passes});
+    std.debug.print("passes => {} (= {d:.2}%)\n", .{ passes, 100 * @intToFloat(f64, total) / @intToFloat(f64, passes) });
     //try sql.dumpRuleUsage();
 }
 
