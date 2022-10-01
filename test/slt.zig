@@ -83,7 +83,10 @@ pub fn main() !void {
                     if (runStatement(&database, slt_path, statement, expected)) |_|
                         passes += 1
                     else |err| {
-                        try incCount(&errors, err);
+                        if (skip)
+                            skips += 1
+                        else
+                            try incCount(&errors, err);
                         // Once we fail on one statement, the rest of the file is unlikely to pass anyway
                         skip = true;
                     }
@@ -117,16 +120,16 @@ pub fn main() !void {
                         return error.UnexpectedInput;
                     const label = words.next();
                     var query_and_expected_iter = std.mem.split(u8, case[lines.index.?..], "----");
-                    total += 1;
                     const query = std.mem.trim(u8, query_and_expected_iter.next().?, "\n");
                     const expected = std.mem.trim(u8, query_and_expected_iter.next() orelse "", "\n");
+                    total += 1;
                     if (runQuery(&database, slt_path, query, types, sort_mode, label, expected)) |_|
                         passes += 1
-                    else |err| {
-                        if (skip)
-                            skips += 1;
+                    else |err| if (skip)
+                        skips += 1
+                    else
                         try incCount(&errors, err);
-                    }
+
                     break :header;
                 } else return error.UnexpectedInput;
             }
