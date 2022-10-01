@@ -967,7 +967,7 @@ pub const rules = struct {
     } };
     pub const anon_161 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "op_incomp_post", .rule_name = "op_incomp_post" }, .separator = null } };
     pub const expr_incomp_postop = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "op_incomp_post", .rule_name = "anon_161" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_161" },
     } };
     pub const anon_163 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "op", .rule_name = "op_comp" },
@@ -1949,7 +1949,7 @@ pub const types = struct {
     };
     pub const anon_161 = struct { elements: []const sql.Parser.NodeId("op_incomp_post") };
     pub const expr_incomp_postop = struct {
-        op_incomp_post: sql.Parser.NodeId("anon_161"),
+        op: sql.Parser.NodeId("anon_161"),
     };
     pub const anon_163 = struct {
         op: sql.Parser.NodeId("op_comp"),

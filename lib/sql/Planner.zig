@@ -431,9 +431,28 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
             var plan = try self.planScalar(node.left, env_node_id);
             for (node.right.get(p).elements) |right_expr| {
                 switch (right_expr.get(p)) {
-                    .expr_incomp_postop => |_| return error.NoPlan,
+                    .expr_incomp_postop => |expr_incomp_postop| {
+                        for (expr_incomp_postop.get(p).op.get(p).elements) |op| {
+                            plan = try self.pushScalar(.{ .binary = .{
+                                .inputs = .{
+                                    plan,
+                                    try self.pushScalar(.{ .value = sql.Value.NULL }),
+                                },
+                                .op = switch (op.get(p)) {
+                                    .ISNULL => .is,
+                                    .NOTNULL, .NOT_NULL => .is_not,
+                                },
+                            } });
+                        }
+                    },
                     .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop, env_node_id),
-                    .expr_incomp_in => |_| return error.NoPlan,
+                    .expr_incomp_in => |_| {
+                        return error.NoPlan;
+                        //switch (expr_incomp_in.get(p).right.get(p)) {
+                        //    .exprs => |exprs| {},
+                        //    .select => |select| {},
+                        //}
+                    },
                     .expr_incomp_between => |expr_incomp_between| {
                         // https://www.sqlite.org/lang_expr.html#between
                         const start = try self.planScalar(expr_incomp_between.get(p).start, env_node_id);
