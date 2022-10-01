@@ -431,7 +431,31 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                     .expr_incomp_postop => |_| return error.NoPlan,
                     .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop, env_node_id),
                     .expr_incomp_in => |_| return error.NoPlan,
-                    .expr_incomp_between => |_| return error.NoPlan,
+                    .expr_incomp_between => |expr_incomp_between| {
+                        // https://www.sqlite.org/lang_expr.html#between
+                        const start = try self.planScalar(expr_incomp_between.get(p).start, env_node_id);
+                        const end = try self.planScalar(expr_incomp_between.get(p).end, env_node_id);
+                        // TODO should avoid evaluating plan twice
+                        plan = try self.pushScalar(.{ .binary = .{
+                            .inputs = .{
+                                try self.pushScalar(.{ .binary = .{
+                                    .inputs = .{
+                                        plan,
+                                        start,
+                                    },
+                                    .op = .greater_than_or_equal,
+                                } }),
+                                try self.pushScalar(.{ .binary = .{
+                                    .inputs = .{
+                                        plan,
+                                        end,
+                                    },
+                                    .op = .less_than_or_equal,
+                                } }),
+                            },
+                            .op = .bool_and,
+                        } });
+                    },
                 }
             }
             return plan;
