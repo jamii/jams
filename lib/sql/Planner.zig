@@ -87,6 +87,11 @@ pub const ScalarExpr = union(enum) {
         inputs: [2]ScalarExprId,
         op: BinaryOp,
     },
+    in: struct {
+        not: bool,
+        input: ScalarExprId,
+        subplan: RelationExprId,
+    },
 };
 
 pub const UnaryOp = enum {
@@ -446,12 +451,34 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                         }
                     },
                     .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop, env_node_id),
-                    .expr_incomp_in => |_| {
-                        return error.NoPlan;
-                        //switch (expr_incomp_in.get(p).right.get(p)) {
-                        //    .exprs => |exprs| {},
-                        //    .select => |select| {},
-                        //}
+                    .expr_incomp_in => |expr_incomp_in| {
+                        const subplan = subplan: {
+                            switch (expr_incomp_in.get(p).right.get(p)) {
+                                .exprs => |exprs| {
+                                    var subplan = try self.pushRelation(.{ .none = {} });
+                                    for (exprs.get(p).expr.get(p).elements) |expr|
+                                        subplan = try self.pushRelation(.{ .unio = .{
+                                            .inputs = .{
+                                                subplan,
+                                                try self.pushRelation(.{ .map = .{
+                                                    .input = try self.pushRelation(.{ .some = {} }),
+                                                    .scalar = try self.planScalar(expr, env_node_id),
+                                                } }),
+                                            },
+                                            .all = true,
+                                        } });
+                                    break :subplan subplan;
+                                },
+                                .select => |select|
+                                // TODO handle correlated variables
+                                break :subplan try self.planRelation(select),
+                            }
+                        };
+                        plan = try self.pushScalar(.{ .in = .{
+                            .not = expr_incomp_in.get(p).NOT.get(p) != null,
+                            .input = plan,
+                            .subplan = subplan,
+                        } });
                     },
                     .expr_incomp_between => |expr_incomp_between| {
                         // https://www.sqlite.org/lang_expr.html#between

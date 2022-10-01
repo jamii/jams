@@ -140,14 +140,14 @@ expr_not = NOT*=op expr_incomp=expr;
 expr_incomp = expr_comp=left expr_incomp_right*=right;
 expr_incomp_right =
   | expr_incomp_postop
-  | expr_incomp_binop
   | expr_incomp_in
+  | expr_incomp_binop
   | expr_incomp_between;
 expr_incomp_binop = op_incomp=op expr_comp=right;
 expr_incomp_in = NOT? IN open_paren expr_incomp_in_right=right close_paren;
 expr_incomp_in_right = 
-  | exprs
-  | select;
+  | select
+  | exprs;
 expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_comp=end;
 expr_incomp_postop = op_incomp_post+=op;
 expr_comp = expr_bit=left (op_comp=op expr_bit=right)*=right;

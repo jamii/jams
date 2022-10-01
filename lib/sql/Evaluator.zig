@@ -247,6 +247,17 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                 else => error.NoEval,
             };
         },
+        .in => |in| {
+            const input = try self.evalScalar(in.input, env);
+            const subplan = try self.evalRelation(in.subplan);
+            var input_in_subplan = false;
+            for (subplan.items) |row| {
+                if (u.deepEqual(input, row.items[0]))
+                    input_in_subplan = true;
+            }
+            if (in.not) input_in_subplan = !input_in_subplan;
+            return if (input_in_subplan) Scalar.TRUE else Scalar.FALSE;
+        },
     }
 }
 

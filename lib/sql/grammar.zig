@@ -937,8 +937,8 @@ pub const rules = struct {
     } };
     pub const expr_incomp_right = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_incomp_postop", .rule_name = "expr_incomp_postop" } },
-        .{ .choice = RuleRef{ .field_name = "expr_incomp_binop", .rule_name = "expr_incomp_binop" } },
         .{ .choice = RuleRef{ .field_name = "expr_incomp_in", .rule_name = "expr_incomp_in" } },
+        .{ .choice = RuleRef{ .field_name = "expr_incomp_binop", .rule_name = "expr_incomp_binop" } },
         .{ .choice = RuleRef{ .field_name = "expr_incomp_between", .rule_name = "expr_incomp_between" } },
     } };
     pub const expr_incomp_binop = Rule{ .all_of = &[_]RuleRef{
@@ -954,8 +954,8 @@ pub const rules = struct {
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const expr_incomp_in_right = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "exprs", .rule_name = "exprs" } },
         .{ .choice = RuleRef{ .field_name = "select", .rule_name = "select" } },
+        .{ .choice = RuleRef{ .field_name = "exprs", .rule_name = "exprs" } },
     } };
     pub const anon_159 = Rule{ .optional = RuleRef{ .field_name = "NOT", .rule_name = "NOT" } };
     pub const expr_incomp_between = Rule{ .all_of = &[_]RuleRef{
@@ -1919,8 +1919,8 @@ pub const types = struct {
     };
     pub const expr_incomp_right = union(enum) {
         expr_incomp_postop: sql.Parser.NodeId("expr_incomp_postop"),
-        expr_incomp_binop: sql.Parser.NodeId("expr_incomp_binop"),
         expr_incomp_in: sql.Parser.NodeId("expr_incomp_in"),
+        expr_incomp_binop: sql.Parser.NodeId("expr_incomp_binop"),
         expr_incomp_between: sql.Parser.NodeId("expr_incomp_between"),
     };
     pub const expr_incomp_binop = struct {
@@ -1936,8 +1936,8 @@ pub const types = struct {
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const expr_incomp_in_right = union(enum) {
-        exprs: sql.Parser.NodeId("exprs"),
         select: sql.Parser.NodeId("select"),
+        exprs: sql.Parser.NodeId("exprs"),
     };
     pub const anon_159 = ?sql.Parser.NodeId("NOT");
     pub const expr_incomp_between = struct {
