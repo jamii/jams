@@ -230,7 +230,7 @@ I was making pretty good progress through parsing more and more queries when som
 
 I suspect something in the interaction between memoization and the stack of expr_* types that handle precedence in the grammar. Maybe I'll figure it out tomorrow.
 
-It's not looking good for passing any tests at all, let alone all of them :|
+It's not looking good for passing any tests at all, let alone all of them. The light at the end of the tunnel was a train.
 
 ---
 
@@ -257,6 +257,30 @@ Executed in   50.07 secs    fish           external
 ```
 
 That's about 12.5% of the tests parsing!
+
+# Day 5
+
+I made some changes to the parser generator, added a whole bunch of debugging tools to the parser itself and then sat down and cranked on the grammar till I can parse 100% of the tests. I'm finally out of the damn tunnel.
+
+Then I sketched out a framework for planning and evaluation and filled out just enough to handle scalar-only queries.
+
+```
+HashMap(
+    error.NoPlan => 4066003,
+)
+skips => 3869887
+passes => 193062
+________________________________________________________
+Executed in  121.77 secs    fish           external
+   usr time  120.77 secs    0.02 millis  120.77 secs
+   sys time    0.96 secs    1.01 millis    0.96 secs
+```
+
+4.5% of tests are passing!
+
+This is how I expect the week to go. Not death by bnf.
+
+The odds of hitting 100% now are very low - there is a long tail of weird behavior that I expected to have much more time to implement. But I think in the next two days I might be able to get to something respectable.
 
 &nbsp;
 
