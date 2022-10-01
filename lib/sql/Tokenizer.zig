@@ -18,6 +18,8 @@ const State = enum {
     string,
     string_maybe_end,
     number,
+    blob_start,
+    blob,
     comment,
     whitespace,
     minus,
@@ -84,7 +86,7 @@ pub fn next(self: *Self) !?Token {
                     state = .string;
                 },
                 ';' => return Token.semicolon,
-                'a'...'z', 'A'...'Z' => state = .name,
+                'a'...'z', 'A'...'Z' => state = if (char == 'x') .blob_start else .name,
                 '0'...'9' => state = .number,
                 '-' => state = .minus,
                 ' ', '\r', '\t', '\n' => state = .whitespace,
@@ -154,6 +156,17 @@ pub fn next(self: *Self) !?Token {
                     self.pos -= 1;
                     return Token.string;
                 },
+            },
+            .blob_start => switch (char) {
+                '\'' => state = .blob,
+                else => {
+                    self.pos -= 1;
+                    state = .name;
+                },
+            },
+            .blob => switch (char) {
+                '\'' => return .blob,
+                else => {},
             },
             .comment => switch (char) {
                 0, '\r', '\n' => {

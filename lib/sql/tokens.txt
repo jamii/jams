@@ -24,6 +24,7 @@ shift_left
 shift_right
 number
 string
+blob
 semicolon
 name
 TODO

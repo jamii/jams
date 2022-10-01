@@ -367,6 +367,18 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                     }
                     break :string sql.Value{ .text = string.toOwnedSlice() };
                 },
+                .blob => blob: {
+                    const source = node_id.getSource(p);
+                    var blob = try u.ArrayList(u8).initCapacity(self.allocator, (source.len - 3) * 2);
+                    var i: usize = 2;
+                    while (i < source.len - 1) : (i += 1) {
+                        if (std.fmt.parseInt(u16, source[i .. i + 1], 16)) |num|
+                            blob.appendSliceAssumeCapacity(&@bitCast([2]u8, num))
+                        else |_|
+                            return error.InvalidLiteral;
+                    }
+                    break :blob sql.Value{ .blob = blob.toOwnedSlice() };
+                },
                 .NULL => sql.Value{ .nul = {} },
             };
             return self.pushScalar(.{ .value = value });

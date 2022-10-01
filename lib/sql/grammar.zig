@@ -298,6 +298,7 @@ pub const Node = union(enum) {
     FOLLOWING: @field(types, "FOLLOWING"),
     RAISE: @field(types, "RAISE"),
     HAVING: @field(types, "HAVING"),
+    blob: @field(types, "blob"),
     TEMP: @field(types, "TEMP"),
     less_than: @field(types, "less_than"),
     CHECK: @field(types, "CHECK"),
@@ -1125,6 +1126,7 @@ pub const rules = struct {
     pub const value = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "number", .rule_name = "number" } },
         .{ .choice = RuleRef{ .field_name = "string", .rule_name = "string" } },
+        .{ .choice = RuleRef{ .field_name = "blob", .rule_name = "blob" } },
         .{ .choice = RuleRef{ .field_name = "NULL", .rule_name = "NULL" } },
     } };
     pub const FROM = Rule{ .token = .FROM };
@@ -1206,6 +1208,7 @@ pub const rules = struct {
     pub const FOLLOWING = Rule{ .token = .FOLLOWING };
     pub const RAISE = Rule{ .token = .RAISE };
     pub const HAVING = Rule{ .token = .HAVING };
+    pub const blob = Rule{ .token = .blob };
     pub const TEMP = Rule{ .token = .TEMP };
     pub const less_than = Rule{ .token = .less_than };
     pub const CHECK = Rule{ .token = .CHECK };
@@ -2040,6 +2043,7 @@ pub const types = struct {
     pub const value = union(enum) {
         number: sql.Parser.NodeId("number"),
         string: sql.Parser.NodeId("string"),
+        blob: sql.Parser.NodeId("blob"),
         NULL: sql.Parser.NodeId("NULL"),
     };
     pub const FROM = void;
@@ -2121,6 +2125,7 @@ pub const types = struct {
     pub const FOLLOWING = void;
     pub const RAISE = void;
     pub const HAVING = void;
+    pub const blob = void;
     pub const TEMP = void;
     pub const less_than = void;
     pub const CHECK = void;
@@ -2301,6 +2306,7 @@ pub const Token = enum {
     FOLLOWING,
     RAISE,
     HAVING,
+    blob,
     TEMP,
     less_than,
     CHECK,

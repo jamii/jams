@@ -192,4 +192,5 @@ function_args =
 value =
   | number
   | string
+  | blob
   | NULL;
