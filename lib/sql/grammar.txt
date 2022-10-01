@@ -105,8 +105,8 @@ values_or_select =
 typ = name typ_length?;
 typ_length = open_paren number (comma number)?=numbers close_paren;
 column_constraint = 
-  | primary_key;
-primary_key = PRIMARY KEY asc_or_desc?;
+  | key;
+key = (| PRIMARY | UNIQUE)=kind KEY asc_or_desc?;
 
 update = UPDATE table_name SET column_name equal expr update_from? update_where?; # TODO
 update_from = TODO;

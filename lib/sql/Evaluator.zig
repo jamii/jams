@@ -6,6 +6,7 @@ const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 planner: sql.Planner,
+database: *sql.Database,
 juice: usize,
 
 pub const Error = error{
@@ -13,11 +14,13 @@ pub const Error = error{
     OutOfJuice,
     TypeError,
     NoEval,
+    AbortEval,
 };
 
 pub fn init(
     arena: *u.ArenaAllocator,
     planner: sql.Planner,
+    database: *sql.Database,
     juice: usize,
 ) Self {
     const allocator = arena.allocator();
@@ -25,6 +28,7 @@ pub fn init(
         .arena = arena,
         .allocator = allocator,
         .planner = planner,
+        .database = database,
         .juice = juice,
     };
 }
@@ -36,6 +40,18 @@ pub const Scalar = sql.Value; // TODO move from sql to here
 pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Error!Relation {
     switch (statement_expr) {
         .select => |select| return self.evalRelation(select),
+        .create_table => |create_table| {
+            const exists = self.database.tables.contains(create_table.name);
+            if (exists)
+                return if (create_table.if_not_exists) &.{} else error.AbortEval
+            else {
+                try self.database.tables.put(
+                    try u.deepClone(self.database.allocator, create_table.name),
+                    try u.deepClone(self.database.allocator, create_table.def),
+                );
+                return &.{};
+            }
+        },
     }
 }
 

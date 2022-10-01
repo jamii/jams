@@ -19,7 +19,14 @@ pub const ScalarExprId = usize;
 pub const ColumnId = usize;
 
 pub const StatementExpr = union(enum) {
+    create_table: CreateTable,
     select: RelationExprId,
+};
+
+pub const CreateTable = struct {
+    name: sql.TableName,
+    def: sql.TableDef,
+    if_not_exists: bool,
 };
 
 pub const RelationExpr = union(enum) {
@@ -110,13 +117,70 @@ pub fn init(
     };
 }
 
-pub fn planStatement(self: *Self, node_id: NodeId("statement_or_query")) !StatementExpr {
+pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
     const p = self.parser;
     const node = node_id.get(p);
-    switch (node) {
-        .select => |select| return .{ .select = try self.planRelation(select) },
-        else => return error.NoPlan,
+    switch (@TypeOf(node)) {
+        N.statement_or_query => switch (node) {
+            .select => |select| return .{ .select = try self.planRelation(select) },
+            .create => |create| return self.planStatement(create),
+            else => return error.NoPlan,
+        },
+        N.create => switch (node) {
+            .create_table => |create_table| return self.planStatement(create_table),
+            else => return error.NoPlan,
+        },
+        N.create_table => {
+            const name = node.table_name.getSource(p);
+            const defs_expr = node.column_defs.get(p).column_def.get(p);
+            var key: ?sql.Key = null;
+            const columns = try self.allocator.alloc(sql.ColumnDef, defs_expr.elements.len);
+            for (columns) |*column, i| {
+                const def_expr = defs_expr.elements[i].get(p);
+                column.* = .{
+                    .name = def_expr.column_name.getSource(p),
+                    .typ = if (def_expr.typ.get(p)) |typ|
+                        try self.planType(typ)
+                    else
+                        null,
+                    .nullable = true, // no `NOT NULL` constraints in tests
+                };
+                if (def_expr.column_constraint.get(p)) |constraint| {
+                    switch (constraint.get(p)) {
+                        .key => |key_expr_id| {
+                            const key_expr = key_expr_id.get(p);
+                            key = .{
+                                .columns = try self.allocator.dupe(usize, &.{i}),
+                                .kind = switch (key_expr.kind.get(p)) {
+                                    .PRIMARY => .primary,
+                                    .UNIQUE => .unique,
+                                },
+                            };
+                        },
+                    }
+                }
+            }
+            return .{ .create_table = .{
+                .name = name,
+                .def = .{ .columns = columns, .key = key },
+                .if_not_exists = node.IF_NOT_EXISTS.get(p) != null,
+            } };
+        },
+        else => @compileError("planStatement not implemented for " ++ @typeName(@TypeOf(node))),
     }
+}
+
+pub fn planType(self: *Self, node_id: NodeId("typ")) !sql.Type {
+    const p = self.parser;
+    const name = node_id.get(p).name.getSource(p);
+    if (u.deepEqual(name, "INTEGER"))
+        return .integer;
+    if (u.deepEqual(name, "FLOAT"))
+        return .real;
+    if (u.deepEqual(name, "VARCHAR") or
+        u.deepEqual(name, "TEXT"))
+        return .text;
+    return error.NoPlan;
 }
 
 pub fn pushRelation(self: *Self, relation: RelationExpr) Error!RelationExprId {

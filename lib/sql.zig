@@ -11,10 +11,12 @@ const u = util;
 
 pub const Database = struct {
     allocator: u.Allocator,
+    tables: u.DeepHashMap(TableName, TableDef),
 
     pub fn init(allocator: u.Allocator) !Database {
         return Database{
             .allocator = allocator,
+            .tables = u.DeepHashMap(TableName, TableDef).init(allocator),
         };
     }
 
@@ -23,7 +25,6 @@ pub const Database = struct {
     }
 
     pub fn run(self: *Database, arena: *u.ArenaAllocator, sql: []const u8) !Evaluator.Relation {
-        _ = self;
         const sql_z = try arena.allocator().dupeZ(u8, sql);
         var tokenizer = Tokenizer.init(arena, sql_z);
         try tokenizer.tokenize();
@@ -49,10 +50,29 @@ pub const Database = struct {
         //u.dump(parser);
         var planner = Planner.init(arena, tokenizer, parser);
         const statement = try planner.planStatement(root_id.get(parser).statement_or_query);
-        var evaluator = Evaluator.init(arena, planner, 1000000);
+        var evaluator = Evaluator.init(arena, planner, self, 1000000);
         const relation = evaluator.evalStatement(statement);
         return relation;
     }
+};
+
+pub const TableName = []const u8;
+pub const ColumnName = []const u8;
+
+pub const TableDef = struct {
+    columns: []const ColumnDef,
+    key: ?Key, // tests never contain more than one key
+};
+
+pub const ColumnDef = struct {
+    name: ColumnName,
+    typ: ?Type,
+    nullable: bool,
+};
+
+pub const Key = struct {
+    columns: []const usize,
+    kind: enum { primary, unique },
 };
 
 pub const Type = enum {

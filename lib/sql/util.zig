@@ -186,7 +186,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) @TypeOf(writer).Er
     }
 }
 
-pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeOf(thing) {
+pub fn deepClone(allocator: Allocator, thing: anytype) error{OutOfMemory}!@TypeOf(thing) {
     const T = @TypeOf(thing);
     const ti = @typeInfo(T);
 
@@ -196,7 +196,7 @@ pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeO
     if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
         var cloned = try ArrayList(@TypeOf(thing.items[0])).initCapacity(allocator, thing.items.len);
         cloned.appendSliceAssumeCapacity(thing.items);
-        for (cloned.items) |*item| item.* = try deepClone(item.*, allocator);
+        for (cloned.items) |*item| item.* = try deepClone(allocator, item.*);
         return cloned;
     }
 
@@ -204,8 +204,8 @@ pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeO
         var cloned = try thing.cloneWithAllocator(allocator);
         var iter = cloned.iterator();
         while (iter.next()) |entry| {
-            entry.key_ptr.* = try deepClone(entry.key_ptr.*, allocator);
-            entry.value_ptr.* = try deepClone(entry.value_ptr.*, allocator);
+            entry.key_ptr.* = try deepClone(allocator, entry.key_ptr.*);
+            entry.value_ptr.* = try deepClone(allocator, entry.value_ptr.*);
         }
         return cloned;
     }
@@ -216,12 +216,12 @@ pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeO
             switch (pti.size) {
                 .One => {
                     const cloned = try allocator.create(pti.child);
-                    cloned.* = try deepClone(thing.*, allocator);
+                    cloned.* = try deepClone(allocator, thing.*);
                     return cloned;
                 },
                 .Slice => {
                     const cloned = try allocator.alloc(pti.child, thing.len);
-                    for (thing) |item, i| cloned[i] = try deepClone(item, allocator);
+                    for (thing) |item, i| cloned[i] = try deepClone(allocator, item);
                     return cloned;
                 },
                 .Many, .C => compileError("Cannot deepClone {}", .{T}),
@@ -229,16 +229,16 @@ pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeO
         },
         .Array => {
             var cloned = thing;
-            for (cloned) |*item| item.* = try deepClone(item.*, allocator);
+            for (cloned) |*item| item.* = try deepClone(allocator, item.*);
             return cloned;
         },
         .Optional => {
-            return if (thing == null) null else try deepClone(thing.?, allocator);
+            return if (thing == null) null else try deepClone(allocator, thing.?);
         },
         .Struct => |sti| {
             var cloned: T = undefined;
             inline for (sti.fields) |fti| {
-                @field(cloned, fti.name) = try deepClone(@field(thing, fti.name), allocator);
+                @field(cloned, fti.name) = try deepClone(allocator, @field(thing, fti.name));
             }
             return cloned;
         },
@@ -247,7 +247,7 @@ pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeO
                 const tag = @enumToInt(std.meta.activeTag(thing));
                 inline for (@typeInfo(tag_type).Enum.fields) |fti| {
                     if (tag == fti.value) {
-                        return @unionInit(T, fti.name, try deepClone(@field(thing, fti.name), allocator));
+                        return @unionInit(T, fti.name, try deepClone(allocator, @field(thing, fti.name)));
                     }
                 }
                 unreachable;
