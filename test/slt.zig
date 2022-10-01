@@ -3,6 +3,13 @@ const sql = @import("../lib/sql.zig");
 const u = sql.util;
 
 const allocator = std.heap.c_allocator;
+//var gpa = std.heap.GeneralPurposeAllocator(.{
+//    .safety = true,
+//    .never_unmap = true,
+//}){
+//    .backing_allocator = std.heap.page_allocator,
+//};
+//pub const allocator = gpa.allocator();
 
 pub fn ReturnError(comptime f: anytype) type {
     const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
@@ -12,6 +19,11 @@ pub fn ReturnError(comptime f: anytype) type {
 const TestError = ReturnError(runStatement) || ReturnError(runQuery);
 
 pub fn main() !void {
+    //defer _ = gpa.detectLeaks();
+    try real_main();
+}
+
+pub fn real_main() !void {
     var args = std.process.args();
     _ = args.next(); // discard executable name
 
@@ -25,12 +37,12 @@ pub fn main() !void {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
         var skip = false;
 
-        var database_arena = u.ArenaAllocator.init(allocator);
-        defer database_arena.deinit();
-        var database = try sql.Database.init(&database_arena);
+        var arena = u.ArenaAllocator.init(allocator);
+        defer arena.deinit();
 
-        var bytes = u.ArrayList(u8).init(allocator);
-        defer bytes.deinit();
+        var database = try sql.Database.init(&arena);
+
+        var bytes = u.ArrayList(u8).init(arena.allocator());
 
         {
             const file = try std.fs.cwd().openFile(slt_path, .{});
@@ -101,8 +113,7 @@ pub fn main() !void {
                     // ...expected...
                     const types_bytes = words.next().?;
 
-                    const types = try allocator.alloc(sql.Type, types_bytes.len);
-                    defer allocator.free(types);
+                    const types = try arena.allocator().alloc(sql.Type, types_bytes.len);
 
                     for (types) |*typ, i|
                         typ.* = switch (types_bytes[i]) {
@@ -166,7 +177,13 @@ const SortMode = enum {
 };
 
 fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
-    var arena = u.ArenaAllocator.init(allocator);
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .enable_memory_limit = true,
+    }){
+        .requested_memory_limit = 1024 * 1024 * 1024 * 1,
+    };
+    defer _ = gpa.deinit();
+    var arena = u.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
     if (database.run(&arena, statement)) |_| {
         switch (expected) {
@@ -186,8 +203,13 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
 
 fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
     _ = label; // TODO handle labels
-
-    var arena = u.ArenaAllocator.init(allocator);
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .enable_memory_limit = true,
+    }){
+        .requested_memory_limit = 1024 * 1024 * 1024 * 1,
+    };
+    defer _ = gpa.deinit();
+    var arena = u.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
     const rows = try database.run(&arena, query);
