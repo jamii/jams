@@ -65,6 +65,7 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
                 try table.append(try u.deepClone(self.database.allocator, row.items));
             return empty_relation;
         },
+        .noop => return empty_relation,
     }
 }
 

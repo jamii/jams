@@ -21,6 +21,7 @@ pub const StatementExpr = union(enum) {
     create_table: CreateTable,
     insert: Insert,
     select: RelationExprId,
+    noop,
 };
 
 pub const CreateTable = struct {
@@ -138,6 +139,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             .select => |select| return .{ .select = try self.planRelation(select) },
             .create => |create| return self.planStatement(create),
             .insert => |insert| return self.planStatement(insert),
+            .reindex => return .{ .noop = {} },
             else => return error.NoPlan,
         },
         N.create => switch (node) {
@@ -188,6 +190,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             //    }
             //    u.dump(self.parser.tokenizer.source);
             //}
+            try self.noPlan(node.insert_or);
             const table_name = node.table_name.getSource(p);
             const table_def = self.database.table_defs.get(table_name) orelse
                 return error.AbortPlan;

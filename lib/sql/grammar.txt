@@ -7,7 +7,8 @@ statement_or_query =
   | INSERT => insert
   | UPDATE => update
   | DELETE => delete
-  | DROP => drop;
+  | DROP => drop
+  | REINDEX => reindex;
 
 select = select_or_values+compound_operator order_by? limit?;
 select_or_values = 
@@ -102,7 +103,9 @@ index_name = table_name;
 indexed_column = column_name asc_or_desc?; # TODO
 create_view = CREATE TEMP_OR_TEMPORARY? VIEW IF_NOT_EXISTS? table_name column_defs? AS select;
 
-insert = INSERT INTO table_name column_names? select_or_values;
+insert = INSERT insert_or? INTO table_name column_names? select_or_values;
+insert_or = OR insert_or_arg;
+insert_or_arg = | ABORT | FAIL | IGNORE | REPLACE | ROLLBACK;
 column_names = open_paren column_name*comma close_paren;
 typ = name typ_length?;
 typ_length = open_paren number (comma number)?=numbers close_paren;
@@ -125,6 +128,8 @@ drop_table = DROP TABLE if_exists? table_name;
 drop_index = DROP INDEX if_exists? table_name;
 drop_view = DROP VIEW if_exists? table_name;
 if_exists = IF EXISTS;
+
+reindex = REINDEX name;
 
 exprs = expr*comma;
 expr = expr_or;

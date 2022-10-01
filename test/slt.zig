@@ -165,11 +165,11 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
     } else |err| {
         switch (expected) {
             .ok => {
-                u.dump(statement);
+                u.dump(.{ .err = err, .statement = statement });
                 return err;
             },
             .err => switch (err) {
-                error.AbortEval => return,
+                error.AbortPlan, error.AbortEval => return,
                 else => return err,
             },
         }
@@ -182,7 +182,13 @@ fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type,
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    const rows = try database.run(&arena, query);
+    const rows = if (database.run(&arena, query)) |rows| rows else |err| {
+        switch (err) {
+            //error.ParseError => u.dump(query),
+            else => {},
+        }
+        return err;
+    };
 
     for (rows.items) |row|
         if (row.items.len != types.len)
