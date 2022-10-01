@@ -238,7 +238,7 @@ I figured it out at home.
 
 I was barking up totally the wrong tree. The `expr` grammar is actually not left-recursive after the changes I made, which means the memo is not being applied. But the memo was covering up the fact that I wrote the grammar in a silly way that required exponential time to parse with memoization.
 
-Which means I actually don't need to memoization (which I spent most of today working on) at all for my grammar.
+Which means I actually don't need memoization (which I spent most of today working on) at all for my grammar.
 
 This whole left-recursive memoization thing has been a total dead end. I should have stuck with techniques I'm familiar with from the start. This is not the time to be trying experimental new things.
 
@@ -278,7 +278,7 @@ Executed in  121.77 secs    fish           external
 
 4.5% of tests are passing!
 
-This is how I expect the week to go. Not death by bnf.
+This is how I expected the week to go. Not death by bnf.
 
 The odds of hitting 100% now are very low - there is a long tail of weird behavior that I expected to have much more time to implement. But I think in the next two days I might be able to get to something respectable.
 
