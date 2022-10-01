@@ -33,17 +33,18 @@ pub fn init(
     };
 }
 
-pub const Relation = []const Row;
-pub const Row = []const Scalar;
+pub const Relation = u.ArrayList(Row);
+pub const Row = u.ArrayList(Scalar);
 pub const Scalar = sql.Value; // TODO move from sql to here
 
 pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Error!Relation {
+    const empty_relation = Relation.init(self.allocator);
     switch (statement_expr) {
         .select => |select| return self.evalRelation(select),
         .create_table => |create_table| {
             const exists = self.database.table_defs.contains(create_table.name);
             if (exists)
-                return if (create_table.if_not_exists) &.{} else error.AbortEval
+                return if (create_table.if_not_exists) empty_relation else error.AbortEval
             else {
                 try self.database.table_defs.put(
                     try u.deepClone(self.database.allocator, create_table.name),
@@ -53,16 +54,16 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
                     try u.deepClone(self.database.allocator, create_table.name),
                     sql.Table.init(self.database.allocator),
                 );
-                return &.{};
+                return empty_relation;
             }
         },
         .insert => |insert| {
             const table = self.database.tables.getPtr(insert.table_name).?;
             const rows = try self.evalRelation(insert.query);
-            for (rows) |row|
+            for (rows.items) |row|
                 // unique keys are not tested in slt
-                try table.append(try u.deepClone(self.database.allocator, row));
-            return &.{};
+                try table.append(try u.deepClone(self.database.allocator, row.items));
+            return empty_relation;
         },
     }
 }
@@ -70,51 +71,45 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
 fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error!Relation {
     try self.useJuice();
     const relation_expr = self.planner.relation_exprs.items[relation_expr_id];
+    var output = Relation.init(self.allocator);
     switch (relation_expr) {
-        .none => return &.{},
-        .some => return self.allocator.dupe(Row, &.{&.{}}),
+        .none => {},
+        .some => try output.append(Row.init(self.allocator)),
         .map => |map| {
             const input = try self.evalRelation(map.input);
-            var output = u.ArrayList(Row).init(self.allocator);
-            for (input) |input_row| {
+            for (input.items) |*input_row| {
                 try self.useJuice();
-                const value = try self.evalScalar(map.scalar, input_row);
-                const output_row = try std.mem.concat(self.allocator, Scalar, &.{
-                    input_row,
-                    &.{value},
-                });
-                try output.append(output_row);
+                const value = try self.evalScalar(map.scalar, input_row.*);
+                try input_row.append(value);
             }
-            return output.toOwnedSlice();
+            output = input;
         },
         .project => |project| {
             const input = try self.evalRelation(project.input);
-            var output = u.ArrayList(Row).init(self.allocator);
-            for (input) |input_row| {
+            for (input.items) |input_row| {
                 try self.useJuice();
-                const output_row = try self.allocator.alloc(Scalar, project.columns.len);
-                for (output_row) |*scalar, i|
-                    scalar.* = input_row[project.columns[i]];
+                var output_row = try Row.initCapacity(self.allocator, project.columns.len);
+                for (project.columns) |column|
+                    output_row.appendAssumeCapacity(input_row.items[column]);
                 try output.append(output_row);
             }
-            return output.toOwnedSlice();
         },
         .unio => |unio| {
             const left = try self.evalRelation(unio.inputs[0]);
             const right = try self.evalRelation(unio.inputs[1]);
-            if (unio.all)
-                return std.mem.concat(self.allocator, Row, &.{ left, right })
-            else {
+            if (unio.all) {
+                output = left;
+                try output.appendSlice(right.items);
+            } else {
                 var set = u.DeepHashSet(Row).init(self.allocator);
-                for (left) |row| try set.put(row, {});
-                for (right) |row| try set.put(row, {});
-                var output = u.ArrayList(Row).init(self.allocator);
+                for (left.items) |row| try set.put(row, {});
+                for (right.items) |row| try set.put(row, {});
                 var iter = set.keyIterator();
                 while (iter.next()) |row| try output.append(row.*);
-                return output.toOwnedSlice();
             }
         },
     }
+    return output;
 }
 
 fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) Error!Scalar {
@@ -122,7 +117,7 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
     const scalar_expr = self.planner.scalar_exprs.items[scalar_expr_id];
     switch (scalar_expr) {
         .value => |value| return value,
-        .column => |column| return env[column],
+        .column => |column| return env.items[column],
         .unary => |unary| {
             const input = try self.evalScalar(unary.input, env);
             switch (unary.op) {

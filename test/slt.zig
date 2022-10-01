@@ -179,8 +179,8 @@ fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type,
 
     const rows = try database.run(&arena, query);
 
-    for (rows) |row|
-        if (row.len != types.len)
+    for (rows.items) |row|
+        if (row.items.len != types.len)
             return error.WrongNumberOfColumnsReturned;
 
     const should_hash = std.mem.containsAtLeast(u8, expected_output, 1, "values hashing to");
@@ -188,18 +188,18 @@ fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type,
     return std.testing.expectEqualStrings(expected_output, actual_output);
 }
 
-fn produceQueryOutput(arena: *u.ArenaAllocator, rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, should_hash: bool) ![]const u8 {
+fn produceQueryOutput(arena: *u.ArenaAllocator, rows: sql.Evaluator.Relation, types: []const sql.Type, sort_mode: SortMode, should_hash: bool) ![]const u8 {
     var actual_outputs = u.ArrayList([]const u8).init(arena.allocator());
-    for (rows) |row| {
+    for (rows.items) |row| {
         switch (sort_mode) {
             .no_sort, .value_sort => {
                 for (types) |typ, i|
-                    try actual_outputs.append(try formatValue(arena, typ, row[i]));
+                    try actual_outputs.append(try formatValue(arena, typ, row.items[i]));
             },
             .row_sort => {
                 var row_output = u.ArrayList([]const u8).init(arena.allocator());
                 for (types) |typ, i|
-                    try row_output.append(try formatValue(arena, typ, row[i]));
+                    try row_output.append(try formatValue(arena, typ, row.items[i]));
                 try actual_outputs.append(try std.mem.join(arena.allocator(), "\n", row_output.items));
             },
         }
@@ -227,7 +227,7 @@ fn produceQueryOutput(arena: *u.ArenaAllocator, rows: []const []const sql.Value,
         hasher.update("\n");
         var hash: [std.crypto.hash.Md5.digest_length]u8 = undefined;
         hasher.final(&hash);
-        return std.fmt.allocPrint(arena.allocator(), "{} values hashing to {s}", .{ rows.len * types.len, std.fmt.fmtSliceHexLower(&hash) });
+        return std.fmt.allocPrint(arena.allocator(), "{} values hashing to {s}", .{ rows.items.len * types.len, std.fmt.fmtSliceHexLower(&hash) });
     } else {
         return actual_output;
     }

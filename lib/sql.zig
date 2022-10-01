@@ -76,7 +76,7 @@ pub const Key = struct {
     kind: enum { primary, unique },
 };
 
-pub const Table = u.ArrayList(Evaluator.Row);
+pub const Table = u.ArrayList([]const Value);
 
 pub const Type = enum {
     nul,

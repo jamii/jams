@@ -193,14 +193,14 @@ pub fn deepClone(allocator: Allocator, thing: anytype) error{OutOfMemory}!@TypeO
     if (T == std.mem.Allocator)
         return allocator;
 
-    if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
+    if (comptime std.mem.startsWith(u8, @typeName(T), "array_list.ArrayList")) {
         var cloned = try ArrayList(@TypeOf(thing.items[0])).initCapacity(allocator, thing.items.len);
         cloned.appendSliceAssumeCapacity(thing.items);
         for (cloned.items) |*item| item.* = try deepClone(allocator, item.*);
         return cloned;
     }
 
-    if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
+    if (comptime std.mem.startsWith(u8, @typeName(T), "hash_map.HashMap")) {
         var cloned = try thing.cloneWithAllocator(allocator);
         var iter = cloned.iterator();
         while (iter.next()) |entry| {
@@ -289,6 +289,11 @@ pub fn deepOrder(a: anytype, b: @TypeOf(a)) std.math.Order {
         },
         else => {},
     }
+
+    if (comptime std.mem.startsWith(u8, @typeName(T), "array_list.ArrayList")) {
+        return deepOrder(a.items, b.items);
+    }
+
     switch (ti) {
         .Bool => {
             if (a == b) return .eq;
@@ -424,6 +429,12 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
         },
         else => {},
     }
+
+    if (comptime std.mem.startsWith(u8, @typeName(T), "array_list.ArrayList")) {
+        deepHashInto(hasher, key.items);
+        return;
+    }
+
     switch (ti) {
         .Int => @call(.{ .modifier = .always_inline }, hasher.update, .{std.mem.asBytes(&key)}),
         .Float => |info| deepHashInto(hasher, @bitCast(std.meta.Int(.unsigned, info.bits), key)),
