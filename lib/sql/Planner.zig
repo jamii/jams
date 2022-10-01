@@ -228,11 +228,13 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                 const columns = try self.allocator.alloc(usize, column_names_expr.elements.len);
                 for (columns) |*column, column_ix| {
                     const column_name = column_names_expr.elements[column_ix].getSource(p);
-                    for (table_def.columns) |column_def, column_def_ix| {
-                        if (u.deepEqual(column_name, column_def.name))
-                            column.* = column_def_ix;
-                        break;
-                    } else return error.NoPlan;
+                    column.* = column: {
+                        for (table_def.columns) |column_def, column_def_ix| {
+                            if (u.deepEqual(column_name, column_def.name))
+                                break :column column_def_ix;
+                        }
+                        return error.NoPlan;
+                    };
                     query = try self.pushRelation(.{ .project = .{
                         .input = query,
                         .columns = columns,
