@@ -178,12 +178,9 @@ fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type,
 
     const rows = try database.run(&arena, query);
 
-    for (rows) |row| {
-        if (row.len != types.len) {
-            u.dump(.{ .row = row, .types = types });
+    for (rows) |row|
+        if (row.len != types.len)
             return error.WrongNumberOfColumnsReturned;
-        }
-    }
 
     const should_hash = std.mem.containsAtLeast(u8, expected_output, 1, "values hashing to");
     const actual_output = try produceQueryOutput(&arena, rows, types, sort_mode, should_hash);

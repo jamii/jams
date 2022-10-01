@@ -70,17 +70,66 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
         .column => |column| return env[column],
         .unary => |unary| {
             const input = try self.evalScalar(unary.input, env);
-            _ = input;
-            return switch (unary.op) {
-                else => error.NoEval,
-            };
+            switch (unary.op) {
+                .is_null, .is_not_null => {},
+                else => if (input == .nul) return Scalar.NULL,
+            }
+            switch (unary.op) {
+                .is_null => return Scalar.fromBool(input == .nul),
+                .is_not_null => return Scalar.fromBool(input != .nul),
+                .bool_not => return Scalar.fromBool(!(try input.toBool())),
+                .bit_not => return error.NoEval,
+                .plus => {
+                    if (input != .integer) return error.TypeError;
+                    return input;
+                },
+                .minus => {
+                    if (input != .integer) return error.TypeError;
+                    return Scalar{ .integer = -input.integer };
+                },
+            }
         },
         .binary => |binary| {
-            const left = try self.evalScalar(binary.inputs[0], env);
-            const right = try self.evalScalar(binary.inputs[1], env);
-            _ = left;
-            _ = right;
+            var left = try self.evalScalar(binary.inputs[0], env);
+            var right = try self.evalScalar(binary.inputs[1], env);
+            switch (binary.op) {
+                else => {
+                    if (left == .nul) return Scalar.NULL;
+                    if (right == .nul) return Scalar.NULL;
+                },
+            }
             return switch (binary.op) {
+                .bool_and => return Scalar.fromBool(try left.toBool() and try right.toBool()),
+                .bool_or => return Scalar.fromBool(try left.toBool() or try right.toBool()),
+                .equal => return Scalar.fromBool(u.deepEqual(left, right)),
+                .not_equal => return Scalar.fromBool(!u.deepEqual(left, right)),
+                .less_than => return Scalar.fromBool(Scalar.order(left, right) == .lt),
+                .greater_than => return Scalar.fromBool(Scalar.order(left, right) == .gt),
+                .less_than_or_equal => return Scalar.fromBool(Scalar.order(left, right) != .gt),
+                .greater_than_or_equal => return Scalar.fromBool(Scalar.order(left, right) != .lt),
+                .plus, .minus, .star, .forward_slash => {
+                    if (!left.isNumeric()) return error.TypeError;
+                    if (!right.isNumeric()) return error.TypeError;
+                    if (left == .real and right == .integer)
+                        right = right.promoteToReal();
+                    if (right == .real and left == .integer)
+                        left = left.promoteToReal();
+                    return if (left == .real and right == .real)
+                        switch (binary.op) {
+                            .plus => Scalar{ .real = left.real + right.real },
+                            .minus => Scalar{ .real = left.real - right.real },
+                            .star => Scalar{ .real = left.real * right.real },
+                            .forward_slash => Scalar{ .real = left.real / right.real },
+                            else => unreachable,
+                        }
+                    else switch (binary.op) {
+                        .plus => Scalar{ .integer = left.integer + right.integer },
+                        .minus => Scalar{ .integer = left.integer - right.integer },
+                        .star => Scalar{ .integer = left.integer * right.integer },
+                        .forward_slash => Scalar{ .integer = @divTrunc(left.integer, right.integer) },
+                        else => unreachable,
+                    };
+                },
                 else => error.NoEval,
             };
         },

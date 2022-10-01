@@ -46,7 +46,6 @@ pub const ScalarExpr = union(enum) {
 };
 
 pub const UnaryOp = enum {
-    not,
     is_null,
     is_not_null,
     bool_not,

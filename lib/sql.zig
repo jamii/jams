@@ -51,7 +51,6 @@ pub const Database = struct {
         const statement = try planner.planStatement(root_id.get(parser).statement_or_query);
         var evaluator = Evaluator.init(arena, planner, 1000000);
         const relation = evaluator.evalStatement(statement);
-        u.dump(relation);
         return relation;
     }
 };
@@ -72,7 +71,30 @@ pub const Value = union(Type) {
     text: []const u8,
     blob: []const u8,
 
-    // https://www.sqlite.org/datatype3.html#comparisons
+    pub const NULL = Value{ .nul = {} };
+    pub const TRUE = Value{ .integer = 1 };
+    pub const FALSE = Value{ .integer = 0 };
+    pub fn toBool(self: Value) !bool {
+        // sqlite actually has some horrible implicit casts, but we'll be sane here
+        if (self != .integer) return error.TypeError;
+        return self.integer != FALSE.integer;
+    }
+    pub fn fromBool(b: bool) Value {
+        return if (b) TRUE else FALSE;
+    }
+    pub fn order(a: Value, b: Value) std.math.Order {
+        // TODO sqlite has complex casting logic here https://www.sqlite.org/datatype3.html#comparisons
+        // but other databases don't, so we may get away with strict comparisons
+        return u.deepOrder(a, b);
+    }
+
+    pub fn isNumeric(self: Value) bool {
+        return self == .integer or self == .real;
+    }
+
+    pub fn promoteToReal(self: Value) Value {
+        return Value{ .real = @intToFloat(f64, self.integer) };
+    }
 };
 
 var rule_usage = u.DeepHashMap([]const u8, struct { q: usize, s: usize }).init(std.heap.page_allocator);
