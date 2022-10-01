@@ -8,8 +8,8 @@ const NodeId = sql.Parser.NodeId;
 const Self = @This();
 arena: *u.ArenaAllocator,
 allocator: u.Allocator,
-tokenizer: sql.Tokenizer,
 parser: sql.Parser,
+database: sql.Database,
 relation_exprs: u.ArrayList(RelationExpr),
 scalar_exprs: u.ArrayList(ScalarExpr),
 
@@ -114,15 +114,15 @@ pub const Error = error{
 
 pub fn init(
     arena: *u.ArenaAllocator,
-    tokenizer: sql.Tokenizer,
     parser: sql.Parser,
+    database: sql.Database,
 ) Self {
     const allocator = arena.allocator();
     return Self{
         .arena = arena,
         .allocator = allocator,
-        .tokenizer = tokenizer,
         .parser = parser,
+        .database = database,
         .relation_exprs = u.ArrayList(RelationExpr).init(allocator),
         .scalar_exprs = u.ArrayList(ScalarExpr).init(allocator),
     };
@@ -135,6 +135,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
         N.statement_or_query => switch (node) {
             .select => |select| return .{ .select = try self.planRelation(select) },
             .create => |create| return self.planStatement(create),
+            .insert => |insert| return self.planStatement(insert),
             else => return error.NoPlan,
         },
         N.create => switch (node) {
@@ -178,21 +179,28 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             } };
         },
         N.insert => {
+            //errdefer {
+            //    u.dump(sql.Parser.DumpNode{ .self = self.parser, .node_id = node_id.id });
+            //    if (@errorReturnTrace()) |trace| {
+            //        std.debug.dumpStackTrace(trace.*);
+            //    }
+            //    u.dump(self.parser.tokenizer.source);
+            //}
             const table_name = node.table_name.getSource(p);
             const table_def = self.database.table_defs.get(table_name) orelse
-                return error.NoPlan;
-            var query = try self.planRelation(node.values_or_select);
-            if (node.column_names) |column_names_expr_id| {
+                return error.AbortPlan;
+            var query = try self.planRelation(node.select_or_values);
+            if (node.column_names.get(p)) |column_names_expr_id| {
                 const column_names_expr = column_names_expr_id.get(p).column_name.get(p);
-                const columns = try self.allocator.create(usize, column_names_expr.elements.len);
-                for (columns.?) |*column, column_ix| {
-                    const column_name = column_names_expr.elements[column_ix].getSource();
+                const columns = try self.allocator.alloc(usize, column_names_expr.elements.len);
+                for (columns) |*column, column_ix| {
+                    const column_name = column_names_expr.elements[column_ix].getSource(p);
                     for (table_def.columns) |column_def, column_def_ix| {
                         if (u.deepEqual(column_name, column_def.name))
                             column.* = column_def_ix;
                         break;
                     } else return error.NoPlan;
-                    query = self.pushRelation(.{ .project = .{
+                    query = try self.pushRelation(.{ .project = .{
                         .input = query,
                         .columns = columns,
                     } });

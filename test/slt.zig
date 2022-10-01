@@ -58,12 +58,14 @@ pub fn main() !void {
                     break :header;
                 } else if (std.mem.eql(u8, kind, "halt")) {
                     continue :file;
-                } else if (std.mem.eql(u8, kind, "skipif") or std.mem.eql(u8, kind, "onlyif")) {
-                    // Only run tests that sqlite/mysql/postgres agree on
-                    if (lines.next()) |line|
-                        if (std.mem.eql(u8, line, "halt"))
-                            continue :file;
-                    break :header;
+                } else if (std.mem.eql(u8, kind, "skipif")) {
+                    const db = words.next().?;
+                    if (std.mem.eql(u8, db, "sqlite"))
+                        break :header;
+                } else if (std.mem.eql(u8, kind, "onlyif")) {
+                    const db = words.next().?;
+                    if (!std.mem.eql(u8, db, "sqlite"))
+                        break :header;
                 } else if (std.mem.eql(u8, kind, "statement")) {
                     // Statements look like:
                     // statement ok/error
@@ -162,7 +164,10 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
         }
     } else |err| {
         switch (expected) {
-            .ok => return err,
+            .ok => {
+                u.dump(statement);
+                return err;
+            },
             .err => switch (err) {
                 error.AbortEval => return,
                 else => return err,

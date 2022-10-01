@@ -120,13 +120,13 @@ pub const Node = union(enum) {
     insert: @field(types, "insert"),
     anon_104: @field(types, "anon_104"),
     column_names: @field(types, "column_names"),
-    values_or_select: @field(types, "values_or_select"),
-    anon_107: @field(types, "anon_107"),
+    anon_106: @field(types, "anon_106"),
     typ: @field(types, "typ"),
+    anon_108: @field(types, "anon_108"),
     anon_109: @field(types, "anon_109"),
-    anon_110: @field(types, "anon_110"),
     typ_length: @field(types, "typ_length"),
     column_constraint: @field(types, "column_constraint"),
+    anon_112: @field(types, "anon_112"),
     anon_113: @field(types, "anon_113"),
     anon_114: @field(types, "anon_114"),
     key: @field(types, "key"),
@@ -749,7 +749,7 @@ pub const rules = struct {
         RuleRef{ .field_name = "INTO", .rule_name = "INTO" },
         RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
         RuleRef{ .field_name = "column_names", .rule_name = "anon_102" },
-        RuleRef{ .field_name = "values_or_select", .rule_name = "values_or_select" },
+        RuleRef{ .field_name = "select_or_values", .rule_name = "select_or_values" },
     } };
     pub const anon_104 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "column_name", .rule_name = "column_name" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
     pub const column_names = Rule{ .all_of = &[_]RuleRef{
@@ -757,39 +757,34 @@ pub const rules = struct {
         RuleRef{ .field_name = "column_name", .rule_name = "anon_104" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
-    pub const values_or_select = Rule{ .one_of = &[_]OneOf{
-        .{ .committed_choice = .{
-            RuleRef{ .field_name = "VALUES", .rule_name = "VALUES" }, RuleRef{ .field_name = "values", .rule_name = "values" },
-        } },
-        .{ .choice = RuleRef{ .field_name = "select", .rule_name = "select" } },
-    } };
-    pub const anon_107 = Rule{ .optional = RuleRef{ .field_name = "typ_length", .rule_name = "typ_length" } };
+    pub const anon_106 = Rule{ .optional = RuleRef{ .field_name = "typ_length", .rule_name = "typ_length" } };
     pub const typ = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
-        RuleRef{ .field_name = "typ_length", .rule_name = "anon_107" },
+        RuleRef{ .field_name = "typ_length", .rule_name = "anon_106" },
     } };
-    pub const anon_109 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_108 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "comma", .rule_name = "comma" },
         RuleRef{ .field_name = "number", .rule_name = "number" },
     } };
-    pub const anon_110 = Rule{ .optional = RuleRef{ .field_name = "anon_109", .rule_name = "anon_109" } };
+    pub const anon_109 = Rule{ .optional = RuleRef{ .field_name = "anon_108", .rule_name = "anon_108" } };
     pub const typ_length = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
         RuleRef{ .field_name = "number", .rule_name = "number" },
-        RuleRef{ .field_name = "numbers", .rule_name = "anon_110" },
+        RuleRef{ .field_name = "numbers", .rule_name = "anon_109" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const column_constraint = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "key", .rule_name = "key" } },
     } };
-    pub const anon_113 = Rule{ .one_of = &[_]OneOf{
+    pub const anon_112 = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "PRIMARY", .rule_name = "PRIMARY" } },
         .{ .choice = RuleRef{ .field_name = "UNIQUE", .rule_name = "UNIQUE" } },
     } };
+    pub const anon_113 = Rule{ .optional = RuleRef{ .field_name = "KEY", .rule_name = "KEY" } };
     pub const anon_114 = Rule{ .optional = RuleRef{ .field_name = "asc_or_desc", .rule_name = "asc_or_desc" } };
     pub const key = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "kind", .rule_name = "anon_113" },
-        RuleRef{ .field_name = "KEY", .rule_name = "KEY" },
+        RuleRef{ .field_name = "kind", .rule_name = "anon_112" },
+        RuleRef{ .field_name = "KEY", .rule_name = "anon_113" },
         RuleRef{ .field_name = "asc_or_desc", .rule_name = "anon_114" },
     } };
     pub const anon_116 = Rule{ .optional = RuleRef{ .field_name = "update_from", .rule_name = "update_from" } };
@@ -1666,7 +1661,7 @@ pub const types = struct {
         INTO: sql.Parser.NodeId("INTO"),
         table_name: sql.Parser.NodeId("table_name"),
         column_names: sql.Parser.NodeId("anon_102"),
-        values_or_select: sql.Parser.NodeId("values_or_select"),
+        select_or_values: sql.Parser.NodeId("select_or_values"),
     };
     pub const anon_104 = struct {
         elements: []const sql.Parser.NodeId("column_name"),
@@ -1677,37 +1672,34 @@ pub const types = struct {
         column_name: sql.Parser.NodeId("anon_104"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
-    pub const values_or_select = union(enum) {
-        values: sql.Parser.NodeId("values"),
-        select: sql.Parser.NodeId("select"),
-    };
-    pub const anon_107 = ?sql.Parser.NodeId("typ_length");
+    pub const anon_106 = ?sql.Parser.NodeId("typ_length");
     pub const typ = struct {
         name: sql.Parser.NodeId("name"),
-        typ_length: sql.Parser.NodeId("anon_107"),
+        typ_length: sql.Parser.NodeId("anon_106"),
     };
-    pub const anon_109 = struct {
+    pub const anon_108 = struct {
         comma: sql.Parser.NodeId("comma"),
         number: sql.Parser.NodeId("number"),
     };
-    pub const anon_110 = ?sql.Parser.NodeId("anon_109");
+    pub const anon_109 = ?sql.Parser.NodeId("anon_108");
     pub const typ_length = struct {
         open_paren: sql.Parser.NodeId("open_paren"),
         number: sql.Parser.NodeId("number"),
-        numbers: sql.Parser.NodeId("anon_110"),
+        numbers: sql.Parser.NodeId("anon_109"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const column_constraint = union(enum) {
         key: sql.Parser.NodeId("key"),
     };
-    pub const anon_113 = union(enum) {
+    pub const anon_112 = union(enum) {
         PRIMARY: sql.Parser.NodeId("PRIMARY"),
         UNIQUE: sql.Parser.NodeId("UNIQUE"),
     };
+    pub const anon_113 = ?sql.Parser.NodeId("KEY");
     pub const anon_114 = ?sql.Parser.NodeId("asc_or_desc");
     pub const key = struct {
-        kind: sql.Parser.NodeId("anon_113"),
-        KEY: sql.Parser.NodeId("KEY"),
+        kind: sql.Parser.NodeId("anon_112"),
+        KEY: sql.Parser.NodeId("anon_113"),
         asc_or_desc: sql.Parser.NodeId("anon_114"),
     };
     pub const anon_116 = ?sql.Parser.NodeId("update_from");

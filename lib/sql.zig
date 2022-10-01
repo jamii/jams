@@ -49,7 +49,7 @@ pub const Database = struct {
         //};
         //try countRuleUsage(parser, root_id);
         //u.dump(parser);
-        var planner = Planner.init(arena, tokenizer, parser);
+        var planner = Planner.init(arena, parser, self.*);
         const statement = try planner.planStatement(root_id.get(parser).statement_or_query);
         var evaluator = Evaluator.init(arena, planner, self, 1000000);
         const relation = evaluator.evalStatement(statement);
