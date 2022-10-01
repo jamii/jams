@@ -464,10 +464,28 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
             return plan;
         },
         N.expr_atom => switch (node) {
-            .value => |value| return self.planScalar(value, env_node_id),
+            .subexpr => |subexpr| return self.planScalar(subexpr, env_node_id),
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref, env_node_id),
             .column_ref => |column_ref| return self.planScalar(column_ref, env_node_id),
+            .value => |value| return self.planScalar(value, env_node_id),
             else => return error.NoPlan,
+        },
+        N.subexpr => return self.planScalar(node.expr, env_node_id),
+        N.table_column_ref => {
+            const ref = ColumnRef{
+                .table_name = node.table_name.getSource(p),
+                .column_name = node.column_name.getSource(p),
+            };
+            const column = try self.resolve(env_node_id, ref);
+            return self.pushScalar(.{ .column = column });
+        },
+        N.column_ref => {
+            const ref = ColumnRef{
+                .table_name = null,
+                .column_name = node.column_name.getSource(p),
+            };
+            const column = try self.resolve(env_node_id, ref);
+            return self.pushScalar(.{ .column = column });
         },
         N.value => {
             const value = switch (node) {
@@ -508,22 +526,6 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                 .NULL => sql.Value{ .nul = {} },
             };
             return self.pushScalar(.{ .value = value });
-        },
-        N.table_column_ref => {
-            const ref = ColumnRef{
-                .table_name = node.table_name.getSource(p),
-                .column_name = node.column_name.getSource(p),
-            };
-            const column = try self.resolve(env_node_id, ref);
-            return self.pushScalar(.{ .column = column });
-        },
-        N.column_ref => {
-            const ref = ColumnRef{
-                .table_name = null,
-                .column_name = node.column_name.getSource(p),
-            };
-            const column = try self.resolve(env_node_id, ref);
-            return self.pushScalar(.{ .column = column });
         },
         else => @compileError("planScalar not implemented for " ++ @typeName(@TypeOf(node))),
     }
