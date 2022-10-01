@@ -25,9 +25,9 @@ distinct_or_all =
   | DISTINCT
   | ALL;
 result_column = # TODO
-  | result_expr
   | star
-  | table_star; 
+  | table_star
+  | result_expr; 
 result_expr = expr as_column?;
 as_column = AS? column_name;
 table_star = table_name dot star;

@@ -489,9 +489,9 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = "ALL", .rule_name = "ALL" } },
     } };
     pub const result_column = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "result_expr", .rule_name = "result_expr" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
         .{ .choice = RuleRef{ .field_name = "table_star", .rule_name = "table_star" } },
+        .{ .choice = RuleRef{ .field_name = "result_expr", .rule_name = "result_expr" } },
     } };
     pub const anon_20 = Rule{ .optional = RuleRef{ .field_name = "as_column", .rule_name = "as_column" } };
     pub const result_expr = Rule{ .all_of = &[_]RuleRef{
@@ -1453,9 +1453,9 @@ pub const types = struct {
         ALL: sql.Parser.NodeId("ALL"),
     };
     pub const result_column = union(enum) {
-        result_expr: sql.Parser.NodeId("result_expr"),
         star: sql.Parser.NodeId("star"),
         table_star: sql.Parser.NodeId("table_star"),
+        result_expr: sql.Parser.NodeId("result_expr"),
     };
     pub const anon_20 = ?sql.Parser.NodeId("as_column");
     pub const result_expr = struct {

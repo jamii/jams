@@ -147,7 +147,17 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                 while (iter.next()) |row| try output.append(row.*);
             }
         },
+        .get_table => |table_name| {
+            const table = self.database.tables.get(table_name) orelse
+                return error.AbortEval;
+            for (table.items) |input_row| {
+                var output_row = try Row.initCapacity(self.allocator, input_row.len);
+                output_row.appendSliceAssumeCapacity(input_row);
+                try output.append(output_row);
+            }
+        },
     }
+    //u.dump(.{ relation_expr, output });
     return output;
 }
 
