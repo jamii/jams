@@ -346,6 +346,14 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             else
                 0;
             var project_columns = u.ArrayList(usize).init(self.allocator);
+            if (node.where.get(p)) |where|
+                plan = try self.pushRelation(.{
+                    .filter = .{
+                        .input = plan,
+                        // TODO where should resolve from both from_maybe and select_body
+                        .cond = try self.planScalar(where.get(p).expr, from_maybe),
+                    },
+                });
             for (node.result_column.get(p).elements) |result_column|
                 switch (result_column.get(p)) {
                     .result_expr => |result_expr| {
@@ -372,11 +380,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 .input = plan,
                 .columns = project_columns.toOwnedSlice(),
             } });
-            if (node.where.get(p)) |where|
-                plan = try self.pushRelation(.{ .filter = .{
-                    .input = plan,
-                    .cond = try self.planScalar(where.get(p).expr, from_maybe),
-                } });
             return plan;
         },
         N.from => return self.planRelation(node.joins),
