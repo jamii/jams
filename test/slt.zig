@@ -86,7 +86,7 @@ pub fn main() !void {
                         if (skip)
                             skips += 1
                         else {
-                            u.dump(.{ .err = err, .statemetn = statement, .file = slt_path });
+                            u.dump(.{ .err = err, .statement = statement, .file = slt_path });
                             try incCount(&errors, err);
                         }
                         // Once we fail on one statement, the rest of the file is unlikely to pass anyway

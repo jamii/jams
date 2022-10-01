@@ -108,7 +108,6 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
 }
 
 fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error!Relation {
-    try self.useJuice();
     const relation_expr = self.planner.relation_exprs.items[relation_expr_id];
     var output = Relation.init(self.allocator);
     switch (relation_expr) {
@@ -117,7 +116,6 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
         .map => |map| {
             const input = try self.evalRelation(map.input);
             for (input.items) |*input_row| {
-                try self.useJuice();
                 const value = try self.evalScalar(map.scalar, input_row.*);
                 try input_row.append(value);
             }
@@ -126,7 +124,6 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
         .filter => |filter| {
             const input = try self.evalRelation(filter.input);
             for (input.items) |input_row| {
-                try self.useJuice();
                 const cond = try self.evalScalar(filter.cond, input_row);
                 if (try cond.toBool())
                     try output.append(input_row);
@@ -135,7 +132,6 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
         .project => |project| {
             const input = try self.evalRelation(project.input);
             for (input.items) |input_row| {
-                try self.useJuice();
                 var output_row = try Row.initCapacity(self.allocator, project.columns.len);
                 for (project.columns) |column|
                     output_row.appendAssumeCapacity(input_row.items[column]);
@@ -171,7 +167,6 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
 }
 
 fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) Error!Scalar {
-    try self.useJuice();
     const scalar_expr = self.planner.scalar_exprs.items[scalar_expr_id];
     switch (scalar_expr) {
         .value => |value| return value,
