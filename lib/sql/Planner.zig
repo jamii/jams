@@ -199,14 +199,19 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             }
             return .{ .create_table = .{
                 .name = name,
-                .def = .{ .columns = columns, .key = key },
+                .def = .{
+                    .columns = columns,
+                    .key = key,
+                },
                 .if_not_exists = node.if_not_exists.get(p) != null,
             } };
         },
         N.create_index => {
             return .{ .create_index = .{
                 .name = node.index_name.getSource(p),
-                .def = .{},
+                .def = .{
+                    .table_name = node.table_name.getSource(p),
+                },
                 .if_not_exists = node.if_not_exists.get(p) != null,
             } };
         },

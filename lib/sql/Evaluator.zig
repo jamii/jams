@@ -84,6 +84,13 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
             else {
                 _ = self.database.table_defs.remove(drop_table.name);
                 _ = self.database.tables.remove(drop_table.name);
+                var to_remove = u.ArrayList(sql.IndexName).init(self.allocator);
+                var iter = self.database.index_defs.iterator();
+                while (iter.next()) |entry|
+                    if (u.deepEqual(drop_table.name, entry.value_ptr.table_name))
+                        try to_remove.append(entry.key_ptr.*);
+                for (to_remove.items) |index_name|
+                    _ = self.database.index_defs.remove(index_name);
                 return empty_relation;
             }
         },

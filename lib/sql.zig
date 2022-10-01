@@ -74,7 +74,9 @@ pub const ColumnDef = struct {
     nullable: bool,
 };
 
-pub const IndexDef = struct {};
+pub const IndexDef = struct {
+    table_name: TableName,
+};
 
 pub const Key = struct {
     columns: []const usize,
