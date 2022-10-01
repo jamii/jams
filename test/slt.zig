@@ -78,7 +78,7 @@ pub fn main() !void {
                     else
                         return error.UnexpectedInput;
                     const statement = std.mem.trim(u8, case[lines.index.?..], "\n");
-                    if (runStatement(&database, statement, expected)) |_|
+                    if (runStatement(&database, slt_path, statement, expected)) |_|
                         passes += 1
                     else |err| {
                         try incCount(&errors, err);
@@ -117,7 +117,7 @@ pub fn main() !void {
                     var query_and_expected_iter = std.mem.split(u8, case[lines.index.?..], "----");
                     const query = std.mem.trim(u8, query_and_expected_iter.next().?, "\n");
                     const expected = std.mem.trim(u8, query_and_expected_iter.next() orelse "", "\n");
-                    if (runQuery(&database, query, types, sort_mode, label, expected)) |_|
+                    if (runQuery(&database, slt_path, query, types, sort_mode, label, expected)) |_|
                         passes += 1
                     else |err| {
                         if (skip)
@@ -154,7 +154,7 @@ const SortMode = enum {
     value_sort,
 };
 
-fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
+fn runStatement(database: *sql.Database, file: []const u8, statement: []const u8, expected: StatementExpected) !void {
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
     if (database.run(&arena, statement)) |_| {
@@ -165,7 +165,7 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
     } else |err| {
         switch (expected) {
             .ok => {
-                u.dump(.{ .err = err, .statement = statement });
+                u.dump(.{ .err = err, .statement = statement, .file = file });
                 return err;
             },
             .err => switch (err) {
@@ -176,13 +176,14 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
     }
 }
 
-fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
+fn runQuery(database: *sql.Database, file: []const u8, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
     _ = label; // TODO handle labels
 
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const rows = if (database.run(&arena, query)) |rows| rows else |err| {
+        _ = file;
         switch (err) {
             //error.ParseError => u.dump(query),
             else => {},
