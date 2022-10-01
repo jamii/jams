@@ -126,25 +126,25 @@ if_exists = IF EXISTS;
 
 exprs = expr*comma;
 expr = expr_or;
-expr_or = expr_and=left (OR expr_or=right)?=right;
-expr_and = expr_not=left (AND expr_and=right)?=right;
+expr_or = expr_and=left (OR expr_and=right)*=right;
+expr_and = expr_not=left (AND expr_not=right)*=right;
 expr_not = NOT*=op expr_incomp=expr;
-expr_incomp = expr_comp=left expr_incomp_right?=right;
+expr_incomp = expr_comp=left expr_incomp_right*=right;
 expr_incomp_right =
   | expr_incomp_postop
   | expr_incomp_binop
   | expr_incomp_in
   | expr_incomp_between;
-expr_incomp_binop = op_incomp=op expr_incomp=right;
+expr_incomp_binop = op_incomp=op expr_comp=right;
 expr_incomp_in = NOT? IN open_paren expr_incomp_in_right=right close_paren;
 expr_incomp_in_right = 
   | exprs
   | select;
-expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_incomp=end;
+expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_comp=end;
 expr_incomp_postop = op_incomp_post+;
-expr_comp = expr_add=left (op_comp=op expr_comp=right)?=right;
-expr_add = expr_mult=left (op_add=op expr_add=right)?=right;
-expr_mult = expr_unary=left (op_mult=op expr_mult=right)?=right;
+expr_comp = expr_add=left (op_comp=op expr_add=right)*=right;
+expr_add = expr_mult=left (op_add=op expr_mult=right)*=right;
+expr_mult = expr_unary=left (op_mult=op expr_unary=right)*=right;
 expr_unary = op_unary*=op expr_atom=expr;
 
 op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;

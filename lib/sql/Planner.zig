@@ -181,8 +181,11 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
         N.result_expr => return self.planScalar(node.expr),
         N.expr => return self.planScalar(node.expr_or),
         N.expr_or, N.expr_and, N.expr_comp, N.expr_add, N.expr_mult => {
-            const left = try self.planScalar(node.left);
-            return self.planScalarBinary(node, left, node.right.get(p));
+            var plan = try self.planScalar(node.left);
+            for (node.right.get(p).elements) |right_expr_id| {
+                plan = try self.planScalarBinary(node, plan, right_expr_id);
+            }
+            return plan;
         },
         N.expr_not, N.expr_unary => {
             var plan = try self.planScalar(node.expr);
@@ -200,10 +203,10 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
         },
         N.expr_incomp => {
             var plan = try self.planScalar(node.left);
-            if (node.right.get(p)) |right_expr| {
+            for (node.right.get(p).elements) |right_expr| {
                 switch (right_expr.get(p)) {
                     .expr_incomp_postop => |_| return error.NoPlan,
-                    .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, @as(?NodeId("expr_incomp_binop"), binop)),
+                    .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop),
                     .expr_incomp_in => |_| return error.NoPlan,
                     .expr_incomp_between => |_| return error.NoPlan,
                 }
@@ -246,12 +249,11 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
     }
 }
 
-fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_maybe: anytype) Error!ScalarExprId {
+fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_id: anytype) Error!ScalarExprId {
     const p = self.parser;
-    if (right_expr_maybe == null) return left;
-    const right_expr = right_expr_maybe.?.get(p);
+    const right_expr = right_expr_id.get(p);
     const right = try self.planScalar(right_expr.right);
-    return self.pushScalar(.{ .binary = .{
+    return try self.pushScalar(.{ .binary = .{
         .inputs = .{ left, right },
         .op = switch (@TypeOf(parent)) {
             N.expr_or => .bool_or,
