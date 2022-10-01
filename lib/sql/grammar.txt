@@ -156,7 +156,7 @@ expr_add = expr_mult=left (op_add=op expr_mult=right)*=right;
 expr_mult = expr_unary=left (op_mult=op expr_unary=right)*=right;
 expr_unary = op_unary*=op expr_atom=expr;
 
-op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | IN | MATCH | LIKE | REGEXP | GLOB | NOT_IN | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
+op_incomp = | equal | double_equal | not_equal | IS_DISTINCT_FROM | IS_NOT_DISTINCT_FROM | IS_NOT | IS | MATCH | LIKE | REGEXP | GLOB | NOT_MATCH | NOT_LIKE | NOT_REGEXP | NOT_GLOB;
 IS_NOT = IS NOT;
 IS_DISTINCT_FROM = IS DISTINCT FROM;
 IS_NOT_DISTINCT_FROM = IS NOT DISTINCT FROM;
