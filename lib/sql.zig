@@ -10,20 +10,19 @@ const std = @import("std");
 const u = util;
 
 pub const Database = struct {
+    arena: *u.ArenaAllocator,
     allocator: u.Allocator,
     table_defs: u.DeepHashMap(TableName, TableDef),
     tables: u.DeepHashMap(TableName, Table),
 
-    pub fn init(allocator: u.Allocator) !Database {
+    pub fn init(arena: *u.ArenaAllocator) !Database {
+        const allocator = arena.allocator();
         return Database{
+            .arena = arena,
             .allocator = allocator,
             .table_defs = u.DeepHashMap(TableName, TableDef).init(allocator),
             .tables = u.DeepHashMap(TableName, Table).init(allocator),
         };
-    }
-
-    pub fn deinit(self: *Database) void {
-        _ = self;
     }
 
     pub fn run(self: *Database, arena: *u.ArenaAllocator, sql: []const u8) !Evaluator.Relation {

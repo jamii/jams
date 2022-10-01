@@ -24,8 +24,9 @@ pub fn main() !void {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
         var skip = false;
 
-        var database = try sql.Database.init(allocator);
-        defer database.deinit();
+        var database_arena = u.ArenaAllocator.init(allocator);
+        defer database_arena.deinit();
+        var database = try sql.Database.init(&database_arena);
 
         var bytes = u.ArrayList(u8).init(allocator);
         defer bytes.deinit();
