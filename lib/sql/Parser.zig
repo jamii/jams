@@ -37,6 +37,10 @@ pub fn NodeId(comptime rule_name_: []const u8) type {
         pub fn get(self: @This(), parser: Self) T {
             return @field(parser.nodes.items[self.id], rule_name);
         }
+        pub fn getSource(self: @This(), parser: Self) []const u8 {
+            const range = parser.getSourceRange(self.id);
+            return parser.tokenizer.source[range[0]..range[1]];
+        }
     };
 }
 
@@ -261,7 +265,10 @@ pub fn getSourceRange(self: Self, id: usize) [2]usize {
     const token_range = self.node_ranges.items[id];
     return .{
         self.tokenizer.token_ranges.items[token_range[0]][0],
-        self.tokenizer.token_ranges.items[token_range[1]][0],
+        if (token_range[0] == token_range[1])
+            self.tokenizer.token_ranges.items[token_range[0]][0]
+        else
+            self.tokenizer.token_ranges.items[token_range[1] - 1][1],
     };
 }
 
