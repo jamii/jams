@@ -11,12 +11,14 @@ const u = util;
 
 pub const Database = struct {
     allocator: u.Allocator,
-    tables: u.DeepHashMap(TableName, TableDef),
+    table_defs: u.DeepHashMap(TableName, TableDef),
+    tables: u.DeepHashMap(TableName, Table),
 
     pub fn init(allocator: u.Allocator) !Database {
         return Database{
             .allocator = allocator,
-            .tables = u.DeepHashMap(TableName, TableDef).init(allocator),
+            .table_defs = u.DeepHashMap(TableName, TableDef).init(allocator),
+            .tables = u.DeepHashMap(TableName, Table).init(allocator),
         };
     }
 
@@ -74,6 +76,8 @@ pub const Key = struct {
     columns: []const usize,
     kind: enum { primary, unique },
 };
+
+pub const Table = u.ArrayList(Evaluator.Row);
 
 pub const Type = enum {
     nul,

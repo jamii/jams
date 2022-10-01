@@ -20,6 +20,7 @@ pub const ColumnId = usize;
 
 pub const StatementExpr = union(enum) {
     create_table: CreateTable,
+    insert: Insert,
     select: RelationExprId,
 };
 
@@ -29,6 +30,11 @@ pub const CreateTable = struct {
     if_not_exists: bool,
 };
 
+pub const Insert = struct {
+    table_name: sql.TableName,
+    query: RelationExprId,
+};
+
 pub const RelationExpr = union(enum) {
     none,
     some,
@@ -36,6 +42,10 @@ pub const RelationExpr = union(enum) {
         input: RelationExprId,
         column_id: ColumnId,
         scalar: ScalarExprId,
+    },
+    project: struct {
+        input: RelationExprId,
+        columns: []const usize,
     },
 };
 
@@ -165,6 +175,29 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                 .def = .{ .columns = columns, .key = key },
                 .if_not_exists = node.IF_NOT_EXISTS.get(p) != null,
             } };
+        },
+        N.insert => {
+            const table_name = node.table_name.getSource(p);
+            const table_def = self.database.table_defs.get(table_name) orelse
+                return error.NoPlan;
+            var query = try self.planRelation(node.values_or_select);
+            if (node.column_names) |column_names_expr_id| {
+                const column_names_expr = column_names_expr_id.get(p).column_name.get(p);
+                const columns = try self.allocator.create(usize, column_names_expr.elements.len);
+                for (columns.?) |*column, column_ix| {
+                    const column_name = column_names_expr.elements[column_ix].getSource();
+                    for (table_def.columns) |column_def, column_def_ix| {
+                        if (u.deepEqual(column_name, column_def.name))
+                            column.* = column_def_ix;
+                        break;
+                    } else return error.NoPlan;
+                    query = self.pushRelation(.{ .project = .{
+                        .input = query,
+                        .columns = columns,
+                    } });
+                }
+            }
+            return .{ .insert = .{ .table_name = table_name, .query = query } };
         },
         else => @compileError("planStatement not implemented for " ++ @typeName(@TypeOf(node))),
     }

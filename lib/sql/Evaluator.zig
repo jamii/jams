@@ -41,16 +41,28 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
     switch (statement_expr) {
         .select => |select| return self.evalRelation(select),
         .create_table => |create_table| {
-            const exists = self.database.tables.contains(create_table.name);
+            const exists = self.database.table_defs.contains(create_table.name);
             if (exists)
                 return if (create_table.if_not_exists) &.{} else error.AbortEval
             else {
-                try self.database.tables.put(
+                try self.database.table_defs.put(
                     try u.deepClone(self.database.allocator, create_table.name),
                     try u.deepClone(self.database.allocator, create_table.def),
                 );
+                try self.database.tables.put(
+                    try u.deepClone(self.database.allocator, create_table.name),
+                    sql.Table.init(self.database.allocator),
+                );
                 return &.{};
             }
+        },
+        .insert => |insert| {
+            const table = self.database.tables.getPtr(insert.table_name).?;
+            const rows = try self.evalRelation(insert.query);
+            for (rows) |row|
+                // unique keys are not tested in slt
+                try table.append(try u.deepClone(self.database.allocator, row));
+            return &.{};
         },
     }
 }
@@ -71,6 +83,18 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                     input_row,
                     &.{value},
                 });
+                try output.append(output_row);
+            }
+            return output.toOwnedSlice();
+        },
+        .project => |project| {
+            const input = try self.evalRelation(project.input);
+            var output = u.ArrayList(Row).init(self.allocator);
+            for (input) |input_row| {
+                try self.useJuice();
+                const output_row = try self.allocator.alloc(Scalar, project.columns.len);
+                for (output_row) |*scalar, i|
+                    scalar.* = input_row[project.columns[i]];
                 try output.append(output_row);
             }
             return output.toOwnedSlice();
