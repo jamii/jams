@@ -201,6 +201,7 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
             var left = try self.evalScalar(binary.inputs[0], env);
             var right = try self.evalScalar(binary.inputs[1], env);
             switch (binary.op) {
+                .is, .is_not => {},
                 else => {
                     if (left == .nul) return Scalar.NULL;
                     if (right == .nul) return Scalar.NULL;
@@ -209,8 +210,8 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
             return switch (binary.op) {
                 .bool_and => return Scalar.fromBool(try left.toBool() and try right.toBool()),
                 .bool_or => return Scalar.fromBool(try left.toBool() or try right.toBool()),
-                .equal => return Scalar.fromBool(u.deepEqual(left, right)),
-                .not_equal => return Scalar.fromBool(!u.deepEqual(left, right)),
+                .equal, .is => return Scalar.fromBool(u.deepEqual(left, right)),
+                .not_equal, .is_not => return Scalar.fromBool(!u.deepEqual(left, right)),
                 .less_than => return Scalar.fromBool(Scalar.order(left, right) == .lt),
                 .greater_than => return Scalar.fromBool(Scalar.order(left, right) == .gt),
                 .less_than_or_equal => return Scalar.fromBool(Scalar.order(left, right) != .gt),

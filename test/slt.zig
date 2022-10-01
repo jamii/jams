@@ -80,13 +80,15 @@ pub fn main() !void {
                         return error.UnexpectedInput;
                     const statement = std.mem.trim(u8, case[lines.index.?..], "\n");
                     total += 1;
-                    if (runStatement(&database, slt_path, statement, expected)) |_|
+                    if (runStatement(&database, statement, expected)) |_|
                         passes += 1
                     else |err| {
                         if (skip)
                             skips += 1
-                        else
+                        else {
+                            u.dump(.{ .err = err, .statemetn = statement, .file = slt_path });
                             try incCount(&errors, err);
+                        }
                         // Once we fail on one statement, the rest of the file is unlikely to pass anyway
                         skip = true;
                     }
@@ -123,12 +125,14 @@ pub fn main() !void {
                     const query = std.mem.trim(u8, query_and_expected_iter.next().?, "\n");
                     const expected = std.mem.trim(u8, query_and_expected_iter.next() orelse "", "\n");
                     total += 1;
-                    if (runQuery(&database, slt_path, query, types, sort_mode, label, expected)) |_|
+                    if (runQuery(&database, query, types, sort_mode, label, expected)) |_|
                         passes += 1
                     else |err| if (skip)
                         skips += 1
-                    else
+                    else {
+                        u.dump(.{ .err = err, .query = query, .file = slt_path });
                         try incCount(&errors, err);
+                    }
 
                     break :header;
                 } else return error.UnexpectedInput;
@@ -161,7 +165,7 @@ const SortMode = enum {
     value_sort,
 };
 
-fn runStatement(database: *sql.Database, file: []const u8, statement: []const u8, expected: StatementExpected) !void {
+fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
     if (database.run(&arena, statement)) |_| {
@@ -171,10 +175,7 @@ fn runStatement(database: *sql.Database, file: []const u8, statement: []const u8
         }
     } else |err| {
         switch (expected) {
-            .ok => {
-                u.dump(.{ .err = err, .statement = statement, .file = file });
-                return err;
-            },
+            .ok => return err,
             .err => switch (err) {
                 error.AbortPlan, error.AbortEval => return,
                 else => return err,
@@ -183,16 +184,13 @@ fn runStatement(database: *sql.Database, file: []const u8, statement: []const u8
     }
 }
 
-fn runQuery(database: *sql.Database, file: []const u8, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
+fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
     _ = label; // TODO handle labels
 
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    const rows = if (database.run(&arena, query)) |rows| rows else |err| {
-        u.dump(.{ .err = err, .query = query, .file = file });
-        return err;
-    };
+    const rows = try database.run(&arena, query);
 
     for (rows.items) |row|
         if (row.items.len != types.len)
