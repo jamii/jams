@@ -227,14 +227,20 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                             .plus => Scalar{ .real = left.real + right.real },
                             .minus => Scalar{ .real = left.real - right.real },
                             .star => Scalar{ .real = left.real * right.real },
-                            .forward_slash => Scalar{ .real = left.real / right.real },
+                            .forward_slash => if (right.real == 0)
+                                Scalar.NULL
+                            else
+                                Scalar{ .real = left.real / right.real },
                             else => unreachable,
                         }
                     else switch (binary.op) {
                         .plus => Scalar{ .integer = left.integer + right.integer },
                         .minus => Scalar{ .integer = left.integer - right.integer },
                         .star => Scalar{ .integer = left.integer * right.integer },
-                        .forward_slash => Scalar{ .integer = @divTrunc(left.integer, right.integer) },
+                        .forward_slash => if (right.integer == 0)
+                            Scalar.NULL
+                        else
+                            Scalar{ .integer = @divTrunc(left.integer, right.integer) },
                         else => unreachable,
                     };
                 },
