@@ -15,6 +15,7 @@ pub fn main() !void {
     var args = std.process.args();
     _ = args.next(); // discard executable name
 
+    var total: usize = 0;
     var passes: usize = 0;
     var skips: usize = 0;
     var errors = u.DeepHashMap(TestError, usize).init(allocator);
@@ -78,6 +79,7 @@ pub fn main() !void {
                     else
                         return error.UnexpectedInput;
                     const statement = std.mem.trim(u8, case[lines.index.?..], "\n");
+                    total += 1;
                     if (runStatement(&database, slt_path, statement, expected)) |_|
                         passes += 1
                     else |err| {
@@ -115,6 +117,7 @@ pub fn main() !void {
                         return error.UnexpectedInput;
                     const label = words.next();
                     var query_and_expected_iter = std.mem.split(u8, case[lines.index.?..], "----");
+                    total += 1;
                     const query = std.mem.trim(u8, query_and_expected_iter.next().?, "\n");
                     const expected = std.mem.trim(u8, query_and_expected_iter.next() orelse "", "\n");
                     if (runQuery(&database, slt_path, query, types, sort_mode, label, expected)) |_|
@@ -130,9 +133,10 @@ pub fn main() !void {
         }
     }
 
+    std.debug.print("total => {}\n", .{total});
     u.dump(errors);
     std.debug.print("skips => {}\n", .{skips});
-    std.debug.print("passes => {}", .{passes});
+    std.debug.print("passes => {}\n", .{passes});
     //try sql.dumpRuleUsage();
 }
 
