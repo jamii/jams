@@ -102,6 +102,8 @@ pub const BinaryOp = enum {
     star,
     forward_slash,
     percent,
+    shift_left,
+    shift_right,
     bit_and,
     bit_or,
 };
@@ -306,7 +308,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
         },
         N.result_expr => return self.planScalar(node.expr),
         N.expr => return self.planScalar(node.expr_or),
-        N.expr_or, N.expr_and, N.expr_comp, N.expr_add, N.expr_mult => {
+        N.expr_or, N.expr_and, N.expr_comp, N.expr_add, N.expr_mult, N.expr_bit => {
             var plan = try self.planScalar(node.left);
             for (node.right.get(p).elements) |right_expr_id| {
                 plan = try self.planScalarBinary(node, plan, right_expr_id);
@@ -420,6 +422,12 @@ fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr
                 .greater_than => .greater_than,
                 .less_than_or_equal => .less_than_or_equal,
                 .greater_than_or_equal => .greater_than_or_equal,
+            },
+            N.expr_bit => switch (right_expr.op.get(p)) {
+                .shift_left => .shift_left,
+                .shift_right => .shift_right,
+                .bit_and => .bit_and,
+                .bit_or => .bit_or,
             },
             N.expr_add => switch (right_expr.op.get(p)) {
                 .plus => .plus,

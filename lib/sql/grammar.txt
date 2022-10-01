@@ -37,7 +37,12 @@ table_or_subquery =
   | subquery_as
   | sub_joins;
 sub_joins = open_paren joins close_paren;
-table_as = table_name as_table?;
+table_as = table_name as_table? indexed?;
+indexed = 
+  | indexed_by
+  | NOT_INDEXED;
+indexed_by = INDEXED BY name;
+NOT_INDEXED = NOT INDEXED;
 subquery_as = subquery as_table?;
 as_table = AS? table_name;
 join_clause = join_op table_or_subquery join_constraint?;
@@ -139,7 +144,8 @@ expr_incomp_in_right =
   | select;
 expr_incomp_between = NOT? BETWEEN expr_comp=start AND expr_comp=end;
 expr_incomp_postop = op_incomp_post+;
-expr_comp = expr_add=left (op_comp=op expr_add=right)*=right;
+expr_comp = expr_bit=left (op_comp=op expr_bit=right)*=right;
+expr_bit = expr_add=left (op_bit=op expr_add=right)*=right;
 expr_add = expr_mult=left (op_add=op expr_mult=right)*=right;
 expr_mult = expr_unary=left (op_mult=op expr_unary=right)*=right;
 expr_unary = op_unary*=op expr_atom=expr;
@@ -156,12 +162,14 @@ NOT_GLOB = NOT GLOB;
 op_incomp_post = | ISNULL | NOTNULL | NOT_NULL;
 NOT_NULL = NOT NULL;
 op_comp = | less_than | greater_than | less_than_or_equal | greater_than_or_equal;
+op_bit = | shift_left | shift_right | bit_and | bit_or;
 op_add = | plus | minus;
 op_mult = | star | forward_slash | percent;
 op_unary = | bit_not | plus | minus;
 
 expr_atom =
   | CASE => case
+  | CAST => cast
   | subquery_prefix => subquery
   | open_paren => subexpr
   | function_call
@@ -194,3 +202,5 @@ value =
   | string
   | blob
   | NULL;
+
+cast = CAST open_paren expr AS typ close_paren;
