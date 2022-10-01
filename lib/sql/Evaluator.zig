@@ -79,7 +79,7 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
         },
         .drop_table => |drop_table| {
             const exists = self.database.table_defs.contains(drop_table.name);
-            if (exists)
+            if (!exists)
                 return if (drop_table.if_exists) empty_relation else error.AbortEval
             else {
                 _ = self.database.table_defs.remove(drop_table.name);
@@ -89,7 +89,7 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
         },
         .drop_index => |drop_index| {
             const exists = self.database.index_defs.contains(drop_index.name);
-            if (exists)
+            if (!exists)
                 return if (drop_index.if_exists) empty_relation else error.AbortEval
             else {
                 _ = self.database.index_defs.remove(drop_index.name);
