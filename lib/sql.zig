@@ -4,6 +4,7 @@ pub const grammar = @import("sql/grammar.zig");
 pub const Tokenizer = @import("sql/Tokenizer.zig");
 pub const Parser = @import("sql/Parser.zig");
 pub const Planner = @import("sql/Planner.zig");
+pub const Evaluator = @import("sql/Evaluator.zig");
 
 const std = @import("std");
 const u = util;
@@ -21,17 +22,16 @@ pub const Database = struct {
         _ = self;
     }
 
-    pub fn run(self: *Database, sql: []const u8) ![]const []const Value {
-        var arena = u.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
+    pub fn run(self: *Database, arena: *u.ArenaAllocator, sql: []const u8) !Evaluator.Relation {
+        _ = self;
         const sql_z = try arena.allocator().dupeZ(u8, sql);
-        var tokenizer = Tokenizer.init(&arena, sql_z);
+        var tokenizer = Tokenizer.init(arena, sql_z);
         try tokenizer.tokenize();
-        var parser = Parser.init(&arena, tokenizer, false);
+        var parser = Parser.init(arena, tokenizer, false);
         const root_id = try parser.parse("root") orelse return error.ParseError;
         //const root_id = (try parser.parse("root")) orelse {
         //    u.dump("Failure!");
-        //    parser = Parser.init(&arena, tokenizer, true);
+        //    parser = Parser.init(arena, tokenizer, true);
         //    _ = try parser.parse("root");
         //    u.dump(tokenizer.tokens.items);
         //    //u.dump(parser.failures.items);
@@ -47,10 +47,12 @@ pub const Database = struct {
         //};
         //try countRuleUsage(parser, root_id);
         //u.dump(parser);
-        var planner = Planner.init(&arena, tokenizer, parser);
-        const plan = try planner.planStatement(root_id.get(parser).statement_or_query);
-        _ = plan;
-        return error.NoExecution;
+        var planner = Planner.init(arena, tokenizer, parser);
+        const statement = try planner.planStatement(root_id.get(parser).statement_or_query);
+        var evaluator = Evaluator.init(arena, planner, 1000000);
+        const relation = evaluator.evalStatement(statement);
+        u.dump(relation);
+        return relation;
     }
 };
 

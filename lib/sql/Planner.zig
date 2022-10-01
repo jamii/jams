@@ -28,12 +28,13 @@ pub const RelationExpr = union(enum) {
     map: struct {
         input: RelationExprId,
         column_id: ColumnId,
-        expr: ScalarExprId,
+        scalar: ScalarExprId,
     },
 };
 
 pub const ScalarExpr = union(enum) {
     value: sql.Value,
+    column: usize,
     unary: struct {
         input: ScalarExprId,
         op: UnaryOp,
@@ -159,7 +160,7 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 plan = try self.pushRelation(.{ .map = .{
                     .input = plan,
                     .column_id = self.nextColumnId(),
-                    .expr = try self.planScalar(result_column),
+                    .scalar = try self.planScalar(result_column),
                 } });
             return plan;
         },
@@ -230,7 +231,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                     const source = node_id.getSource(p);
                     var string = try u.ArrayList(u8).initCapacity(self.allocator, source.len - 2);
                     var i: usize = 1;
-                    while (i < source.len - 2) : (i += 1) {
+                    while (i < source.len - 1) : (i += 1) {
                         const char = source[i];
                         string.appendAssumeCapacity(char);
                         // The only way we can hit " in a "-string is if there is a ""-escape, so ditch one of them

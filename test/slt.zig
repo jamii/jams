@@ -152,7 +152,9 @@ const SortMode = enum {
 };
 
 fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
-    if (database.run(statement)) |_| {
+    var arena = u.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    if (database.run(&arena, statement)) |_| {
         switch (expected) {
             .ok => return,
             .err => return error.StatementShouldError,
@@ -170,23 +172,25 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
 
 fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
     _ = label; // TODO handle labels
-    // TODO handle hashing
 
-    const rows = try database.run(query);
-
-    for (rows) |row| {
-        if (row.len != types.len)
-            return error.WrongNumberOfColumnsReturned;
-    }
-
-    const hashed = std.mem.containsAtLeast(u8, expected_output, 1, "values hashing to");
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const actual_output = try produceQueryOutput(&arena, rows, types, sort_mode, hashed);
+
+    const rows = try database.run(&arena, query);
+
+    for (rows) |row| {
+        if (row.len != types.len) {
+            u.dump(.{ .row = row, .types = types });
+            return error.WrongNumberOfColumnsReturned;
+        }
+    }
+
+    const should_hash = std.mem.containsAtLeast(u8, expected_output, 1, "values hashing to");
+    const actual_output = try produceQueryOutput(&arena, rows, types, sort_mode, should_hash);
     return std.testing.expectEqualStrings(expected_output, actual_output);
 }
 
-fn produceQueryOutput(arena: *u.ArenaAllocator, rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, hashed: bool) ![]const u8 {
+fn produceQueryOutput(arena: *u.ArenaAllocator, rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, should_hash: bool) ![]const u8 {
     var actual_outputs = u.ArrayList([]const u8).init(arena.allocator());
     for (rows) |row| {
         switch (sort_mode) {
@@ -219,7 +223,7 @@ fn produceQueryOutput(arena: *u.ArenaAllocator, rows: []const []const sql.Value,
 
     const actual_output = try std.mem.join(arena.allocator(), "\n", actual_outputs.items);
 
-    if (hashed) {
+    if (should_hash) {
         var hasher = std.crypto.hash.Md5.init(.{});
         hasher.update(actual_output);
         hasher.update("\n");
@@ -255,10 +259,10 @@ fn formatValue(arena: *u.ArenaAllocator, typ: sql.Type, value: sql.Value) ![]con
     };
 }
 
-fn testProduceQueryOutput(rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, hashed: bool, expected: []const u8) !void {
+fn testProduceQueryOutput(rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, should_hash: bool, expected: []const u8) !void {
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const actual = try produceQueryOutput(&arena, rows, types, sort_mode, hashed);
+    const actual = try produceQueryOutput(&arena, rows, types, sort_mode, should_hash);
     return std.testing.expectEqualStrings(expected, actual);
 }
 
