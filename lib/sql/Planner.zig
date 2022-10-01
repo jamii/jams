@@ -12,7 +12,6 @@ tokenizer: sql.Tokenizer,
 parser: sql.Parser,
 relation_exprs: u.ArrayList(RelationExpr),
 scalar_exprs: u.ArrayList(ScalarExpr),
-next_column_id: usize,
 
 pub const RelationExprId = usize;
 pub const ScalarExprId = usize;
@@ -40,12 +39,15 @@ pub const RelationExpr = union(enum) {
     some,
     map: struct {
         input: RelationExprId,
-        column_id: ColumnId,
         scalar: ScalarExprId,
     },
     project: struct {
         input: RelationExprId,
         columns: []const usize,
+    },
+    unio: struct {
+        inputs: [2]RelationExprId,
+        all: bool,
     },
 };
 
@@ -123,7 +125,6 @@ pub fn init(
         .parser = parser,
         .relation_exprs = u.ArrayList(RelationExpr).init(allocator),
         .scalar_exprs = u.ArrayList(ScalarExpr).init(allocator),
-        .next_column_id = 0,
     };
 }
 
@@ -243,7 +244,28 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             .select_body => |select_body| return self.planRelation(select_body),
             .values => |values| return self.planRelation(values),
         },
-        N.values => return error.NoPlan,
+        N.values => {
+            var plan = try self.pushRelation(.{ .none = {} });
+            for (node.row.get(p).elements) |row| {
+                const right = try self.planRelation(row);
+                plan = try self.pushRelation(.{ .unio = .{
+                    .inputs = .{ plan, right },
+                    .all = true,
+                } });
+            }
+            return plan;
+        },
+        N.row => {
+            var plan = try self.pushRelation(.{ .none = {} });
+            for (node.exprs.get(p).expr.get(p).elements) |expr| {
+                const right = try self.planScalar(expr);
+                plan = try self.pushRelation(.{ .map = .{
+                    .input = plan,
+                    .scalar = right,
+                } });
+            }
+            return plan;
+        },
         N.select_body => {
             try self.noPlan(node.distinct_or_all);
             try self.noPlan(node.from);
@@ -255,7 +277,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             for (node.result_column.get(p).elements) |result_column|
                 plan = try self.pushRelation(.{ .map = .{
                     .input = plan,
-                    .column_id = self.nextColumnId(),
                     .scalar = try self.planScalar(result_column),
                 } });
             return plan;
@@ -392,12 +413,6 @@ fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr
             else => unreachable,
         },
     } });
-}
-
-fn nextColumnId(self: *Self) ColumnId {
-    const id = self.next_column_id;
-    self.next_column_id += 1;
-    return id;
 }
 
 fn noPlan(self: *Self, node_id: anytype) Error!void {

@@ -99,6 +99,21 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             }
             return output.toOwnedSlice();
         },
+        .unio => |unio| {
+            const left = try self.evalRelation(unio.inputs[0]);
+            const right = try self.evalRelation(unio.inputs[1]);
+            if (unio.all)
+                return std.mem.concat(self.allocator, Row, &.{ left, right })
+            else {
+                var set = u.DeepHashSet(Row).init(self.allocator);
+                for (left) |row| try set.put(row, {});
+                for (right) |row| try set.put(row, {});
+                var output = u.ArrayList(Row).init(self.allocator);
+                var iter = set.keyIterator();
+                while (iter.next()) |row| try output.append(row.*);
+                return output.toOwnedSlice();
+            }
+        },
     }
 }
 
