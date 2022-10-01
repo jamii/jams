@@ -61,6 +61,10 @@ pub const RelationExpr = union(enum) {
         input: RelationExprId,
         scalar: ScalarExprId,
     },
+    filter: struct {
+        input: RelationExprId,
+        cond: ScalarExprId,
+    },
     project: struct {
         input: RelationExprId,
         columns: []const usize,
@@ -329,7 +333,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         },
         N.select_body => {
             try self.noPlan(node.distinct_or_all);
-            try self.noPlan(node.where);
             try self.noPlan(node.group_by);
             try self.noPlan(node.having);
             try self.noPlan(node.window);
@@ -369,6 +372,11 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 .input = plan,
                 .columns = project_columns.toOwnedSlice(),
             } });
+            if (node.where.get(p)) |where|
+                plan = try self.pushRelation(.{ .filter = .{
+                    .input = plan,
+                    .cond = try self.planScalar(where.get(p).expr, from_maybe),
+                } });
             return plan;
         },
         N.from => return self.planRelation(node.joins),

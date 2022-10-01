@@ -123,6 +123,15 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             }
             output = input;
         },
+        .filter => |filter| {
+            const input = try self.evalRelation(filter.input);
+            for (input.items) |input_row| {
+                try self.useJuice();
+                const cond = try self.evalScalar(filter.cond, input_row);
+                if (try cond.toBool())
+                    try output.append(input_row);
+            }
+        },
         .project => |project| {
             const input = try self.evalRelation(project.input);
             for (input.items) |input_row| {
