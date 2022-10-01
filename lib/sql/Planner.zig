@@ -90,6 +90,7 @@ pub const BinaryOp = enum {
 pub const Error = error{
     OutOfMemory,
     NoPlan,
+    InvalidLiteral,
 };
 
 pub fn init(
@@ -213,13 +214,41 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             .value => |value| return self.planScalar(value),
             else => return error.NoPlan,
         },
-        N.value => return error.NoPlan, // TODO parse value
+        N.value => {
+            const value = switch (node) {
+                .number => number: {
+                    // TODO
+                    const source = node_id.getSource(p);
+                    break :number if (std.fmt.parseInt(i64, source, 10)) |integer|
+                        sql.Value{ .integer = integer }
+                    else |_| if (std.fmt.parseFloat(f64, source)) |real|
+                        sql.Value{ .real = real }
+                    else |_|
+                        return error.InvalidLiteral;
+                },
+                .string => string: {
+                    const source = node_id.getSource(p);
+                    var string = try u.ArrayList(u8).initCapacity(self.allocator, source.len - 2);
+                    var i: usize = 1;
+                    while (i < source.len - 2) : (i += 1) {
+                        const char = source[i];
+                        string.appendAssumeCapacity(char);
+                        // The only way we can hit " in a "-string is if there is a ""-escape, so ditch one of them
+                        if (char == source[0]) i += 1;
+                    }
+                    break :string sql.Value{ .text = string.toOwnedSlice() };
+                },
+                .NULL => sql.Value{ .nul = {} },
+            };
+            return self.pushScalar(.{ .value = value });
+        },
         else => @compileError("planScalar not implemented for " ++ @typeName(@TypeOf(node))),
     }
 }
 
 fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_maybe: anytype) Error!ScalarExprId {
     const p = self.parser;
+    if (right_expr_maybe == null) return left;
     const right_expr = right_expr_maybe.?.get(p);
     const right = try self.planScalar(right_expr.right);
     return self.pushScalar(.{ .binary = .{
