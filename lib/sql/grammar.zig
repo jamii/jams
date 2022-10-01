@@ -99,27 +99,27 @@ pub const Node = union(enum) {
     anon_82: @field(types, "anon_82"),
     create_table: @field(types, "create_table"),
     TEMP_OR_TEMPORARY: @field(types, "TEMP_OR_TEMPORARY"),
-    IF_NOT_EXISTS: @field(types, "IF_NOT_EXISTS"),
     table_name: @field(types, "table_name"),
     column_name: @field(types, "column_name"),
-    anon_88: @field(types, "anon_88"),
+    anon_87: @field(types, "anon_87"),
     column_defs: @field(types, "column_defs"),
+    anon_89: @field(types, "anon_89"),
     anon_90: @field(types, "anon_90"),
-    anon_91: @field(types, "anon_91"),
     column_def: @field(types, "column_def"),
+    anon_92: @field(types, "anon_92"),
     anon_93: @field(types, "anon_93"),
     anon_94: @field(types, "anon_94"),
     anon_95: @field(types, "anon_95"),
     anon_96: @field(types, "anon_96"),
-    anon_97: @field(types, "anon_97"),
     create_index: @field(types, "create_index"),
     index_name: @field(types, "index_name"),
-    anon_100: @field(types, "anon_100"),
+    anon_99: @field(types, "anon_99"),
     indexed_column: @field(types, "indexed_column"),
+    anon_101: @field(types, "anon_101"),
     anon_102: @field(types, "anon_102"),
     anon_103: @field(types, "anon_103"),
-    anon_104: @field(types, "anon_104"),
     create_view: @field(types, "create_view"),
+    view_name: @field(types, "view_name"),
     anon_106: @field(types, "anon_106"),
     anon_107: @field(types, "anon_107"),
     insert: @field(types, "insert"),
@@ -153,42 +153,43 @@ pub const Node = union(enum) {
     anon_136: @field(types, "anon_136"),
     drop_view: @field(types, "drop_view"),
     if_exists: @field(types, "if_exists"),
+    if_not_exists: @field(types, "if_not_exists"),
     reindex: @field(types, "reindex"),
-    anon_140: @field(types, "anon_140"),
+    anon_141: @field(types, "anon_141"),
     exprs: @field(types, "exprs"),
     expr: @field(types, "expr"),
-    anon_143: @field(types, "anon_143"),
     anon_144: @field(types, "anon_144"),
+    anon_145: @field(types, "anon_145"),
     expr_or: @field(types, "expr_or"),
-    anon_146: @field(types, "anon_146"),
     anon_147: @field(types, "anon_147"),
+    anon_148: @field(types, "anon_148"),
     expr_and: @field(types, "expr_and"),
-    anon_149: @field(types, "anon_149"),
+    anon_150: @field(types, "anon_150"),
     expr_not: @field(types, "expr_not"),
-    anon_151: @field(types, "anon_151"),
+    anon_152: @field(types, "anon_152"),
     expr_incomp: @field(types, "expr_incomp"),
     expr_incomp_right: @field(types, "expr_incomp_right"),
     expr_incomp_binop: @field(types, "expr_incomp_binop"),
-    anon_155: @field(types, "anon_155"),
+    anon_156: @field(types, "anon_156"),
     expr_incomp_in: @field(types, "expr_incomp_in"),
     expr_incomp_in_right: @field(types, "expr_incomp_in_right"),
-    anon_158: @field(types, "anon_158"),
+    anon_159: @field(types, "anon_159"),
     expr_incomp_between: @field(types, "expr_incomp_between"),
-    anon_160: @field(types, "anon_160"),
+    anon_161: @field(types, "anon_161"),
     expr_incomp_postop: @field(types, "expr_incomp_postop"),
-    anon_162: @field(types, "anon_162"),
     anon_163: @field(types, "anon_163"),
+    anon_164: @field(types, "anon_164"),
     expr_comp: @field(types, "expr_comp"),
-    anon_165: @field(types, "anon_165"),
     anon_166: @field(types, "anon_166"),
+    anon_167: @field(types, "anon_167"),
     expr_bit: @field(types, "expr_bit"),
-    anon_168: @field(types, "anon_168"),
     anon_169: @field(types, "anon_169"),
+    anon_170: @field(types, "anon_170"),
     expr_add: @field(types, "expr_add"),
-    anon_171: @field(types, "anon_171"),
     anon_172: @field(types, "anon_172"),
+    anon_173: @field(types, "anon_173"),
     expr_mult: @field(types, "expr_mult"),
-    anon_174: @field(types, "anon_174"),
+    anon_175: @field(types, "anon_175"),
     expr_unary: @field(types, "expr_unary"),
     op_incomp: @field(types, "op_incomp"),
     IS_NOT: @field(types, "IS_NOT"),
@@ -209,26 +210,26 @@ pub const Node = union(enum) {
     expr_atom: @field(types, "expr_atom"),
     column_ref: @field(types, "column_ref"),
     table_column_ref: @field(types, "table_column_ref"),
-    anon_195: @field(types, "anon_195"),
+    anon_196: @field(types, "anon_196"),
     subquery_prefix: @field(types, "subquery_prefix"),
-    anon_197: @field(types, "anon_197"),
+    anon_198: @field(types, "anon_198"),
     subquery: @field(types, "subquery"),
     exists_or_not_exists: @field(types, "exists_or_not_exists"),
     NOT_EXISTS: @field(types, "NOT_EXISTS"),
     subexpr: @field(types, "subexpr"),
-    anon_202: @field(types, "anon_202"),
     anon_203: @field(types, "anon_203"),
     anon_204: @field(types, "anon_204"),
+    anon_205: @field(types, "anon_205"),
     case: @field(types, "case"),
     case_when: @field(types, "case_when"),
     case_else: @field(types, "case_else"),
-    anon_208: @field(types, "anon_208"),
     anon_209: @field(types, "anon_209"),
+    anon_210: @field(types, "anon_210"),
     function_call: @field(types, "function_call"),
     function_name: @field(types, "function_name"),
-    anon_212: @field(types, "anon_212"),
     anon_213: @field(types, "anon_213"),
     anon_214: @field(types, "anon_214"),
+    anon_215: @field(types, "anon_215"),
     function_args: @field(types, "function_args"),
     value: @field(types, "value"),
     cast: @field(types, "cast"),
@@ -696,12 +697,12 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = "create_view", .rule_name = "create_view" } },
     } };
     pub const anon_81 = Rule{ .optional = RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "TEMP_OR_TEMPORARY" } };
-    pub const anon_82 = Rule{ .optional = RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "IF_NOT_EXISTS" } };
+    pub const anon_82 = Rule{ .optional = RuleRef{ .field_name = "if_not_exists", .rule_name = "if_not_exists" } };
     pub const create_table = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "CREATE", .rule_name = "CREATE" },
         RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "anon_81" },
         RuleRef{ .field_name = "TABLE", .rule_name = "TABLE" },
-        RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "anon_82" },
+        RuleRef{ .field_name = "if_not_exists", .rule_name = "anon_82" },
         RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
         RuleRef{ .field_name = "column_defs", .rule_name = "column_defs" },
     } };
@@ -709,71 +710,69 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = "TEMP", .rule_name = "TEMP" } },
         .{ .choice = RuleRef{ .field_name = "TEMPORARY", .rule_name = "TEMPORARY" } },
     } };
-    pub const IF_NOT_EXISTS = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "IF", .rule_name = "IF" },
-        RuleRef{ .field_name = "NOT", .rule_name = "NOT" },
-        RuleRef{ .field_name = "EXISTS", .rule_name = "EXISTS" },
-    } };
     pub const table_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
     pub const column_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_88 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "column_def", .rule_name = "column_def" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
+    pub const anon_87 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "column_def", .rule_name = "column_def" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
     pub const column_defs = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "column_def", .rule_name = "anon_88" },
+        RuleRef{ .field_name = "column_def", .rule_name = "anon_87" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
-    pub const anon_90 = Rule{ .optional = RuleRef{ .field_name = "typ", .rule_name = "typ" } };
-    pub const anon_91 = Rule{ .optional = RuleRef{ .field_name = "column_constraint", .rule_name = "column_constraint" } };
+    pub const anon_89 = Rule{ .optional = RuleRef{ .field_name = "typ", .rule_name = "typ" } };
+    pub const anon_90 = Rule{ .optional = RuleRef{ .field_name = "column_constraint", .rule_name = "column_constraint" } };
     pub const column_def = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "column_name", .rule_name = "column_name" },
-        RuleRef{ .field_name = "typ", .rule_name = "anon_90" },
-        RuleRef{ .field_name = "column_constraint", .rule_name = "anon_91" },
+        RuleRef{ .field_name = "typ", .rule_name = "anon_89" },
+        RuleRef{ .field_name = "column_constraint", .rule_name = "anon_90" },
     } };
-    pub const anon_93 = Rule{ .optional = RuleRef{ .field_name = "UNIQUE", .rule_name = "UNIQUE" } };
-    pub const anon_94 = Rule{ .optional = RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "IF_NOT_EXISTS" } };
-    pub const anon_95 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "indexed_column", .rule_name = "indexed_column" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
-    pub const anon_96 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_92 = Rule{ .optional = RuleRef{ .field_name = "UNIQUE", .rule_name = "UNIQUE" } };
+    pub const anon_93 = Rule{ .optional = RuleRef{ .field_name = "if_not_exists", .rule_name = "if_not_exists" } };
+    pub const anon_94 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "indexed_column", .rule_name = "indexed_column" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
+    pub const anon_95 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "WHERE", .rule_name = "WHERE" },
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
     } };
-    pub const anon_97 = Rule{ .optional = RuleRef{ .field_name = "anon_96", .rule_name = "anon_96" } };
+    pub const anon_96 = Rule{ .optional = RuleRef{ .field_name = "anon_95", .rule_name = "anon_95" } };
     pub const create_index = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "CREATE", .rule_name = "CREATE" },
-        RuleRef{ .field_name = "UNIQUE", .rule_name = "anon_93" },
+        RuleRef{ .field_name = "UNIQUE", .rule_name = "anon_92" },
         RuleRef{ .field_name = "INDEX", .rule_name = "INDEX" },
-        RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "anon_94" },
+        RuleRef{ .field_name = "if_not_exists", .rule_name = "anon_93" },
         RuleRef{ .field_name = "index_name", .rule_name = "index_name" },
         RuleRef{ .field_name = "ON", .rule_name = "ON" },
         RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "indexed_column", .rule_name = "anon_95" },
+        RuleRef{ .field_name = "indexed_column", .rule_name = "anon_94" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
-        RuleRef{ .field_name = "where", .rule_name = "anon_97" },
+        RuleRef{ .field_name = "where", .rule_name = "anon_96" },
     } };
     pub const index_name = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
+        RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_100 = Rule{ .optional = RuleRef{ .field_name = "asc_or_desc", .rule_name = "asc_or_desc" } };
+    pub const anon_99 = Rule{ .optional = RuleRef{ .field_name = "asc_or_desc", .rule_name = "asc_or_desc" } };
     pub const indexed_column = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "column_name", .rule_name = "column_name" },
-        RuleRef{ .field_name = "asc_or_desc", .rule_name = "anon_100" },
+        RuleRef{ .field_name = "asc_or_desc", .rule_name = "anon_99" },
     } };
-    pub const anon_102 = Rule{ .optional = RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "TEMP_OR_TEMPORARY" } };
-    pub const anon_103 = Rule{ .optional = RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "IF_NOT_EXISTS" } };
-    pub const anon_104 = Rule{ .optional = RuleRef{ .field_name = "column_defs", .rule_name = "column_defs" } };
+    pub const anon_101 = Rule{ .optional = RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "TEMP_OR_TEMPORARY" } };
+    pub const anon_102 = Rule{ .optional = RuleRef{ .field_name = "if_not_exists", .rule_name = "if_not_exists" } };
+    pub const anon_103 = Rule{ .optional = RuleRef{ .field_name = "column_defs", .rule_name = "column_defs" } };
     pub const create_view = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "CREATE", .rule_name = "CREATE" },
-        RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "anon_102" },
+        RuleRef{ .field_name = "TEMP_OR_TEMPORARY", .rule_name = "anon_101" },
         RuleRef{ .field_name = "VIEW", .rule_name = "VIEW" },
-        RuleRef{ .field_name = "IF_NOT_EXISTS", .rule_name = "anon_103" },
-        RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
-        RuleRef{ .field_name = "column_defs", .rule_name = "anon_104" },
+        RuleRef{ .field_name = "if_not_exists", .rule_name = "anon_102" },
+        RuleRef{ .field_name = "view_name", .rule_name = "view_name" },
+        RuleRef{ .field_name = "column_defs", .rule_name = "anon_103" },
         RuleRef{ .field_name = "AS", .rule_name = "AS" },
         RuleRef{ .field_name = "select", .rule_name = "select" },
+    } };
+    pub const view_name = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
     pub const anon_106 = Rule{ .optional = RuleRef{ .field_name = "insert_or", .rule_name = "insert_or" } };
     pub const anon_107 = Rule{ .optional = RuleRef{ .field_name = "column_names", .rule_name = "column_names" } };
@@ -879,57 +878,62 @@ pub const rules = struct {
         RuleRef{ .field_name = "DROP", .rule_name = "DROP" },
         RuleRef{ .field_name = "INDEX", .rule_name = "INDEX" },
         RuleRef{ .field_name = "if_exists", .rule_name = "anon_134" },
-        RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
+        RuleRef{ .field_name = "index_name", .rule_name = "index_name" },
     } };
     pub const anon_136 = Rule{ .optional = RuleRef{ .field_name = "if_exists", .rule_name = "if_exists" } };
     pub const drop_view = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "DROP", .rule_name = "DROP" },
         RuleRef{ .field_name = "VIEW", .rule_name = "VIEW" },
         RuleRef{ .field_name = "if_exists", .rule_name = "anon_136" },
-        RuleRef{ .field_name = "table_name", .rule_name = "table_name" },
+        RuleRef{ .field_name = "view_name", .rule_name = "view_name" },
     } };
     pub const if_exists = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "IF", .rule_name = "IF" },
+        RuleRef{ .field_name = "EXISTS", .rule_name = "EXISTS" },
+    } };
+    pub const if_not_exists = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "IF", .rule_name = "IF" },
+        RuleRef{ .field_name = "NOT", .rule_name = "NOT" },
         RuleRef{ .field_name = "EXISTS", .rule_name = "EXISTS" },
     } };
     pub const reindex = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "REINDEX", .rule_name = "REINDEX" },
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_140 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
+    pub const anon_141 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
     pub const exprs = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "expr", .rule_name = "anon_140" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_141" },
     } };
     pub const expr = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "expr_or", .rule_name = "expr_or" },
     } };
-    pub const anon_143 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_144 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "OR", .rule_name = "OR" },
         RuleRef{ .field_name = "right", .rule_name = "expr_and" },
     } };
-    pub const anon_144 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_143", .rule_name = "anon_143" }, .separator = null } };
+    pub const anon_145 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_144", .rule_name = "anon_144" }, .separator = null } };
     pub const expr_or = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_and" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_144" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_145" },
     } };
-    pub const anon_146 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_147 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "AND", .rule_name = "AND" },
         RuleRef{ .field_name = "right", .rule_name = "expr_not" },
     } };
-    pub const anon_147 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_146", .rule_name = "anon_146" }, .separator = null } };
+    pub const anon_148 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_147", .rule_name = "anon_147" }, .separator = null } };
     pub const expr_and = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_not" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_147" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_148" },
     } };
-    pub const anon_149 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "NOT", .rule_name = "NOT" }, .separator = null } };
+    pub const anon_150 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "NOT", .rule_name = "NOT" }, .separator = null } };
     pub const expr_not = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "op", .rule_name = "anon_149" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_150" },
         RuleRef{ .field_name = "expr", .rule_name = "expr_incomp" },
     } };
-    pub const anon_151 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr_incomp_right", .rule_name = "expr_incomp_right" }, .separator = null } };
+    pub const anon_152 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "expr_incomp_right", .rule_name = "expr_incomp_right" }, .separator = null } };
     pub const expr_incomp = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_comp" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_151" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_152" },
     } };
     pub const expr_incomp_right = Rule{ .one_of = &[_]OneOf{
         .{ .choice = RuleRef{ .field_name = "expr_incomp_postop", .rule_name = "expr_incomp_postop" } },
@@ -941,9 +945,9 @@ pub const rules = struct {
         RuleRef{ .field_name = "op", .rule_name = "op_incomp" },
         RuleRef{ .field_name = "right", .rule_name = "expr_comp" },
     } };
-    pub const anon_155 = Rule{ .optional = RuleRef{ .field_name = "NOT", .rule_name = "NOT" } };
+    pub const anon_156 = Rule{ .optional = RuleRef{ .field_name = "NOT", .rule_name = "NOT" } };
     pub const expr_incomp_in = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "NOT", .rule_name = "anon_155" },
+        RuleRef{ .field_name = "NOT", .rule_name = "anon_156" },
         RuleRef{ .field_name = "IN", .rule_name = "IN" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
         RuleRef{ .field_name = "right", .rule_name = "expr_incomp_in_right" },
@@ -953,57 +957,57 @@ pub const rules = struct {
         .{ .choice = RuleRef{ .field_name = "exprs", .rule_name = "exprs" } },
         .{ .choice = RuleRef{ .field_name = "select", .rule_name = "select" } },
     } };
-    pub const anon_158 = Rule{ .optional = RuleRef{ .field_name = "NOT", .rule_name = "NOT" } };
+    pub const anon_159 = Rule{ .optional = RuleRef{ .field_name = "NOT", .rule_name = "NOT" } };
     pub const expr_incomp_between = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "NOT", .rule_name = "anon_158" },
+        RuleRef{ .field_name = "NOT", .rule_name = "anon_159" },
         RuleRef{ .field_name = "BETWEEN", .rule_name = "BETWEEN" },
         RuleRef{ .field_name = "start", .rule_name = "expr_comp" },
         RuleRef{ .field_name = "AND", .rule_name = "AND" },
         RuleRef{ .field_name = "end", .rule_name = "expr_comp" },
     } };
-    pub const anon_160 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "op_incomp_post", .rule_name = "op_incomp_post" }, .separator = null } };
+    pub const anon_161 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "op_incomp_post", .rule_name = "op_incomp_post" }, .separator = null } };
     pub const expr_incomp_postop = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "op_incomp_post", .rule_name = "anon_160" },
+        RuleRef{ .field_name = "op_incomp_post", .rule_name = "anon_161" },
     } };
-    pub const anon_162 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_163 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "op", .rule_name = "op_comp" },
         RuleRef{ .field_name = "right", .rule_name = "expr_bit" },
     } };
-    pub const anon_163 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_162", .rule_name = "anon_162" }, .separator = null } };
+    pub const anon_164 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_163", .rule_name = "anon_163" }, .separator = null } };
     pub const expr_comp = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_bit" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_163" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_164" },
     } };
-    pub const anon_165 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_166 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "op", .rule_name = "op_bit" },
         RuleRef{ .field_name = "right", .rule_name = "expr_add" },
     } };
-    pub const anon_166 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_165", .rule_name = "anon_165" }, .separator = null } };
+    pub const anon_167 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_166", .rule_name = "anon_166" }, .separator = null } };
     pub const expr_bit = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_add" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_166" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_167" },
     } };
-    pub const anon_168 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_169 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "op", .rule_name = "op_add" },
         RuleRef{ .field_name = "right", .rule_name = "expr_mult" },
     } };
-    pub const anon_169 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_168", .rule_name = "anon_168" }, .separator = null } };
+    pub const anon_170 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_169", .rule_name = "anon_169" }, .separator = null } };
     pub const expr_add = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_mult" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_169" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_170" },
     } };
-    pub const anon_171 = Rule{ .all_of = &[_]RuleRef{
+    pub const anon_172 = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "op", .rule_name = "op_mult" },
         RuleRef{ .field_name = "right", .rule_name = "expr_unary" },
     } };
-    pub const anon_172 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_171", .rule_name = "anon_171" }, .separator = null } };
+    pub const anon_173 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "anon_172", .rule_name = "anon_172" }, .separator = null } };
     pub const expr_mult = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "left", .rule_name = "expr_unary" },
-        RuleRef{ .field_name = "right", .rule_name = "anon_172" },
+        RuleRef{ .field_name = "right", .rule_name = "anon_173" },
     } };
-    pub const anon_174 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "op_unary", .rule_name = "op_unary" }, .separator = null } };
+    pub const anon_175 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "op_unary", .rule_name = "op_unary" }, .separator = null } };
     pub const expr_unary = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "op", .rule_name = "anon_174" },
+        RuleRef{ .field_name = "op", .rule_name = "anon_175" },
         RuleRef{ .field_name = "expr", .rule_name = "expr_atom" },
     } };
     pub const op_incomp = Rule{ .one_of = &[_]OneOf{
@@ -1121,15 +1125,15 @@ pub const rules = struct {
         RuleRef{ .field_name = "dot", .rule_name = "dot" },
         RuleRef{ .field_name = "column_name", .rule_name = "column_name" },
     } };
-    pub const anon_195 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
+    pub const anon_196 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
     pub const subquery_prefix = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_195" },
+        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_196" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
         RuleRef{ .field_name = "SELECT", .rule_name = "SELECT" },
     } };
-    pub const anon_197 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
+    pub const anon_198 = Rule{ .optional = RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "exists_or_not_exists" } };
     pub const subquery = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_197" },
+        RuleRef{ .field_name = "exists_or_not_exists", .rule_name = "anon_198" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
         RuleRef{ .field_name = "select", .rule_name = "select" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
@@ -1147,14 +1151,14 @@ pub const rules = struct {
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
-    pub const anon_202 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
-    pub const anon_203 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
-    pub const anon_204 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
+    pub const anon_203 = Rule{ .optional = RuleRef{ .field_name = "expr", .rule_name = "expr" } };
+    pub const anon_204 = Rule{ .repeat = .{ .min_count = 0, .element = RuleRef{ .field_name = "case_when", .rule_name = "case_when" }, .separator = null } };
+    pub const anon_205 = Rule{ .optional = RuleRef{ .field_name = "case_else", .rule_name = "case_else" } };
     pub const case = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "CASE", .rule_name = "CASE" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_202" },
-        RuleRef{ .field_name = "case_when", .rule_name = "anon_203" },
-        RuleRef{ .field_name = "case_else", .rule_name = "anon_204" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_203" },
+        RuleRef{ .field_name = "case_when", .rule_name = "anon_204" },
+        RuleRef{ .field_name = "case_else", .rule_name = "anon_205" },
         RuleRef{ .field_name = "END", .rule_name = "END" },
     } };
     pub const case_when = Rule{ .all_of = &[_]RuleRef{
@@ -1167,26 +1171,26 @@ pub const rules = struct {
         RuleRef{ .field_name = "ELSE", .rule_name = "ELSE" },
         RuleRef{ .field_name = "expr", .rule_name = "expr" },
     } };
-    pub const anon_208 = Rule{ .optional = RuleRef{ .field_name = "distinct_or_all", .rule_name = "distinct_or_all" } };
-    pub const anon_209 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
+    pub const anon_209 = Rule{ .optional = RuleRef{ .field_name = "distinct_or_all", .rule_name = "distinct_or_all" } };
+    pub const anon_210 = Rule{ .optional = RuleRef{ .field_name = "function_args", .rule_name = "function_args" } };
     pub const function_call = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "function_name", .rule_name = "function_name" },
         RuleRef{ .field_name = "open_paren", .rule_name = "open_paren" },
-        RuleRef{ .field_name = "distinct_or_all", .rule_name = "anon_208" },
-        RuleRef{ .field_name = "function_args", .rule_name = "anon_209" },
+        RuleRef{ .field_name = "distinct_or_all", .rule_name = "anon_209" },
+        RuleRef{ .field_name = "function_args", .rule_name = "anon_210" },
         RuleRef{ .field_name = "close_paren", .rule_name = "close_paren" },
     } };
     pub const function_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_212 = Rule{ .optional = RuleRef{ .field_name = "DISTINCT", .rule_name = "DISTINCT" } };
-    pub const anon_213 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
-    pub const anon_214 = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "DISTINCT", .rule_name = "anon_212" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_213" },
+    pub const anon_213 = Rule{ .optional = RuleRef{ .field_name = "DISTINCT", .rule_name = "DISTINCT" } };
+    pub const anon_214 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
+    pub const anon_215 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "DISTINCT", .rule_name = "anon_213" },
+        RuleRef{ .field_name = "expr", .rule_name = "anon_214" },
     } };
     pub const function_args = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_214" } },
+        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_215" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
     } };
     pub const value = Rule{ .one_of = &[_]OneOf{
@@ -1663,12 +1667,12 @@ pub const types = struct {
         create_view: sql.Parser.NodeId("create_view"),
     };
     pub const anon_81 = ?sql.Parser.NodeId("TEMP_OR_TEMPORARY");
-    pub const anon_82 = ?sql.Parser.NodeId("IF_NOT_EXISTS");
+    pub const anon_82 = ?sql.Parser.NodeId("if_not_exists");
     pub const create_table = struct {
         CREATE: sql.Parser.NodeId("CREATE"),
         TEMP_OR_TEMPORARY: sql.Parser.NodeId("anon_81"),
         TABLE: sql.Parser.NodeId("TABLE"),
-        IF_NOT_EXISTS: sql.Parser.NodeId("anon_82"),
+        if_not_exists: sql.Parser.NodeId("anon_82"),
         table_name: sql.Parser.NodeId("table_name"),
         column_defs: sql.Parser.NodeId("column_defs"),
     };
@@ -1676,77 +1680,75 @@ pub const types = struct {
         TEMP: sql.Parser.NodeId("TEMP"),
         TEMPORARY: sql.Parser.NodeId("TEMPORARY"),
     };
-    pub const IF_NOT_EXISTS = struct {
-        IF: sql.Parser.NodeId("IF"),
-        NOT: sql.Parser.NodeId("NOT"),
-        EXISTS: sql.Parser.NodeId("EXISTS"),
-    };
     pub const table_name = struct {
         name: sql.Parser.NodeId("name"),
     };
     pub const column_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_88 = struct {
+    pub const anon_87 = struct {
         elements: []const sql.Parser.NodeId("column_def"),
         separators: []const sql.Parser.NodeId("comma"),
     };
     pub const column_defs = struct {
         open_paren: sql.Parser.NodeId("open_paren"),
-        column_def: sql.Parser.NodeId("anon_88"),
+        column_def: sql.Parser.NodeId("anon_87"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
-    pub const anon_90 = ?sql.Parser.NodeId("typ");
-    pub const anon_91 = ?sql.Parser.NodeId("column_constraint");
+    pub const anon_89 = ?sql.Parser.NodeId("typ");
+    pub const anon_90 = ?sql.Parser.NodeId("column_constraint");
     pub const column_def = struct {
         column_name: sql.Parser.NodeId("column_name"),
-        typ: sql.Parser.NodeId("anon_90"),
-        column_constraint: sql.Parser.NodeId("anon_91"),
+        typ: sql.Parser.NodeId("anon_89"),
+        column_constraint: sql.Parser.NodeId("anon_90"),
     };
-    pub const anon_93 = ?sql.Parser.NodeId("UNIQUE");
-    pub const anon_94 = ?sql.Parser.NodeId("IF_NOT_EXISTS");
-    pub const anon_95 = struct {
+    pub const anon_92 = ?sql.Parser.NodeId("UNIQUE");
+    pub const anon_93 = ?sql.Parser.NodeId("if_not_exists");
+    pub const anon_94 = struct {
         elements: []const sql.Parser.NodeId("indexed_column"),
         separators: []const sql.Parser.NodeId("comma"),
     };
-    pub const anon_96 = struct {
+    pub const anon_95 = struct {
         WHERE: sql.Parser.NodeId("WHERE"),
         expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_97 = ?sql.Parser.NodeId("anon_96");
+    pub const anon_96 = ?sql.Parser.NodeId("anon_95");
     pub const create_index = struct {
         CREATE: sql.Parser.NodeId("CREATE"),
-        UNIQUE: sql.Parser.NodeId("anon_93"),
+        UNIQUE: sql.Parser.NodeId("anon_92"),
         INDEX: sql.Parser.NodeId("INDEX"),
-        IF_NOT_EXISTS: sql.Parser.NodeId("anon_94"),
+        if_not_exists: sql.Parser.NodeId("anon_93"),
         index_name: sql.Parser.NodeId("index_name"),
         ON: sql.Parser.NodeId("ON"),
         table_name: sql.Parser.NodeId("table_name"),
         open_paren: sql.Parser.NodeId("open_paren"),
-        indexed_column: sql.Parser.NodeId("anon_95"),
+        indexed_column: sql.Parser.NodeId("anon_94"),
         close_paren: sql.Parser.NodeId("close_paren"),
-        where: sql.Parser.NodeId("anon_97"),
+        where: sql.Parser.NodeId("anon_96"),
     };
     pub const index_name = struct {
-        table_name: sql.Parser.NodeId("table_name"),
+        name: sql.Parser.NodeId("name"),
     };
-    pub const anon_100 = ?sql.Parser.NodeId("asc_or_desc");
+    pub const anon_99 = ?sql.Parser.NodeId("asc_or_desc");
     pub const indexed_column = struct {
         column_name: sql.Parser.NodeId("column_name"),
-        asc_or_desc: sql.Parser.NodeId("anon_100"),
+        asc_or_desc: sql.Parser.NodeId("anon_99"),
     };
-    pub const anon_102 = ?sql.Parser.NodeId("TEMP_OR_TEMPORARY");
-    pub const anon_103 = ?sql.Parser.NodeId("IF_NOT_EXISTS");
-    pub const anon_104 = ?sql.Parser.NodeId("column_defs");
+    pub const anon_101 = ?sql.Parser.NodeId("TEMP_OR_TEMPORARY");
+    pub const anon_102 = ?sql.Parser.NodeId("if_not_exists");
+    pub const anon_103 = ?sql.Parser.NodeId("column_defs");
     pub const create_view = struct {
         CREATE: sql.Parser.NodeId("CREATE"),
-        TEMP_OR_TEMPORARY: sql.Parser.NodeId("anon_102"),
+        TEMP_OR_TEMPORARY: sql.Parser.NodeId("anon_101"),
         VIEW: sql.Parser.NodeId("VIEW"),
-        IF_NOT_EXISTS: sql.Parser.NodeId("anon_103"),
-        table_name: sql.Parser.NodeId("table_name"),
-        column_defs: sql.Parser.NodeId("anon_104"),
+        if_not_exists: sql.Parser.NodeId("anon_102"),
+        view_name: sql.Parser.NodeId("view_name"),
+        column_defs: sql.Parser.NodeId("anon_103"),
         AS: sql.Parser.NodeId("AS"),
         select: sql.Parser.NodeId("select"),
+    };
+    pub const view_name = struct {
+        name: sql.Parser.NodeId("name"),
     };
     pub const anon_106 = ?sql.Parser.NodeId("insert_or");
     pub const anon_107 = ?sql.Parser.NodeId("column_names");
@@ -1855,60 +1857,65 @@ pub const types = struct {
         DROP: sql.Parser.NodeId("DROP"),
         INDEX: sql.Parser.NodeId("INDEX"),
         if_exists: sql.Parser.NodeId("anon_134"),
-        table_name: sql.Parser.NodeId("table_name"),
+        index_name: sql.Parser.NodeId("index_name"),
     };
     pub const anon_136 = ?sql.Parser.NodeId("if_exists");
     pub const drop_view = struct {
         DROP: sql.Parser.NodeId("DROP"),
         VIEW: sql.Parser.NodeId("VIEW"),
         if_exists: sql.Parser.NodeId("anon_136"),
-        table_name: sql.Parser.NodeId("table_name"),
+        view_name: sql.Parser.NodeId("view_name"),
     };
     pub const if_exists = struct {
         IF: sql.Parser.NodeId("IF"),
+        EXISTS: sql.Parser.NodeId("EXISTS"),
+    };
+    pub const if_not_exists = struct {
+        IF: sql.Parser.NodeId("IF"),
+        NOT: sql.Parser.NodeId("NOT"),
         EXISTS: sql.Parser.NodeId("EXISTS"),
     };
     pub const reindex = struct {
         REINDEX: sql.Parser.NodeId("REINDEX"),
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_140 = struct {
+    pub const anon_141 = struct {
         elements: []const sql.Parser.NodeId("expr"),
         separators: []const sql.Parser.NodeId("comma"),
     };
     pub const exprs = struct {
-        expr: sql.Parser.NodeId("anon_140"),
+        expr: sql.Parser.NodeId("anon_141"),
     };
     pub const expr = struct {
         expr_or: sql.Parser.NodeId("expr_or"),
     };
-    pub const anon_143 = struct {
+    pub const anon_144 = struct {
         OR: sql.Parser.NodeId("OR"),
         right: sql.Parser.NodeId("expr_and"),
     };
-    pub const anon_144 = struct { elements: []const sql.Parser.NodeId("anon_143") };
+    pub const anon_145 = struct { elements: []const sql.Parser.NodeId("anon_144") };
     pub const expr_or = struct {
         left: sql.Parser.NodeId("expr_and"),
-        right: sql.Parser.NodeId("anon_144"),
+        right: sql.Parser.NodeId("anon_145"),
     };
-    pub const anon_146 = struct {
+    pub const anon_147 = struct {
         AND: sql.Parser.NodeId("AND"),
         right: sql.Parser.NodeId("expr_not"),
     };
-    pub const anon_147 = struct { elements: []const sql.Parser.NodeId("anon_146") };
+    pub const anon_148 = struct { elements: []const sql.Parser.NodeId("anon_147") };
     pub const expr_and = struct {
         left: sql.Parser.NodeId("expr_not"),
-        right: sql.Parser.NodeId("anon_147"),
+        right: sql.Parser.NodeId("anon_148"),
     };
-    pub const anon_149 = struct { elements: []const sql.Parser.NodeId("NOT") };
+    pub const anon_150 = struct { elements: []const sql.Parser.NodeId("NOT") };
     pub const expr_not = struct {
-        op: sql.Parser.NodeId("anon_149"),
+        op: sql.Parser.NodeId("anon_150"),
         expr: sql.Parser.NodeId("expr_incomp"),
     };
-    pub const anon_151 = struct { elements: []const sql.Parser.NodeId("expr_incomp_right") };
+    pub const anon_152 = struct { elements: []const sql.Parser.NodeId("expr_incomp_right") };
     pub const expr_incomp = struct {
         left: sql.Parser.NodeId("expr_comp"),
-        right: sql.Parser.NodeId("anon_151"),
+        right: sql.Parser.NodeId("anon_152"),
     };
     pub const expr_incomp_right = union(enum) {
         expr_incomp_postop: sql.Parser.NodeId("expr_incomp_postop"),
@@ -1920,9 +1927,9 @@ pub const types = struct {
         op: sql.Parser.NodeId("op_incomp"),
         right: sql.Parser.NodeId("expr_comp"),
     };
-    pub const anon_155 = ?sql.Parser.NodeId("NOT");
+    pub const anon_156 = ?sql.Parser.NodeId("NOT");
     pub const expr_incomp_in = struct {
-        NOT: sql.Parser.NodeId("anon_155"),
+        NOT: sql.Parser.NodeId("anon_156"),
         IN: sql.Parser.NodeId("IN"),
         open_paren: sql.Parser.NodeId("open_paren"),
         right: sql.Parser.NodeId("expr_incomp_in_right"),
@@ -1932,57 +1939,57 @@ pub const types = struct {
         exprs: sql.Parser.NodeId("exprs"),
         select: sql.Parser.NodeId("select"),
     };
-    pub const anon_158 = ?sql.Parser.NodeId("NOT");
+    pub const anon_159 = ?sql.Parser.NodeId("NOT");
     pub const expr_incomp_between = struct {
-        NOT: sql.Parser.NodeId("anon_158"),
+        NOT: sql.Parser.NodeId("anon_159"),
         BETWEEN: sql.Parser.NodeId("BETWEEN"),
         start: sql.Parser.NodeId("expr_comp"),
         AND: sql.Parser.NodeId("AND"),
         end: sql.Parser.NodeId("expr_comp"),
     };
-    pub const anon_160 = struct { elements: []const sql.Parser.NodeId("op_incomp_post") };
+    pub const anon_161 = struct { elements: []const sql.Parser.NodeId("op_incomp_post") };
     pub const expr_incomp_postop = struct {
-        op_incomp_post: sql.Parser.NodeId("anon_160"),
+        op_incomp_post: sql.Parser.NodeId("anon_161"),
     };
-    pub const anon_162 = struct {
+    pub const anon_163 = struct {
         op: sql.Parser.NodeId("op_comp"),
         right: sql.Parser.NodeId("expr_bit"),
     };
-    pub const anon_163 = struct { elements: []const sql.Parser.NodeId("anon_162") };
+    pub const anon_164 = struct { elements: []const sql.Parser.NodeId("anon_163") };
     pub const expr_comp = struct {
         left: sql.Parser.NodeId("expr_bit"),
-        right: sql.Parser.NodeId("anon_163"),
+        right: sql.Parser.NodeId("anon_164"),
     };
-    pub const anon_165 = struct {
+    pub const anon_166 = struct {
         op: sql.Parser.NodeId("op_bit"),
         right: sql.Parser.NodeId("expr_add"),
     };
-    pub const anon_166 = struct { elements: []const sql.Parser.NodeId("anon_165") };
+    pub const anon_167 = struct { elements: []const sql.Parser.NodeId("anon_166") };
     pub const expr_bit = struct {
         left: sql.Parser.NodeId("expr_add"),
-        right: sql.Parser.NodeId("anon_166"),
+        right: sql.Parser.NodeId("anon_167"),
     };
-    pub const anon_168 = struct {
+    pub const anon_169 = struct {
         op: sql.Parser.NodeId("op_add"),
         right: sql.Parser.NodeId("expr_mult"),
     };
-    pub const anon_169 = struct { elements: []const sql.Parser.NodeId("anon_168") };
+    pub const anon_170 = struct { elements: []const sql.Parser.NodeId("anon_169") };
     pub const expr_add = struct {
         left: sql.Parser.NodeId("expr_mult"),
-        right: sql.Parser.NodeId("anon_169"),
+        right: sql.Parser.NodeId("anon_170"),
     };
-    pub const anon_171 = struct {
+    pub const anon_172 = struct {
         op: sql.Parser.NodeId("op_mult"),
         right: sql.Parser.NodeId("expr_unary"),
     };
-    pub const anon_172 = struct { elements: []const sql.Parser.NodeId("anon_171") };
+    pub const anon_173 = struct { elements: []const sql.Parser.NodeId("anon_172") };
     pub const expr_mult = struct {
         left: sql.Parser.NodeId("expr_unary"),
-        right: sql.Parser.NodeId("anon_172"),
+        right: sql.Parser.NodeId("anon_173"),
     };
-    pub const anon_174 = struct { elements: []const sql.Parser.NodeId("op_unary") };
+    pub const anon_175 = struct { elements: []const sql.Parser.NodeId("op_unary") };
     pub const expr_unary = struct {
-        op: sql.Parser.NodeId("anon_174"),
+        op: sql.Parser.NodeId("anon_175"),
         expr: sql.Parser.NodeId("expr_atom"),
     };
     pub const op_incomp = union(enum) {
@@ -2092,15 +2099,15 @@ pub const types = struct {
         dot: sql.Parser.NodeId("dot"),
         column_name: sql.Parser.NodeId("column_name"),
     };
-    pub const anon_195 = ?sql.Parser.NodeId("exists_or_not_exists");
+    pub const anon_196 = ?sql.Parser.NodeId("exists_or_not_exists");
     pub const subquery_prefix = struct {
-        exists_or_not_exists: sql.Parser.NodeId("anon_195"),
+        exists_or_not_exists: sql.Parser.NodeId("anon_196"),
         open_paren: sql.Parser.NodeId("open_paren"),
         SELECT: sql.Parser.NodeId("SELECT"),
     };
-    pub const anon_197 = ?sql.Parser.NodeId("exists_or_not_exists");
+    pub const anon_198 = ?sql.Parser.NodeId("exists_or_not_exists");
     pub const subquery = struct {
-        exists_or_not_exists: sql.Parser.NodeId("anon_197"),
+        exists_or_not_exists: sql.Parser.NodeId("anon_198"),
         open_paren: sql.Parser.NodeId("open_paren"),
         select: sql.Parser.NodeId("select"),
         close_paren: sql.Parser.NodeId("close_paren"),
@@ -2118,14 +2125,14 @@ pub const types = struct {
         expr: sql.Parser.NodeId("expr"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
-    pub const anon_202 = ?sql.Parser.NodeId("expr");
-    pub const anon_203 = struct { elements: []const sql.Parser.NodeId("case_when") };
-    pub const anon_204 = ?sql.Parser.NodeId("case_else");
+    pub const anon_203 = ?sql.Parser.NodeId("expr");
+    pub const anon_204 = struct { elements: []const sql.Parser.NodeId("case_when") };
+    pub const anon_205 = ?sql.Parser.NodeId("case_else");
     pub const case = struct {
         CASE: sql.Parser.NodeId("CASE"),
-        expr: sql.Parser.NodeId("anon_202"),
-        case_when: sql.Parser.NodeId("anon_203"),
-        case_else: sql.Parser.NodeId("anon_204"),
+        expr: sql.Parser.NodeId("anon_203"),
+        case_when: sql.Parser.NodeId("anon_204"),
+        case_else: sql.Parser.NodeId("anon_205"),
         END: sql.Parser.NodeId("END"),
     };
     pub const case_when = struct {
@@ -2138,29 +2145,29 @@ pub const types = struct {
         ELSE: sql.Parser.NodeId("ELSE"),
         expr: sql.Parser.NodeId("expr"),
     };
-    pub const anon_208 = ?sql.Parser.NodeId("distinct_or_all");
-    pub const anon_209 = ?sql.Parser.NodeId("function_args");
+    pub const anon_209 = ?sql.Parser.NodeId("distinct_or_all");
+    pub const anon_210 = ?sql.Parser.NodeId("function_args");
     pub const function_call = struct {
         function_name: sql.Parser.NodeId("function_name"),
         open_paren: sql.Parser.NodeId("open_paren"),
-        distinct_or_all: sql.Parser.NodeId("anon_208"),
-        function_args: sql.Parser.NodeId("anon_209"),
+        distinct_or_all: sql.Parser.NodeId("anon_209"),
+        function_args: sql.Parser.NodeId("anon_210"),
         close_paren: sql.Parser.NodeId("close_paren"),
     };
     pub const function_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_212 = ?sql.Parser.NodeId("DISTINCT");
-    pub const anon_213 = struct {
+    pub const anon_213 = ?sql.Parser.NodeId("DISTINCT");
+    pub const anon_214 = struct {
         elements: []const sql.Parser.NodeId("expr"),
         separators: []const sql.Parser.NodeId("comma"),
     };
-    pub const anon_214 = struct {
-        DISTINCT: sql.Parser.NodeId("anon_212"),
-        expr: sql.Parser.NodeId("anon_213"),
+    pub const anon_215 = struct {
+        DISTINCT: sql.Parser.NodeId("anon_213"),
+        expr: sql.Parser.NodeId("anon_214"),
     };
     pub const function_args = union(enum) {
-        args: sql.Parser.NodeId("anon_214"),
+        args: sql.Parser.NodeId("anon_215"),
         star: sql.Parser.NodeId("star"),
     };
     pub const value = union(enum) {

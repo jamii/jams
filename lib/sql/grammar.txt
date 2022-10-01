@@ -91,17 +91,17 @@ create =
   | create_table
   | create_index
   | create_view;
-create_table = CREATE TEMP_OR_TEMPORARY? TABLE IF_NOT_EXISTS? table_name column_defs;
+create_table = CREATE TEMP_OR_TEMPORARY? TABLE if_not_exists? table_name column_defs;
 TEMP_OR_TEMPORARY = | TEMP | TEMPORARY;
-IF_NOT_EXISTS = IF NOT EXISTS;
 table_name = name;
 column_name = name;
 column_defs = open_paren column_def*comma close_paren;
 column_def = column_name typ? column_constraint?;
-create_index = CREATE UNIQUE? INDEX IF_NOT_EXISTS? index_name ON table_name open_paren indexed_column+comma close_paren (WHERE expr)?=where;
-index_name = table_name;
+create_index = CREATE UNIQUE? INDEX if_not_exists? index_name ON table_name open_paren indexed_column+comma close_paren (WHERE expr)?=where;
+index_name = name;
 indexed_column = column_name asc_or_desc?; # TODO
-create_view = CREATE TEMP_OR_TEMPORARY? VIEW IF_NOT_EXISTS? table_name column_defs? AS select;
+create_view = CREATE TEMP_OR_TEMPORARY? VIEW if_not_exists? view_name column_defs? AS select;
+view_name = name;
 
 insert = INSERT insert_or? INTO table_name column_names? select_or_values;
 insert_or = OR insert_or_arg;
@@ -125,9 +125,10 @@ drop =
   | drop_index
   | drop_view;
 drop_table = DROP TABLE if_exists? table_name;
-drop_index = DROP INDEX if_exists? table_name;
-drop_view = DROP VIEW if_exists? table_name;
+drop_index = DROP INDEX if_exists? index_name;
+drop_view = DROP VIEW if_exists? view_name;
 if_exists = IF EXISTS;
+if_not_exists = IF NOT EXISTS;
 
 reindex = REINDEX name;
 

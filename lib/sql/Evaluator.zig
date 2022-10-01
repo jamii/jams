@@ -57,6 +57,18 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
                 return empty_relation;
             }
         },
+        .create_index => |create_index| {
+            const exists = self.database.index_defs.contains(create_index.name);
+            if (exists)
+                return if (create_index.if_not_exists) empty_relation else error.AbortEval
+            else {
+                try self.database.index_defs.put(
+                    try u.deepClone(self.database.allocator, create_index.name),
+                    try u.deepClone(self.database.allocator, create_index.def),
+                );
+                return empty_relation;
+            }
+        },
         .insert => |insert| {
             const table = self.database.tables.getPtr(insert.table_name).?;
             const rows = try self.evalRelation(insert.query);
@@ -64,6 +76,25 @@ pub fn evalStatement(self: *Self, statement_expr: sql.Planner.StatementExpr) Err
                 // unique keys are not tested in slt
                 try table.append(try u.deepClone(self.database.allocator, row.items));
             return empty_relation;
+        },
+        .drop_table => |drop_table| {
+            const exists = self.database.table_defs.contains(drop_table.name);
+            if (exists)
+                return if (drop_table.if_exists) empty_relation else error.AbortEval
+            else {
+                _ = self.database.table_defs.remove(drop_table.name);
+                _ = self.database.tables.remove(drop_table.name);
+                return empty_relation;
+            }
+        },
+        .drop_index => |drop_index| {
+            const exists = self.database.index_defs.contains(drop_index.name);
+            if (exists)
+                return if (drop_index.if_exists) empty_relation else error.AbortEval
+            else {
+                _ = self.database.index_defs.remove(drop_index.name);
+                return empty_relation;
+            }
         },
         .noop => return empty_relation,
     }

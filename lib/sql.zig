@@ -14,6 +14,7 @@ pub const Database = struct {
     allocator: u.Allocator,
     table_defs: u.DeepHashMap(TableName, TableDef),
     tables: u.DeepHashMap(TableName, Table),
+    index_defs: u.DeepHashMap(IndexName, IndexDef),
 
     pub fn init(arena: *u.ArenaAllocator) !Database {
         const allocator = arena.allocator();
@@ -22,6 +23,7 @@ pub const Database = struct {
             .allocator = allocator,
             .table_defs = u.DeepHashMap(TableName, TableDef).init(allocator),
             .tables = u.DeepHashMap(TableName, Table).init(allocator),
+            .index_defs = u.DeepHashMap(IndexName, IndexDef).init(allocator),
         };
     }
 
@@ -59,6 +61,7 @@ pub const Database = struct {
 
 pub const TableName = []const u8;
 pub const ColumnName = []const u8;
+pub const IndexName = []const u8;
 
 pub const TableDef = struct {
     columns: []const ColumnDef,
@@ -70,6 +73,8 @@ pub const ColumnDef = struct {
     typ: ?Type,
     nullable: bool,
 };
+
+pub const IndexDef = struct {};
 
 pub const Key = struct {
     columns: []const usize,
@@ -97,14 +102,17 @@ pub const Value = union(Type) {
     pub const NULL = Value{ .nul = {} };
     pub const TRUE = Value{ .integer = 1 };
     pub const FALSE = Value{ .integer = 0 };
+
     pub fn toBool(self: Value) !bool {
         // sqlite actually has some horrible implicit casts, but we'll be sane here
         if (self != .integer) return error.TypeError;
         return self.integer != FALSE.integer;
     }
+
     pub fn fromBool(b: bool) Value {
         return if (b) TRUE else FALSE;
     }
+
     pub fn order(a: Value, b: Value) std.math.Order {
         // TODO sqlite has complex casting logic here https://www.sqlite.org/datatype3.html#comparisons
         // but other databases don't, so we may get away with strict comparisons

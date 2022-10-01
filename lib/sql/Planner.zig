@@ -19,8 +19,11 @@ pub const ColumnId = usize;
 
 pub const StatementExpr = union(enum) {
     create_table: CreateTable,
+    create_index: CreateIndex,
     insert: Insert,
     select: RelationExprId,
+    drop_table: DropTable,
+    drop_index: DropIndex,
     noop,
 };
 
@@ -30,9 +33,25 @@ pub const CreateTable = struct {
     if_not_exists: bool,
 };
 
+pub const CreateIndex = struct {
+    name: sql.IndexName,
+    def: sql.IndexDef,
+    if_not_exists: bool,
+};
+
 pub const Insert = struct {
     table_name: sql.TableName,
     query: RelationExprId,
+};
+
+pub const DropTable = struct {
+    name: sql.TableName,
+    if_exists: bool,
+};
+
+pub const DropIndex = struct {
+    name: sql.TableName,
+    if_exists: bool,
 };
 
 pub const RelationExpr = union(enum) {
@@ -139,11 +158,13 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             .select => |select| return .{ .select = try self.planRelation(select) },
             .create => |create| return self.planStatement(create),
             .insert => |insert| return self.planStatement(insert),
+            .drop => |drop| return self.planStatement(drop),
             .reindex => return .{ .noop = {} },
             else => return error.NoPlan,
         },
         N.create => switch (node) {
             .create_table => |create_table| return self.planStatement(create_table),
+            .create_index => |create_index| return self.planStatement(create_index),
             else => return error.NoPlan,
         },
         N.create_table => {
@@ -179,7 +200,14 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             return .{ .create_table = .{
                 .name = name,
                 .def = .{ .columns = columns, .key = key },
-                .if_not_exists = node.IF_NOT_EXISTS.get(p) != null,
+                .if_not_exists = node.if_not_exists.get(p) != null,
+            } };
+        },
+        N.create_index => {
+            return .{ .create_index = .{
+                .name = node.index_name.getSource(p),
+                .def = .{},
+                .if_not_exists = node.if_not_exists.get(p) != null,
             } };
         },
         N.insert => {
@@ -212,6 +240,23 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                 }
             }
             return .{ .insert = .{ .table_name = table_name, .query = query } };
+        },
+        N.drop => switch (node) {
+            .drop_table => |drop_table| return self.planStatement(drop_table),
+            .drop_index => |drop_index| return self.planStatement(drop_index),
+            else => return error.NoPlan,
+        },
+        N.drop_table => {
+            return .{ .drop_table = .{
+                .name = node.table_name.getSource(p),
+                .if_exists = node.if_exists.get(p) != null,
+            } };
+        },
+        N.drop_index => {
+            return .{ .drop_index = .{
+                .name = node.index_name.getSource(p),
+                .if_exists = node.if_exists.get(p) != null,
+            } };
         },
         else => @compileError("planStatement not implemented for " ++ @typeName(@TypeOf(node))),
     }
