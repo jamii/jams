@@ -5,7 +5,6 @@ const Token = sql.grammar.Token;
 const keywords = sql.grammar.keywords;
 
 const Self = @This();
-arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 source: [:0]const u8,
 pos: usize,
@@ -30,10 +29,8 @@ const State = enum {
     bit_or,
 };
 
-pub fn init(arena: *u.ArenaAllocator, source: [:0]const u8) Self {
-    const allocator = arena.allocator();
+pub fn init(allocator: u.Allocator, source: [:0]const u8) Self {
     return .{
-        .arena = arena,
         .allocator = allocator,
         .source = source,
         .pos = 0,

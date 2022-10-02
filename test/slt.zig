@@ -2,14 +2,7 @@ const std = @import("std");
 const sql = @import("../lib/sql.zig");
 const u = sql.util;
 
-const allocator = std.heap.c_allocator;
-//var gpa = std.heap.GeneralPurposeAllocator(.{
-//    .safety = true,
-//    .never_unmap = true,
-//}){
-//    .backing_allocator = std.heap.page_allocator,
-//};
-//pub const allocator = gpa.allocator();
+const global_allocator = std.heap.c_allocator;
 
 pub fn ReturnError(comptime f: anytype) type {
     const Return = @typeInfo(@TypeOf(f)).Fn.return_type.?;
@@ -30,19 +23,23 @@ pub fn real_main() !void {
     var total: usize = 0;
     var passes: usize = 0;
     var skips: usize = 0;
-    var errors = u.DeepHashMap(TestError, usize).init(allocator);
+    var errors = u.DeepHashMap(TestError, usize).init(global_allocator);
     defer errors.deinit();
 
     file: while (args.next()) |slt_path| {
         std.debug.print("Running {}\n", .{std.zig.fmtEscapes(slt_path)});
         var skip = false;
 
-        var arena = u.ArenaAllocator.init(allocator);
-        defer arena.deinit();
+        var gpa = std.heap.GeneralPurposeAllocator(.{
+            .safety = false,
+        }){
+            .backing_allocator = global_allocator,
+        };
+        defer _ = gpa.deinit();
 
-        var database = try sql.Database.init(&arena);
+        var database = try sql.Database.init(gpa.allocator());
 
-        var bytes = u.ArrayList(u8).init(arena.allocator());
+        var bytes = u.ArrayList(u8).init(gpa.allocator());
 
         {
             const file = try std.fs.cwd().openFile(slt_path, .{});
@@ -113,7 +110,7 @@ pub fn real_main() !void {
                     // ...expected...
                     const types_bytes = words.next().?;
 
-                    const types = try arena.allocator().alloc(sql.Type, types_bytes.len);
+                    const types = try gpa.allocator().alloc(sql.Type, types_bytes.len);
 
                     for (types) |*typ, i|
                         typ.* = switch (types_bytes[i]) {
@@ -178,14 +175,14 @@ const SortMode = enum {
 
 fn runStatement(database: *sql.Database, statement: []const u8, expected: StatementExpected) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
+        .safety = false,
         .enable_memory_limit = true,
     }){
         .requested_memory_limit = 1024 * 1024 * 1024 * 1,
+        .backing_allocator = global_allocator,
     };
     defer _ = gpa.deinit();
-    var arena = u.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
-    if (database.run(&arena, statement)) |_| {
+    if (database.run(gpa.allocator(), statement)) |_| {
         switch (expected) {
             .ok => return,
             .err => return error.StatementShouldError,
@@ -204,38 +201,38 @@ fn runStatement(database: *sql.Database, statement: []const u8, expected: Statem
 fn runQuery(database: *sql.Database, query: []const u8, types: []const sql.Type, sort_mode: SortMode, label: ?[]const u8, expected_output: []const u8) !void {
     _ = label; // TODO handle labels
     var gpa = std.heap.GeneralPurposeAllocator(.{
+        .safety = false,
         .enable_memory_limit = true,
     }){
         .requested_memory_limit = 1024 * 1024 * 1024 * 1,
+        .backing_allocator = global_allocator,
     };
     defer _ = gpa.deinit();
-    var arena = u.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
 
-    const rows = try database.run(&arena, query);
+    const rows = try database.run(gpa.allocator(), query);
 
     for (rows.items) |row|
         if (row.items.len != types.len)
             return error.WrongNumberOfColumnsReturned;
 
     const should_hash = std.mem.containsAtLeast(u8, expected_output, 1, "values hashing to");
-    const actual_output = try produceQueryOutput(&arena, rows, types, sort_mode, should_hash);
+    const actual_output = try produceQueryOutput(gpa.allocator(), rows, types, sort_mode, should_hash);
     return std.testing.expectEqualStrings(expected_output, actual_output);
 }
 
-fn produceQueryOutput(arena: *u.ArenaAllocator, rows: sql.Evaluator.Relation, types: []const sql.Type, sort_mode: SortMode, should_hash: bool) ![]const u8 {
-    var actual_outputs = u.ArrayList([]const u8).init(arena.allocator());
+fn produceQueryOutput(allocator: u.Allocator, rows: sql.Evaluator.Relation, types: []const sql.Type, sort_mode: SortMode, should_hash: bool) ![]const u8 {
+    var actual_outputs = u.ArrayList([]const u8).init(allocator);
     for (rows.items) |row| {
         switch (sort_mode) {
             .no_sort, .value_sort => {
                 for (types) |typ, i|
-                    try actual_outputs.append(try formatValue(arena, typ, row.items[i]));
+                    try actual_outputs.append(try formatValue(allocator, typ, row.items[i]));
             },
             .row_sort => {
-                var row_output = u.ArrayList([]const u8).init(arena.allocator());
+                var row_output = u.ArrayList([]const u8).init(allocator);
                 for (types) |typ, i|
-                    try row_output.append(try formatValue(arena, typ, row.items[i]));
-                try actual_outputs.append(try std.mem.join(arena.allocator(), "\n", row_output.items));
+                    try row_output.append(try formatValue(allocator, typ, row.items[i]));
+                try actual_outputs.append(try std.mem.join(allocator, "\n", row_output.items));
             },
         }
     }
@@ -254,7 +251,7 @@ fn produceQueryOutput(arena: *u.ArenaAllocator, rows: sql.Evaluator.Relation, ty
         ),
     }
 
-    const actual_output = try std.mem.join(arena.allocator(), "\n", actual_outputs.items);
+    const actual_output = try std.mem.join(allocator, "\n", actual_outputs.items);
 
     if (should_hash) {
         var hasher = std.crypto.hash.Md5.init(.{});
@@ -262,24 +259,24 @@ fn produceQueryOutput(arena: *u.ArenaAllocator, rows: sql.Evaluator.Relation, ty
         hasher.update("\n");
         var hash: [std.crypto.hash.Md5.digest_length]u8 = undefined;
         hasher.final(&hash);
-        return std.fmt.allocPrint(arena.allocator(), "{} values hashing to {s}", .{ rows.items.len * types.len, std.fmt.fmtSliceHexLower(&hash) });
+        return std.fmt.allocPrint(allocator, "{} values hashing to {s}", .{ rows.items.len * types.len, std.fmt.fmtSliceHexLower(&hash) });
     } else {
         return actual_output;
     }
 }
 
-fn formatValue(arena: *u.ArenaAllocator, typ: sql.Type, value: sql.Value) ![]const u8 {
+fn formatValue(allocator: u.Allocator, typ: sql.Type, value: sql.Value) ![]const u8 {
     return switch (value) {
         .nul => "NULL",
         .integer => |integer| switch (typ) {
-            .integer, .text => std.fmt.allocPrint(arena.allocator(), "{}", .{integer}),
-            .real => std.fmt.allocPrint(arena.allocator(), "{d:.3}", .{@intToFloat(f64, integer)}),
+            .integer, .text => std.fmt.allocPrint(allocator, "{}", .{integer}),
+            .real => std.fmt.allocPrint(allocator, "{d:.3}", .{@intToFloat(f64, integer)}),
             .nul, .blob => unreachable, // tests only contain I T R
         },
         .real => |real| switch (typ) {
             .integer => error.UnexpectedFormatComboRealinteger,
             .text => error.UnexpectedFormatComboRealText,
-            .real => std.fmt.allocPrint(arena.allocator(), "{d:.3}", .{real}),
+            .real => std.fmt.allocPrint(allocator, "{d:.3}", .{real}),
             .nul, .blob => unreachable, // tests only contain I T R
         },
         .text => |text| switch (typ) {
@@ -293,9 +290,12 @@ fn formatValue(arena: *u.ArenaAllocator, typ: sql.Type, value: sql.Value) ![]con
 }
 
 fn testProduceQueryOutput(rows: []const []const sql.Value, types: []const sql.Type, sort_mode: SortMode, should_hash: bool, expected: []const u8) !void {
-    var arena = u.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const actual = try produceQueryOutput(&arena, rows, types, sort_mode, should_hash);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){
+        .safety = false,
+        .backing_allocator = global_allocator,
+    };
+    defer _ = gpa.deinit();
+    const actual = try produceQueryOutput(gpa.allocator(), rows, types, sort_mode, should_hash);
     return std.testing.expectEqualStrings(expected, actual);
 }
 

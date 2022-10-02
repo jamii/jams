@@ -6,7 +6,6 @@ const N = sql.grammar.types; // TODO move these inside Node
 const NodeId = sql.Parser.NodeId;
 
 const Self = @This();
-arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 parser: sql.Parser,
 database: sql.Database,
@@ -146,13 +145,11 @@ pub const Error = error{
 };
 
 pub fn init(
-    arena: *u.ArenaAllocator,
+    allocator: u.Allocator,
     parser: sql.Parser,
     database: sql.Database,
 ) Self {
-    const allocator = arena.allocator();
     return Self{
-        .arena = arena,
         .allocator = allocator,
         .parser = parser,
         .database = database,
