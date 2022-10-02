@@ -282,6 +282,89 @@ This is how I expected the week to go. Not death by bnf.
 
 The odds of hitting 100% now are very low - there is a long tail of weird behavior that I expected to have much more time to implement. But I think in the next two days I might be able to get to something respectable.
 
+# Day 6
+
+Full steam ahead:
+
+```
+total => 5939714
+HashMap(
+    error.TypeError => 198542,
+    error.NoPlan => 2345772,
+    error.StatementShouldError => 2,
+    error.ParseError => 2,
+    error.TestExpectedEqual => 9379,
+    error.BadColumn => 42749,
+)
+skips => 127880
+passes => 3215388 (= 54.13%)
+
+________________________________________________________
+Executed in  581.30 secs    fish           external
+   usr time  258.12 secs  660.00 micros  258.12 secs
+   sys time  342.46 secs  324.00 micros  342.46 secs
+```
+
+What are we looking at here?
+
+__total => 5939714__. Some tests are marked with tags like `onlyif sqlite` or `skipif sqlite`. Before I was only looking at tests with no tags (ie generic sql), but today I found out that tags are often used to split out setup code like:
+
+```
+onlyif oracle
+statement ok
+CREATE TABLE foo(...funky oracle workaround...)
+
+skipif oracle
+statement ok
+CREATE TABLE foo(...regular sql...)
+```
+
+I was skipping both, which left me with no table. So now I'm doing any statements tagged with `skipif`, which leaves me with a lot more tests to pass.
+
+__passes => 3215388 (= 54.13%)__. That's a lot of progress.
+
+__skips => 127880__. Most of the slt files start with some statements to set up some data, followed by a bunch of data. If I know that I screwed up one of those statements, I still try to execute the queries but I assign any errors to the `skip` category so I'm not debugging the wrong sql.
+
+__error.NoPlan => 2345772__. Things that my planner does not support yet.
+
+__error.TypeError => 198542__. Sqlite has some hilarious implicit type casts. I didn't implement these, so sometimes my queries fail when sqlite tries to eg add a boolean to a string. Some of these might also be from the planner miscounting columns though.
+
+```
+sqlite> select TRUE + "foo";
+1
+```
+
+__error.BadColumn => 42749__. Sometimes I generate plans that refer to non-existent columns. I catch these during eval so that the bounds check doesn't kill my test run.
+
+__error.TestExpectedEqual => 9379__. I produced the wrong output for the test. Surprisingly few of these.
+
+__error.ParseError => 2__. I added a bunch of new tests, so I had to expand the grammar some more. I didn't catch everything.
+
+__error.StatementShouldError => 2__. Some statement was supposed to abort with an error but it didn't. This will probably screw up other tests in the same file.
+
+---
+
+The major changes I made today were supporting most statements, almost all scalar expressions, SELECT/FROM/WHERE and some forms of non-correlated subqueries. 
+
+I also added memory (via std.heap.GeneralPurposeAllocator) and cpu limits (via counting backwards branches) to evaluation, to prevent the odd bad plan from trashing my test run. 
+
+With one day left to go I have to be strategic about what I support next. A few days ago I dumped a list of grammar rules by how many test cases they occur in. The list is probably a bit out of date with the new added tests, but hopefully directionally correct.
+
+The big ones I'm missing are:
+
+* ORDER BY = 804266
+* JOIN = 143153
+* GROUP = 108561
+* subquery = 97229
+* function call = 57144
+* VIEW = 57144 (this is probably responsible for most of the skips though)
+* UNION/INTERSECT/EXCEPT = 20440
+* DELETE = 19877 (again, probably responsble for a lot of skips and/or wrong results)
+* CASE = 16811
+* HAVING = 13375
+
+So tomorrow I'll probably just try and crank through features in that order and see where I end up.
+
 &nbsp;
 
 &nbsp;
