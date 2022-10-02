@@ -74,6 +74,7 @@ pub const RelationExpr = union(enum) {
         all: bool,
     },
     get_table: []const u8,
+    distinct: RelationExprId,
 };
 
 pub const ScalarExpr = union(enum) {
@@ -337,7 +338,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             return plan;
         },
         N.select_body => {
-            try self.noPlan(node.distinct_or_all);
             try self.noPlan(node.group_by);
             try self.noPlan(node.having);
             try self.noPlan(node.window);
@@ -385,6 +385,10 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 .input = plan,
                 .columns = project_columns.toOwnedSlice(),
             } });
+            if (node.distinct_or_all.get(p)) |distinct_or_all| {
+                if (distinct_or_all.get(p) == .DISTINCT)
+                    plan = try self.pushRelation(.{ .distinct = plan });
+            }
             return plan;
         },
         N.from => return self.planRelation(node.joins),

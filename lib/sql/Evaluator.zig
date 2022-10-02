@@ -148,11 +148,10 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             output = input;
         },
         .unio => |unio| {
-            const left = try self.evalRelation(unio.inputs[0]);
+            var left = try self.evalRelation(unio.inputs[0]);
             const right = try self.evalRelation(unio.inputs[1]);
             if (unio.all) {
-                output = left;
-                try output.appendSlice(right.items);
+                try left.appendSlice(right.items);
             } else {
                 var set = u.DeepHashSet(Row).init(self.allocator);
                 for (left.items) |row| {
@@ -163,9 +162,11 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                     try self.useJuice();
                     try set.put(row, {});
                 }
+                left.shrinkRetainingCapacity(0);
                 var iter = set.keyIterator();
-                while (iter.next()) |row| try output.append(row.*);
+                while (iter.next()) |row| try left.append(row.*);
             }
+            output = left;
         },
         .get_table => |table_name| {
             const table = self.database.tables.get(table_name) orelse
@@ -176,6 +177,18 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                 output_row.appendSliceAssumeCapacity(input_row);
                 try output.append(output_row);
             }
+        },
+        .distinct => |distinct| {
+            var input = try self.evalRelation(distinct);
+            var set = u.DeepHashSet(Row).init(self.allocator);
+            for (input.items) |row| {
+                try self.useJuice();
+                try set.put(row, {});
+            }
+            input.shrinkRetainingCapacity(0);
+            var iter = set.keyIterator();
+            while (iter.next()) |row| try input.append(row.*);
+            output = input;
         },
     }
     //u.dump(.{ relation_expr, output });
