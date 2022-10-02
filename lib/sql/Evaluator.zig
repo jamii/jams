@@ -183,8 +183,8 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
 }
 
 fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) Error!Scalar {
-    const scalar_expr = self.planner.scalar_exprs.items[scalar_expr_id];
-    switch (scalar_expr) {
+    const scalar_expr = &self.planner.scalar_exprs.items[scalar_expr_id];
+    switch (scalar_expr.*) {
         .value => |value| return value,
         .column => |column| return env.items[column],
         .unary => |unary| {
@@ -259,9 +259,10 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                 else => error.NoEval,
             };
         },
-        .in => |in| {
+        .in => |*in| {
             const input = try self.evalScalar(in.input, env);
-            const subplan = try self.evalRelation(in.subplan);
+            const subplan = in.subplan_cache orelse try self.evalRelation(in.subplan);
+            in.subplan_cache = subplan;
             var input_in_subplan = false;
             for (subplan.items) |row| {
                 if (u.deepEqual(input, row.items[0]))

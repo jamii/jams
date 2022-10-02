@@ -91,6 +91,8 @@ pub const ScalarExpr = union(enum) {
         not: bool,
         input: ScalarExprId,
         subplan: RelationExprId,
+        // We can't plan correlated subqueries, and non-correlated subqueries are always safe to cache
+        subplan_cache: ?sql.Evaluator.Relation,
     },
 };
 
@@ -476,6 +478,7 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                             .not = expr_incomp_in.get(p).NOT.get(p) != null,
                             .input = plan,
                             .subplan = subplan,
+                            .subplan_cache = null,
                         } });
                     },
                     .expr_incomp_between => |expr_incomp_between| {
