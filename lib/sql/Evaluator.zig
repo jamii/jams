@@ -191,6 +191,21 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             while (iter.next()) |row| try input.append(row.*);
             output = input;
         },
+        .order_by => |order_by| {
+            const input = try self.evalRelation(order_by.input);
+            std.sort.sort(Row, input.items, order_by.orderings, (struct {
+                fn lessThan(orderings: []sql.Planner.Ordering, a: Row, b: Row) bool {
+                    for (orderings) |ordering|
+                        switch (Scalar.order(a.items[ordering.column_id.ix.?], b.items[ordering.column_id.ix.?])) {
+                            .eq => continue,
+                            .lt => return !ordering.desc,
+                            .gt => return ordering.desc,
+                        };
+                    return false;
+                }
+            }).lessThan);
+            return input;
+        },
     }
     //u.dump(.{ relation_expr, output });
     return output;
