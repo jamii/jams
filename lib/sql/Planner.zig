@@ -546,7 +546,7 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                                                         .node_id = expr.id,
                                                         .column_name = null,
                                                     },
-                                                    .scalar = try self.planScalar(expr, env_node_id),
+                                                    .scalar = try self.planScalar(expr, null),
                                                 } }),
                                             },
                                             .all = true,
