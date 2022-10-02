@@ -67,7 +67,7 @@ pub const RelationExpr = union(enum) {
     },
     project: struct {
         input: RelationExprId,
-        column_ids: []const ColumnId,
+        column_ids: []ColumnId,
     },
     unio: struct {
         inputs: [2]RelationExprId,
@@ -75,7 +75,7 @@ pub const RelationExpr = union(enum) {
     },
     get_table: struct {
         table_name: []const u8,
-        column_ids: []const ColumnId,
+        column_ids: []ColumnId,
     },
     distinct: RelationExprId,
     //order_by: struct {
@@ -109,12 +109,12 @@ pub const ScalarExpr = union(enum) {
     },
 };
 
-// The ixes here are initially null and get set by arrange.
 pub const ColumnId = struct {
     node_id: usize,
     // This should only be set if node_id is a relation expr.
     column_name: ?[]const u8,
-    ix: ?usize,
+    // This is initially null and is set by arrangeRelation/Scalar.
+    ix: ?usize = null,
 };
 
 pub const UnaryOp = enum {
@@ -187,12 +187,17 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
         N.statement_or_query => switch (node) {
-            .select => |select| return .{ .select = try self.planRelation(select) },
+            .select => |select| return self.planStatement(select),
             .create => |create| return self.planStatement(create),
             .insert => |insert| return self.planStatement(insert),
             .drop => |drop| return self.planStatement(drop),
             .reindex => return .{ .noop = {} },
             else => return error.NoPlan,
+        },
+        N.select => {
+            const plan = try self.planRelation(node_id);
+            _ = try self.arrangeRelation(plan);
+            return .{ .select = plan };
         },
         N.create => switch (node) {
             .create_table => |create_table| return self.planStatement(create_table),
@@ -259,12 +264,11 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                 for (column_ids) |*column_id, column_ix| {
                     const column_name = column_names_expr.elements[column_ix].getSource(p);
                     column_id.* = column_id: {
-                        for (table_def.columns) |column_def, column_def_ix| {
+                        for (table_def.columns) |column_def| {
                             if (u.deepEqual(column_name, column_def.name))
                                 break :column_id .{
                                     .node_id = node.select_or_values.id,
                                     .column_name = column_name,
-                                    .ix = column_def_ix,
                                 };
                         }
                         return error.NoPlan;
@@ -275,6 +279,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                     } });
                 }
             }
+            _ = try self.arrangeRelation(query);
             return .{ .insert = .{ .table_name = table_name, .query = query } };
         },
         N.drop => switch (node) {
@@ -388,14 +393,13 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         },
         N.row => {
             var plan = try self.pushRelation(.{ .some = {} });
-            for (node.exprs.get(p).expr.get(p).elements) |expr, expr_ix| {
+            for (node.exprs.get(p).expr.get(p).elements) |expr| {
                 const right = try self.planScalar(expr, null);
                 plan = try self.pushRelation(.{ .map = .{
                     .input = plan,
                     .column_id = .{
                         .node_id = expr.id,
                         .column_name = null,
-                        .ix = expr_ix,
                     },
                     .scalar = right,
                 } });
@@ -430,7 +434,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                         const column_id = ColumnId{
                             .node_id = result_expr.id,
                             .column_name = null,
-                            .ix = num_input_columns,
                         };
                         plan = try self.pushRelation(.{ .map = .{
                             .input = plan,
@@ -545,7 +548,6 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                                                     .column_id = .{
                                                         .node_id = expr.id,
                                                         .column_name = null,
-                                                        .ix = 1,
                                                     },
                                                     .scalar = try self.planScalar(expr, env_node_id),
                                                 } }),
@@ -736,7 +738,7 @@ fn Resolve(comptime ref: type) type {
     return switch (ref) {
         ColumnCount => usize,
         ColumnRef => ColumnId,
-        ColumnRefStar => []const ColumnId,
+        ColumnRefStar => []ColumnId,
         else => unreachable,
     };
 }
@@ -782,12 +784,11 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                         env_node.table_name.getSource(p);
                     if (ref.table_name != null and !u.deepEqual(ref.table_name.?, table_name))
                         return error.AbortPlan;
-                    for (table_def.columns) |column_def, i|
+                    for (table_def.columns) |column_def|
                         if (u.deepEqual(ref.column_name, column_def.name))
                             try column_ids.append(.{
                                 .node_id = env_node_id.id,
                                 .column_name = ref.column_name,
-                                .ix = i + offset,
                             });
                     switch (column_ids.items.len) {
                         1 => return column_ids.items[0],
@@ -800,7 +801,6 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                         column_id.* = .{
                             .node_id = env_node_id.id,
                             .column_name = table_def.columns[i].name,
-                            .ix = i + offset,
                         };
                     return column_ids;
                 },
@@ -809,4 +809,76 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
         },
         else => @compileError("resolveNotNull not implemented for " ++ @typeName(@TypeOf(env_node))),
     }
+}
+
+fn arrangeRelation(self: *Self, relation_expr_id: RelationExprId) error{OutOfMemory}![]ColumnId {
+    const relation_expr = &self.relation_exprs.items[relation_expr_id];
+    switch (relation_expr.*) {
+        .none, .some => return &.{},
+        .map => |*map| {
+            const input = try self.arrangeRelation(map.input);
+            try self.arrangeScalar(map.scalar, input);
+            map.column_id.ix = input.len;
+            var column_ids = try u.ArrayList(ColumnId).initCapacity(self.allocator, input.len + 1);
+            column_ids.appendSliceAssumeCapacity(input);
+            column_ids.appendAssumeCapacity(map.column_id);
+            return column_ids.toOwnedSlice();
+        },
+        .filter => |filter| {
+            const input = try self.arrangeRelation(filter.input);
+            try self.arrangeScalar(filter.cond, input);
+            return input;
+        },
+        .project => |project| {
+            const input = try self.arrangeRelation(project.input);
+            for (project.column_ids) |*column_id|
+                arrangeColumnId(column_id, input);
+            return project.column_ids;
+        },
+        .unio => |unio| {
+            const left = try self.arrangeRelation(unio.inputs[0]);
+            const right = try self.arrangeRelation(unio.inputs[1]);
+            var column_ids = try u.ArrayList(ColumnId).initCapacity(self.allocator, left.len + right.len);
+            column_ids.appendSliceAssumeCapacity(left);
+            column_ids.appendSliceAssumeCapacity(right);
+            return column_ids.toOwnedSlice();
+        },
+        .get_table => |get_table| {
+            return get_table.column_ids;
+        },
+        .distinct => |distinct_input| {
+            return try self.arrangeRelation(distinct_input);
+        },
+    }
+}
+
+fn arrangeScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const ColumnId) error{OutOfMemory}!void {
+    const scalar_expr = &self.scalar_exprs.items[scalar_expr_id];
+    switch (scalar_expr.*) {
+        .value => {},
+        .column => |*column_id| arrangeColumnId(column_id, input),
+        .unary => |unary| {
+            try self.arrangeScalar(unary.input, input);
+        },
+        .binary => |binary| {
+            try self.arrangeScalar(binary.inputs[0], input);
+            try self.arrangeScalar(binary.inputs[1], input);
+        },
+        .in => |in| {
+            try self.arrangeScalar(in.input, input);
+            _ = try self.arrangeRelation(in.subplan);
+        },
+    }
+}
+
+fn arrangeColumnId(column_id: *ColumnId, input: []const ColumnId) void {
+    column_id.ix = ix: {
+        for (input) |input_column_id, input_column_ix| {
+            if (column_id.node_id == input_column_id.node_id and
+                u.deepEqual(column_id.column_name, input_column_id.column_name))
+                break :ix input_column_ix;
+        }
+        u.dump(.{ column_id, input });
+        u.panic("Couldn't arrange column", .{});
+    };
 }
