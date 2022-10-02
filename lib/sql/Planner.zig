@@ -101,7 +101,6 @@ pub const ScalarExpr = union(enum) {
         op: BinaryOp,
     },
     in: struct {
-        not: bool,
         input: ScalarExprId,
         subplan: RelationExprId,
         // We can't plan correlated subqueries, and non-correlated subqueries are always safe to cache
@@ -559,11 +558,15 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                             }
                         };
                         plan = try self.pushScalar(.{ .in = .{
-                            .not = expr_incomp_in.get(p).NOT.get(p) != null,
                             .input = plan,
                             .subplan = subplan,
                             .subplan_cache = null,
                         } });
+                        if (expr_incomp_in.get(p).NOT.get(p) != null)
+                            plan = try self.pushScalar(.{ .unary = .{
+                                .input = plan,
+                                .op = .bool_not,
+                            } });
                     },
                     .expr_incomp_between => |expr_incomp_between| {
                         // https://www.sqlite.org/lang_expr.html#between
