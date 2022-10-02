@@ -129,7 +129,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             for (input.items) |input_row| {
                 try self.useJuice();
                 const cond = try self.evalScalar(filter.cond, input_row);
-                if (try cond.toBool()) {
+                if (cond != .nul and try cond.toBool()) {
                     input.items[i] = input_row;
                     i += 1;
                 }
