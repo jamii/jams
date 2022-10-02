@@ -164,6 +164,8 @@ pub const Error = error{
     NoPlan,
     AbortPlan,
     InvalidLiteral,
+    NoResolve,
+    MultipleResolve,
     BadArrange,
 };
 
@@ -268,7 +270,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                     for (table_def.columns) |column_def| {
                         if (u.deepEqual(column_name, column_def.name))
                             break;
-                    } else return error.NoPlan;
+                    } else return error.NoResolve;
                     column_id.* = .{
                         .node_id = node.select_or_values.id,
                         .column_name = column_name,
@@ -314,7 +316,7 @@ pub fn planType(self: *Self, node_id: NodeId("typ")) !sql.Type {
     if (u.deepEqual(name, "VARCHAR") or
         u.deepEqual(name, "TEXT"))
         return .text;
-    return error.NoPlan;
+    return error.BadType;
 }
 
 pub fn pushRelation(self: *Self, relation: RelationExpr) Error!RelationExprId {
@@ -782,8 +784,9 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                                 .column_name = ref.column_name,
                             });
                     switch (column_ids.items.len) {
+                        0 => return error.NoResolve,
                         1 => return column_ids.items[0],
-                        else => return error.AbortPlan,
+                        else => return error.MultipleResolve,
                     }
                 },
                 ColumnRefStar => {
