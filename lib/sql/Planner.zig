@@ -589,6 +589,11 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                             },
                             .op = .bool_and,
                         } });
+                        if (expr_incomp_between.get(p).NOT.get(p) != null)
+                            plan = try self.pushScalar(.{ .unary = .{
+                                .input = plan,
+                                .op = .bool_not,
+                            } });
                     },
                 }
             }
@@ -790,6 +795,7 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                     }
                 },
                 ColumnRefStar => {
+                    // TODO check table name
                     const column_ids = try self.allocator.alloc(ColumnId, table_def.columns.len);
                     for (column_ids) |*column_id, i|
                         column_id.* = .{
