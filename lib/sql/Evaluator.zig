@@ -218,10 +218,8 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                 .bool_not => return Scalar.fromBool(!(try input.toBool())),
                 .bit_not => return error.NoEval,
                 .plus => {
-                    return switch (input) {
-                        .integer, .real => input,
-                        else => error.TypeError,
-                    };
+                    // In sqlite you can do `+ 'foo'` and get `'foo'`
+                    return input;
                 },
                 .minus => {
                     return switch (input) {
