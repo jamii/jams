@@ -72,13 +72,9 @@ pub fn real_main() !void {
                 } else if (std.mem.eql(u8, kind, "halt")) {
                     continue :file;
                 } else if (std.mem.eql(u8, kind, "skipif")) {
-                    const db = words.next().?;
-                    if (std.mem.eql(u8, db, "sqlite"))
-                        break :header;
+                    continue :header;
                 } else if (std.mem.eql(u8, kind, "onlyif")) {
-                    const db = words.next().?;
-                    if (!std.mem.eql(u8, db, "sqlite"))
-                        break :header;
+                    break :header;
                 } else if (std.mem.eql(u8, kind, "statement")) {
                     // Statements look like:
                     // statement ok/error
