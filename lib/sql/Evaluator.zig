@@ -116,6 +116,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
         .map => |map| {
             const input = try self.evalRelation(map.input);
             for (input.items) |*input_row| {
+                try self.useJuice();
                 const value = try self.evalScalar(map.scalar, input_row.*);
                 try input_row.append(value);
             }
@@ -125,6 +126,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             var input = try self.evalRelation(filter.input);
             var i: usize = 0;
             for (input.items) |input_row| {
+                try self.useJuice();
                 const cond = try self.evalScalar(filter.cond, input_row);
                 if (try cond.toBool()) {
                     input.items[i] = input_row;
@@ -137,6 +139,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
         .project => |project| {
             const input = try self.evalRelation(project.input);
             for (input.items) |*input_row| {
+                try self.useJuice();
                 var output_row = try Row.initCapacity(self.allocator, project.columns.len);
                 for (project.columns) |column|
                     output_row.appendAssumeCapacity(input_row.items[column]);
@@ -152,8 +155,14 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                 try output.appendSlice(right.items);
             } else {
                 var set = u.DeepHashSet(Row).init(self.allocator);
-                for (left.items) |row| try set.put(row, {});
-                for (right.items) |row| try set.put(row, {});
+                for (left.items) |row| {
+                    try self.useJuice();
+                    try set.put(row, {});
+                }
+                for (right.items) |row| {
+                    try self.useJuice();
+                    try set.put(row, {});
+                }
                 var iter = set.keyIterator();
                 while (iter.next()) |row| try output.append(row.*);
             }
@@ -162,6 +171,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             const table = self.database.tables.get(table_name) orelse
                 return error.AbortEval;
             for (table.items) |input_row| {
+                try self.useJuice();
                 var output_row = try Row.initCapacity(self.allocator, input_row.len);
                 output_row.appendSliceAssumeCapacity(input_row);
                 try output.append(output_row);
