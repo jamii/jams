@@ -75,6 +75,15 @@ pub const RelationExpr = union(enum) {
     },
     get_table: []const u8,
     distinct: RelationExprId,
+    //order_by: struct {
+    //    input: RelationExprId,
+    //    ordering: []const Ordering,
+    //},
+};
+
+pub const Ordering = struct {
+    column: usize,
+    desc: bool,
 };
 
 pub const ScalarExpr = union(enum) {
@@ -305,11 +314,46 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
         N.select => {
-            try self.noPlan(node.order_by);
             try self.noPlan(node.limit);
             const select_or_values = node.select_or_values.get(p);
             if (select_or_values.elements.len > 1) return error.NoPlan;
-            return self.planRelation(select_or_values.elements[0]);
+            const select_or_values0 = select_or_values.elements[0];
+            var plan = try self.planRelation(select_or_values0);
+            //if (node.order_by.get(p)) |order_by| {
+            //    var ordering = u.ArrayList(Ordering).init(self.allocator);
+            //    const init_num_columns = try self.resolveNotNull(select_or_values0, ColumnCount{}, 0);
+            //    var num_columns = init_num_columns;
+            //    for (order_by.get(p).ordering_terms.get(p).ordering_term.get(p).elements) |term_id| {
+            //        const term = term_id.get(p);
+            //        try self.noPlan(term.collate);
+            //        try self.noPlan(term.nulls_first_or_last);
+            //        const column = num_columns;
+            //        plan = try self.pushRelation(.{ .map = .{
+            //            .input = plan,
+            //            .scalar = try self.planScalar(term.expr, node.select_or_values),
+            //        } });
+            //        const desc = if (term.asc_or_desc.get(p)) |asc_or_desc|
+            //            asc_or_desc.get(p) == .DESC
+            //        else
+            //            false;
+            //        try ordering.append(.{
+            //            .column = column,
+            //            .desc = desc,
+            //        });
+            //    }
+            //    plan = try self.pushRelation(.{ .order_by = .{
+            //        .input = plan,
+            //        .ordering = ordering.toOwnedSlice(),
+            //    } });
+            //    const project_columns = try self.allocator.alloc(usize, init_num_columns);
+            //    for (project_columns) |*project_column, i|
+            //        project_column.* = i;
+            //    plan = try self.pushRelation(.{ .project = .{
+            //        .input = plan,
+            //        .columns = project_columns,
+            //    } });
+            //}
+            return plan;
         },
         N.select_or_values => switch (node) {
             .select_body => |select_body| return self.planRelation(select_body),
@@ -663,21 +707,29 @@ fn Resolve(comptime ref: type) type {
 fn resolve(self: *Self, env_node_id: anytype, ref: anytype) Error!Resolve(@TypeOf(ref)) {
     if (env_node_id == null)
         return error.AbortPlan;
-    return self.resolveInner(env_node_id.?, ref, 0);
+    return self.resolveNotNull(env_node_id.?, ref, 0);
 }
 
-fn resolveInner(self: *Self, env_node_id: anytype, ref: anytype, offset: usize) Error!Resolve(@TypeOf(ref)) {
+fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize) Error!Resolve(@TypeOf(ref)) {
     const p = self.parser;
     const env_node = env_node_id.get(p);
     switch (@TypeOf(env_node)) {
-        N.from => return self.resolveInner(env_node.joins, ref, offset),
+        N.select_or_values => switch (env_node) {
+            .select_body => |select_body| return self.resolveNotNull(select_body, ref, offset),
+            .values => return error.NoPlan,
+        },
+        N.select_body => {
+            // TODO
+            unreachable;
+        },
+        N.from => return self.resolveNotNull(env_node.joins, ref, offset),
         N.joins => {
             if (env_node.join_clause.get(p).elements.len > 0)
                 return error.NoPlan;
-            return self.resolveInner(env_node.table_or_subquery, ref, offset);
+            return self.resolveNotNull(env_node.table_or_subquery, ref, offset);
         },
         N.table_or_subquery => switch (env_node) {
-            .table_as => |table_as| return self.resolveInner(table_as, ref, offset),
+            .table_as => |table_as| return self.resolveNotNull(table_as, ref, offset),
             else => return error.NoPlan,
         },
         N.table_as => {
@@ -710,6 +762,6 @@ fn resolveInner(self: *Self, env_node_id: anytype, ref: anytype, offset: usize) 
                 else => unreachable,
             }
         },
-        else => @compileError("resolveInner not implemented for " ++ @typeName(@TypeOf(env_node))),
+        else => @compileError("resolveNotNull not implemented for " ++ @typeName(@TypeOf(env_node))),
     }
 }
