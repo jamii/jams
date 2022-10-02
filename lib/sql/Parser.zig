@@ -6,6 +6,7 @@ const types = sql.grammar.types;
 const Node = sql.grammar.Node;
 
 const Self = @This();
+arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 tokenizer: sql.Tokenizer,
 debug: bool,
@@ -44,11 +45,13 @@ pub fn NodeId(comptime rule_name_: []const u8) type {
 }
 
 pub fn init(
-    allocator: u.Allocator,
+    arena: *u.ArenaAllocator,
     tokenizer: sql.Tokenizer,
     debug: bool,
 ) Self {
+    const allocator = arena.allocator();
     return Self{
+        .arena = arena,
         .allocator = allocator,
         .tokenizer = tokenizer,
         .debug = debug,

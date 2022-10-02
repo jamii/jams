@@ -10,13 +10,16 @@ const std = @import("std");
 const u = util;
 
 pub const Database = struct {
+    arena: *u.ArenaAllocator,
     allocator: u.Allocator,
     table_defs: u.DeepHashMap(TableName, TableDef),
     tables: u.DeepHashMap(TableName, Table),
     index_defs: u.DeepHashMap(IndexName, IndexDef),
 
-    pub fn init(allocator: u.Allocator) !Database {
+    pub fn init(arena: *u.ArenaAllocator) !Database {
+        const allocator = arena.allocator();
         return Database{
+            .arena = arena,
             .allocator = allocator,
             .table_defs = u.DeepHashMap(TableName, TableDef).init(allocator),
             .tables = u.DeepHashMap(TableName, Table).init(allocator),
@@ -24,15 +27,15 @@ pub const Database = struct {
         };
     }
 
-    pub fn run(self: *Database, allocator: u.Allocator, sql: []const u8) !Evaluator.Relation {
-        const sql_z = try allocator.dupeZ(u8, sql);
-        var tokenizer = Tokenizer.init(allocator, sql_z);
+    pub fn run(self: *Database, arena: *u.ArenaAllocator, sql: []const u8) !Evaluator.Relation {
+        const sql_z = try arena.allocator().dupeZ(u8, sql);
+        var tokenizer = Tokenizer.init(arena, sql_z);
         try tokenizer.tokenize();
-        var parser = Parser.init(allocator, tokenizer, false);
+        var parser = Parser.init(arena, tokenizer, false);
         const root_id = try parser.parse("root") orelse return error.ParseError;
         //const root_id = (try parser.parse("root")) orelse {
         //    u.dump("Failure!");
-        //    parser = Parser.init(allocator, tokenizer, true);
+        //    parser = Parser.init(arena, tokenizer, true);
         //    _ = try parser.parse("root");
         //    u.dump(tokenizer.tokens.items);
         //    //u.dump(parser.failures.items);
@@ -48,9 +51,9 @@ pub const Database = struct {
         //};
         //try countRuleUsage(parser, root_id);
         //u.dump(parser);
-        var planner = Planner.init(allocator, parser, self.*);
+        var planner = Planner.init(arena, parser, self.*);
         const statement = try planner.planStatement(root_id.get(parser).statement_or_query);
-        var evaluator = Evaluator.init(allocator, planner, self, 1000000);
+        var evaluator = Evaluator.init(arena, planner, self, 1000000);
         const relation = evaluator.evalStatement(statement);
         return relation;
     }

@@ -3,6 +3,7 @@ const sql = @import("../sql.zig");
 const u = sql.util;
 
 const Self = @This();
+arena: *u.ArenaAllocator,
 allocator: u.Allocator,
 planner: sql.Planner,
 database: *sql.Database,
@@ -17,12 +18,14 @@ pub const Error = error{
 };
 
 pub fn init(
-    allocator: u.Allocator,
+    arena: *u.ArenaAllocator,
     planner: sql.Planner,
     database: *sql.Database,
     juice: usize,
 ) Self {
+    const allocator = arena.allocator();
     return Self{
+        .arena = arena,
         .allocator = allocator,
         .planner = planner,
         .database = database,
