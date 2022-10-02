@@ -15,6 +15,7 @@ pub const Error = error{
     TypeError,
     NoEval,
     AbortEval,
+    BadColumn,
 };
 
 pub fn init(
@@ -199,7 +200,12 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
     const scalar_expr = &self.planner.scalar_exprs.items[scalar_expr_id];
     switch (scalar_expr.*) {
         .value => |value| return value,
-        .column => |column| return env.items[column],
+        .column => |column| {
+            return if (column >= env.items.len)
+                error.BadColumn
+            else
+                env.items[column];
+        },
         .unary => |unary| {
             const input = try self.evalScalar(unary.input, env);
             switch (unary.op) {
