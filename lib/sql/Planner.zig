@@ -15,7 +15,6 @@ scalar_exprs: u.ArrayList(ScalarExpr),
 
 pub const RelationExprId = usize;
 pub const ScalarExprId = usize;
-pub const ColumnId = usize;
 
 pub const StatementExpr = union(enum) {
     create_table: CreateTable,
@@ -59,6 +58,7 @@ pub const RelationExpr = union(enum) {
     some,
     map: struct {
         input: RelationExprId,
+        column_id: ColumnId,
         scalar: ScalarExprId,
     },
     filter: struct {
@@ -67,13 +67,16 @@ pub const RelationExpr = union(enum) {
     },
     project: struct {
         input: RelationExprId,
-        columns: []const usize,
+        column_ids: []const ColumnId,
     },
     unio: struct {
         inputs: [2]RelationExprId,
         all: bool,
     },
-    get_table: []const u8,
+    get_table: struct {
+        table_name: []const u8,
+        column_ids: []const ColumnId,
+    },
     distinct: RelationExprId,
     //order_by: struct {
     //    input: RelationExprId,
@@ -82,13 +85,13 @@ pub const RelationExpr = union(enum) {
 };
 
 pub const Ordering = struct {
-    column: usize,
+    column: ColumnId,
     desc: bool,
 };
 
 pub const ScalarExpr = union(enum) {
     value: sql.Value,
-    column: usize,
+    column: ColumnId,
     unary: struct {
         input: ScalarExprId,
         op: UnaryOp,
@@ -104,6 +107,14 @@ pub const ScalarExpr = union(enum) {
         // We can't plan correlated subqueries, and non-correlated subqueries are always safe to cache
         subplan_cache: ?sql.Evaluator.Relation,
     },
+};
+
+// The ixes here are initially null and get set by arrange.
+pub const ColumnId = struct {
+    node_id: usize,
+    // This should only be set if node_id is a relation expr.
+    column_name: ?[]const u8,
+    ix: ?usize,
 };
 
 pub const UnaryOp = enum {
@@ -244,19 +255,23 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             var query = try self.planRelation(node.select_or_values);
             if (node.column_names.get(p)) |column_names_expr_id| {
                 const column_names_expr = column_names_expr_id.get(p).column_name.get(p);
-                const columns = try self.allocator.alloc(usize, column_names_expr.elements.len);
-                for (columns) |*column, column_ix| {
+                const column_ids = try self.allocator.alloc(ColumnId, column_names_expr.elements.len);
+                for (column_ids) |*column_id, column_ix| {
                     const column_name = column_names_expr.elements[column_ix].getSource(p);
-                    column.* = column: {
+                    column_id.* = column_id: {
                         for (table_def.columns) |column_def, column_def_ix| {
                             if (u.deepEqual(column_name, column_def.name))
-                                break :column column_def_ix;
+                                break :column_id .{
+                                    .node_id = node.select_or_values.id,
+                                    .column_name = column_name,
+                                    .ix = column_def_ix,
+                                };
                         }
                         return error.NoPlan;
                     };
                     query = try self.pushRelation(.{ .project = .{
                         .input = query,
-                        .columns = columns,
+                        .column_ids = column_ids,
                     } });
                 }
             }
@@ -319,6 +334,7 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             if (select_or_values.elements.len > 1) return error.NoPlan;
             const select_or_values0 = select_or_values.elements[0];
             var plan = try self.planRelation(select_or_values0);
+            try self.noPlan(node.order_by);
             //if (node.order_by.get(p)) |order_by| {
             //    var ordering = u.ArrayList(Ordering).init(self.allocator);
             //    const init_num_columns = try self.resolveNotNull(select_or_values0, ColumnCount{}, 0);
@@ -372,10 +388,15 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         },
         N.row => {
             var plan = try self.pushRelation(.{ .some = {} });
-            for (node.exprs.get(p).expr.get(p).elements) |expr| {
+            for (node.exprs.get(p).expr.get(p).elements) |expr, expr_ix| {
                 const right = try self.planScalar(expr, null);
                 plan = try self.pushRelation(.{ .map = .{
                     .input = plan,
+                    .column_id = .{
+                        .node_id = expr.id,
+                        .column_name = null,
+                        .ix = expr_ix,
+                    },
                     .scalar = right,
                 } });
             }
@@ -394,7 +415,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 try self.resolve(from_maybe, ColumnCount{})
             else
                 0;
-            var project_columns = u.ArrayList(usize).init(self.allocator);
             if (node.where.get(p)) |where|
                 plan = try self.pushRelation(.{
                     .filter = .{
@@ -403,31 +423,38 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                         .cond = try self.planScalar(where.get(p).expr, from_maybe),
                     },
                 });
+            var project_column_ids = u.ArrayList(ColumnId).init(self.allocator);
             for (node.result_column.get(p).elements) |result_column|
                 switch (result_column.get(p)) {
                     .result_expr => |result_expr| {
+                        const column_id = ColumnId{
+                            .node_id = result_expr.id,
+                            .column_name = null,
+                            .ix = num_input_columns,
+                        };
                         plan = try self.pushRelation(.{ .map = .{
                             .input = plan,
+                            .column_id = column_id,
                             .scalar = try self.planScalar(result_expr, from_maybe),
                         } });
-                        try project_columns.append(num_input_columns);
+                        try project_column_ids.append(column_id);
                         num_input_columns += 1;
                     },
                     .star => {
-                        try project_columns.appendSlice(
+                        try project_column_ids.appendSlice(
                             try self.resolve(from_maybe, ColumnRefStar{ .table_name = null }),
                         );
                     },
                     .table_star => |table_star| {
                         const table_name = table_star.get(p).table_name.getSource(p);
-                        try project_columns.appendSlice(
+                        try project_column_ids.appendSlice(
                             try self.resolve(from_maybe, ColumnRefStar{ .table_name = table_name }),
                         );
                     },
                 };
             plan = try self.pushRelation(.{ .project = .{
                 .input = plan,
-                .columns = project_columns.toOwnedSlice(),
+                .column_ids = project_column_ids.toOwnedSlice(),
             } });
             if (node.distinct_or_all.get(p)) |distinct_or_all| {
                 if (distinct_or_all.get(p) == .DISTINCT)
@@ -445,7 +472,12 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
             .table_as => |table_as| return self.planRelation(table_as),
             else => return error.NoPlan,
         },
-        N.table_as => return self.pushRelation(.{ .get_table = node.table_name.getSource(p) }),
+        N.table_as => {
+            return self.pushRelation(.{ .get_table = .{
+                .table_name = node.table_name.getSource(p),
+                .column_ids = try self.resolveNotNull(node_id, ColumnRefStar{ .table_name = null }, 0),
+            } });
+        },
         else => @compileError("planRelation not implemented for " ++ @typeName(@TypeOf(node))),
     }
 }
@@ -510,6 +542,11 @@ pub fn planScalar(self: *Self, node_id: anytype, env_node_id: anytype) Error!Sca
                                                 subplan,
                                                 try self.pushRelation(.{ .map = .{
                                                     .input = try self.pushRelation(.{ .some = {} }),
+                                                    .column_id = .{
+                                                        .node_id = expr.id,
+                                                        .column_name = null,
+                                                        .ix = 1,
+                                                    },
                                                     .scalar = try self.planScalar(expr, env_node_id),
                                                 } }),
                                             },
@@ -698,8 +735,8 @@ const ColumnRefStar = struct {
 fn Resolve(comptime ref: type) type {
     return switch (ref) {
         ColumnCount => usize,
-        ColumnRef => usize,
-        ColumnRefStar => []const usize,
+        ColumnRef => ColumnId,
+        ColumnRefStar => []const ColumnId,
         else => unreachable,
     };
 }
@@ -738,7 +775,7 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
             switch (@TypeOf(ref)) {
                 ColumnCount => return table_def.columns.len,
                 ColumnRef => {
-                    var columns = u.ArrayList(usize).init(self.allocator);
+                    var column_ids = u.ArrayList(ColumnId).init(self.allocator);
                     const table_name = if (env_node.as_table.get(p)) |as_table|
                         as_table.get(p).table_name.getSource(p)
                     else
@@ -747,17 +784,25 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                         return error.AbortPlan;
                     for (table_def.columns) |column_def, i|
                         if (u.deepEqual(ref.column_name, column_def.name))
-                            try columns.append(i + offset);
-                    switch (columns.items.len) {
-                        1 => return columns.items[0],
+                            try column_ids.append(.{
+                                .node_id = env_node_id.id,
+                                .column_name = ref.column_name,
+                                .ix = i + offset,
+                            });
+                    switch (column_ids.items.len) {
+                        1 => return column_ids.items[0],
                         else => return error.AbortPlan,
                     }
                 },
                 ColumnRefStar => {
-                    const columns = try self.allocator.alloc(usize, table_def.columns.len);
-                    for (columns) |*column, i|
-                        column.* = i + offset;
-                    return columns;
+                    const column_ids = try self.allocator.alloc(ColumnId, table_def.columns.len);
+                    for (column_ids) |*column_id, i|
+                        column_id.* = .{
+                            .node_id = env_node_id.id,
+                            .column_name = table_def.columns[i].name,
+                            .ix = i + offset,
+                        };
+                    return column_ids;
                 },
                 else => unreachable,
             }

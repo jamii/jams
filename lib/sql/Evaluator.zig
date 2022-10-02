@@ -141,9 +141,9 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             const input = try self.evalRelation(project.input);
             for (input.items) |*input_row| {
                 try self.useJuice();
-                var output_row = try Row.initCapacity(self.allocator, project.columns.len);
-                for (project.columns) |column|
-                    output_row.appendAssumeCapacity(input_row.items[column]);
+                var output_row = try Row.initCapacity(self.allocator, project.column_ids.len);
+                for (project.column_ids) |column_id|
+                    output_row.appendAssumeCapacity(input_row.items[column_id.ix.?]);
                 input_row.* = output_row;
             }
             output = input;
@@ -169,8 +169,8 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             }
             output = left;
         },
-        .get_table => |table_name| {
-            const table = self.database.tables.get(table_name) orelse
+        .get_table => |get_table| {
+            const table = self.database.tables.get(get_table.table_name) orelse
                 return error.AbortEval;
             for (table.items) |input_row| {
                 try self.useJuice();
@@ -201,10 +201,10 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
     switch (scalar_expr.*) {
         .value => |value| return value,
         .column => |column| {
-            return if (column >= env.items.len)
+            return if (column.ix.? >= env.items.len)
                 error.BadColumn
             else
-                env.items[column];
+                env.items[column.ix.?];
         },
         .unary => |unary| {
             const input = try self.evalScalar(unary.input, env);
