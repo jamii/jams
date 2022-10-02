@@ -141,9 +141,9 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             const input = try self.evalRelation(project.input);
             for (input.items) |*input_row| {
                 try self.useJuice();
-                var output_row = try Row.initCapacity(self.allocator, project.column_ids.len);
-                for (project.column_ids) |column_id|
-                    output_row.appendAssumeCapacity(input_row.items[column_id.ix.?]);
+                var output_row = try Row.initCapacity(self.allocator, project.column_refs.len);
+                for (project.column_refs) |column_ref|
+                    output_row.appendAssumeCapacity(input_row.items[column_ref.ix]);
                 input_row.* = output_row;
             }
             output = input;
@@ -196,7 +196,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             std.sort.sort(Row, input.items, order_by.orderings, (struct {
                 fn lessThan(orderings: []sql.Planner.Ordering, a: Row, b: Row) bool {
                     for (orderings) |ordering|
-                        switch (Scalar.order(a.items[ordering.column_id.ix.?], b.items[ordering.column_id.ix.?])) {
+                        switch (Scalar.order(a.items[ordering.column_ref.ix], b.items[ordering.column_ref.ix])) {
                             .eq => continue,
                             .lt => return !ordering.desc,
                             .gt => return ordering.desc,
@@ -206,6 +206,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             }).lessThan);
             return input;
         },
+        .as => |as| return self.evalRelation(as.input),
     }
     //u.dump(.{ relation_expr, output });
     return output;
@@ -216,10 +217,10 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
     switch (scalar_expr.*) {
         .value => |value| return value,
         .column => |column| {
-            return if (column.ix.? >= env.items.len)
+            return if (column.ix >= env.items.len)
                 error.BadColumn
             else
-                env.items[column.ix.?];
+                env.items[column.ix];
         },
         .unary => |unary| {
             const input = try self.evalScalar(unary.input, env);
