@@ -474,7 +474,7 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         N.table_as => {
             return self.pushRelation(.{ .get_table = .{
                 .table_name = node.table_name.getSource(p),
-                .column_ids = try self.resolveNotNull(node_id, ColumnRefStar{ .table_name = null }, 0),
+                .column_ids = try self.resolveNotNull(node_id, ColumnRefStar{ .table_name = null }),
             } });
         },
         else => @compileError("planRelation not implemented for " ++ @typeName(@TypeOf(node))),
@@ -748,43 +748,43 @@ fn Resolve(comptime ref: type) type {
 fn resolve(self: *Self, env_node_id: anytype, ref: anytype) Error!Resolve(@TypeOf(ref)) {
     if (env_node_id == null)
         return error.AbortPlan;
-    return self.resolveNotNull(env_node_id.?, ref, 0);
+    return self.resolveNotNull(env_node_id.?, ref);
 }
 
-fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize) Error!Resolve(@TypeOf(ref)) {
+fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype) Error!Resolve(@TypeOf(ref)) {
     const p = self.parser;
     const env_node = env_node_id.get(p);
     switch (@TypeOf(env_node)) {
         N.select_or_values => switch (env_node) {
-            .select_body => |select_body| return self.resolveNotNull(select_body, ref, offset),
+            .select_body => |select_body| return self.resolveNotNull(select_body, ref),
             .values => return error.NoPlan,
         },
         N.select_body => {
             // TODO
             unreachable;
         },
-        N.from => return self.resolveNotNull(env_node.joins, ref, offset),
+        N.from => return self.resolveNotNull(env_node.joins, ref),
         N.joins => {
             if (env_node.join_clause.get(p).elements.len > 0)
                 return error.NoPlan;
-            return self.resolveNotNull(env_node.table_or_subquery, ref, offset);
+            return self.resolveNotNull(env_node.table_or_subquery, ref);
         },
         N.table_or_subquery => switch (env_node) {
-            .table_as => |table_as| return self.resolveNotNull(table_as, ref, offset),
+            .table_as => |table_as| return self.resolveNotNull(table_as, ref),
             else => return error.NoPlan,
         },
         N.table_as => {
             const table_def = self.database.table_defs.get(env_node.table_name.getSource(p)) orelse
                 return error.AbortPlan;
+            const env_table_name = if (env_node.as_table.get(p)) |as_table|
+                as_table.get(p).table_name.getSource(p)
+            else
+                env_node.table_name.getSource(p);
+            if (ref.table_name != null and !u.deepEqual(ref.table_name.?, env_table_name))
+                return error.NoResolve;
             switch (@TypeOf(ref)) {
                 ColumnRef => {
                     var column_ids = u.ArrayList(ColumnId).init(self.allocator);
-                    const table_name = if (env_node.as_table.get(p)) |as_table|
-                        as_table.get(p).table_name.getSource(p)
-                    else
-                        env_node.table_name.getSource(p);
-                    if (ref.table_name != null and !u.deepEqual(ref.table_name.?, table_name))
-                        return error.AbortPlan;
                     for (table_def.columns) |column_def|
                         if (u.deepEqual(ref.column_name, column_def.name))
                             try column_ids.append(.{
@@ -798,7 +798,6 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
                     }
                 },
                 ColumnRefStar => {
-                    // TODO check table name
                     const column_ids = try self.allocator.alloc(ColumnId, table_def.columns.len);
                     for (column_ids) |*column_id, i|
                         column_id.* = .{
