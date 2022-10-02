@@ -118,7 +118,12 @@ pub const Value = union(Type) {
     pub fn order(a: Value, b: Value) std.math.Order {
         // TODO sqlite has complex casting logic here https://www.sqlite.org/datatype3.html#comparisons
         // but other databases don't, so we may get away with strict comparisons
-        return u.deepOrder(a, b);
+        return if (a == .integer and b == .real)
+            u.deepOrder(@intToFloat(f64, a.integer), b.real)
+        else if (a == .real and b == .integer)
+            u.deepOrder(a.real, @intToFloat(f64, b.integer))
+        else
+            u.deepOrder(a, b);
     }
 
     pub fn isNumeric(self: Value) bool {
