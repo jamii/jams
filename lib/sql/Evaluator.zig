@@ -122,21 +122,27 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             output = input;
         },
         .filter => |filter| {
-            const input = try self.evalRelation(filter.input);
+            var input = try self.evalRelation(filter.input);
+            var i: usize = 0;
             for (input.items) |input_row| {
                 const cond = try self.evalScalar(filter.cond, input_row);
-                if (try cond.toBool())
-                    try output.append(input_row);
+                if (try cond.toBool()) {
+                    input.items[i] = input_row;
+                    i += 1;
+                }
             }
+            input.shrinkRetainingCapacity(i);
+            output = input;
         },
         .project => |project| {
             const input = try self.evalRelation(project.input);
-            for (input.items) |input_row| {
+            for (input.items) |*input_row| {
                 var output_row = try Row.initCapacity(self.allocator, project.columns.len);
                 for (project.columns) |column|
                     output_row.appendAssumeCapacity(input_row.items[column]);
-                try output.append(output_row);
+                input_row.* = output_row;
             }
+            output = input;
         },
         .unio => |unio| {
             const left = try self.evalRelation(unio.inputs[0]);
