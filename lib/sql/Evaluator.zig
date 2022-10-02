@@ -218,12 +218,17 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                 .bool_not => return Scalar.fromBool(!(try input.toBool())),
                 .bit_not => return error.NoEval,
                 .plus => {
-                    if (input != .integer) return error.TypeError;
-                    return input;
+                    return switch (input) {
+                        .integer, .real => input,
+                        else => error.TypeError,
+                    };
                 },
                 .minus => {
-                    if (input != .integer) return error.TypeError;
-                    return Scalar{ .integer = -input.integer };
+                    return switch (input) {
+                        .integer => |integer| Scalar{ .integer = -integer },
+                        .real => |real| Scalar{ .real = -real },
+                        else => error.TypeError,
+                    };
                 },
             }
         },
