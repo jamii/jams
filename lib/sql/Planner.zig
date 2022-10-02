@@ -164,6 +164,7 @@ pub const Error = error{
     NoPlan,
     AbortPlan,
     InvalidLiteral,
+    BadArrange,
 };
 
 pub fn init(
@@ -263,21 +264,20 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                 const column_ids = try self.allocator.alloc(ColumnId, column_names_expr.elements.len);
                 for (column_ids) |*column_id, column_ix| {
                     const column_name = column_names_expr.elements[column_ix].getSource(p);
-                    column_id.* = column_id: {
-                        for (table_def.columns) |column_def| {
-                            if (u.deepEqual(column_name, column_def.name))
-                                break :column_id .{
-                                    .node_id = node.select_or_values.id,
-                                    .column_name = column_name,
-                                };
-                        }
-                        return error.NoPlan;
+                    // Check that column exists in table
+                    for (table_def.columns) |column_def| {
+                        if (u.deepEqual(column_name, column_def.name))
+                            break;
+                    } else return error.NoPlan;
+                    column_id.* = .{
+                        .node_id = node.select_or_values.id,
+                        .column_name = column_name,
                     };
-                    query = try self.pushRelation(.{ .project = .{
-                        .input = query,
-                        .column_ids = column_ids,
-                    } });
                 }
+                query = try self.pushRelation(.{ .project = .{
+                    .input = query,
+                    .column_ids = column_ids,
+                } });
             }
             _ = try self.arrangeRelation(query);
             return .{ .insert = .{ .table_name = table_name, .query = query } };
@@ -415,10 +415,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 try self.planRelation(from)
             else
                 try self.pushRelation(.{ .some = {} });
-            var num_input_columns = if (from_maybe) |_|
-                try self.resolve(from_maybe, ColumnCount{})
-            else
-                0;
             if (node.where.get(p)) |where|
                 plan = try self.pushRelation(.{
                     .filter = .{
@@ -441,7 +437,6 @@ pub fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                             .scalar = try self.planScalar(result_expr, from_maybe),
                         } });
                         try project_column_ids.append(column_id);
-                        num_input_columns += 1;
                     },
                     .star => {
                         try project_column_ids.appendSlice(
@@ -723,8 +718,6 @@ fn noPlan(self: *Self, node_id: anytype) Error!void {
     if (node != null) return error.NoPlan;
 }
 
-const ColumnCount = struct {};
-
 const ColumnRef = struct {
     table_name: ?[]const u8,
     column_name: []const u8,
@@ -736,7 +729,6 @@ const ColumnRefStar = struct {
 
 fn Resolve(comptime ref: type) type {
     return switch (ref) {
-        ColumnCount => usize,
         ColumnRef => ColumnId,
         ColumnRefStar => []ColumnId,
         else => unreachable,
@@ -775,7 +767,6 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
             const table_def = self.database.table_defs.get(env_node.table_name.getSource(p)) orelse
                 return error.AbortPlan;
             switch (@TypeOf(ref)) {
-                ColumnCount => return table_def.columns.len,
                 ColumnRef => {
                     var column_ids = u.ArrayList(ColumnId).init(self.allocator);
                     const table_name = if (env_node.as_table.get(p)) |as_table|
@@ -811,7 +802,7 @@ fn resolveNotNull(self: *Self, env_node_id: anytype, ref: anytype, offset: usize
     }
 }
 
-fn arrangeRelation(self: *Self, relation_expr_id: RelationExprId) error{OutOfMemory}![]ColumnId {
+fn arrangeRelation(self: *Self, relation_expr_id: RelationExprId) Error![]ColumnId {
     const relation_expr = &self.relation_exprs.items[relation_expr_id];
     switch (relation_expr.*) {
         .none, .some => return &.{},
@@ -832,7 +823,7 @@ fn arrangeRelation(self: *Self, relation_expr_id: RelationExprId) error{OutOfMem
         .project => |project| {
             const input = try self.arrangeRelation(project.input);
             for (project.column_ids) |*column_id|
-                arrangeColumnId(column_id, input);
+                try arrangeColumnId(column_id, input);
             return project.column_ids;
         },
         .unio => |unio| {
@@ -852,11 +843,13 @@ fn arrangeRelation(self: *Self, relation_expr_id: RelationExprId) error{OutOfMem
     }
 }
 
-fn arrangeScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const ColumnId) error{OutOfMemory}!void {
+fn arrangeScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const ColumnId) Error!void {
     const scalar_expr = &self.scalar_exprs.items[scalar_expr_id];
     switch (scalar_expr.*) {
         .value => {},
-        .column => |*column_id| arrangeColumnId(column_id, input),
+        .column => |*column_id| {
+            try arrangeColumnId(column_id, input);
+        },
         .unary => |unary| {
             try self.arrangeScalar(unary.input, input);
         },
@@ -871,7 +864,7 @@ fn arrangeScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const Colum
     }
 }
 
-fn arrangeColumnId(column_id: *ColumnId, input: []const ColumnId) void {
+fn arrangeColumnId(column_id: *ColumnId, input: []const ColumnId) Error!void {
     column_id.ix = ix: {
         for (input) |input_column_id, input_column_ix| {
             if (column_id.node_id == input_column_id.node_id and
@@ -879,6 +872,6 @@ fn arrangeColumnId(column_id: *ColumnId, input: []const ColumnId) void {
                 break :ix input_column_ix;
         }
         u.dump(.{ column_id, input });
-        u.panic("Couldn't arrange column", .{});
+        return error.BadArrange;
     };
 }
