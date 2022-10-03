@@ -143,8 +143,14 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             for (input.items) |*input_row| {
                 try self.useJuice();
                 var output_row = try Row.initCapacity(self.allocator, project.column_refs.len);
-                for (project.column_refs) |column_ref|
-                    output_row.appendAssumeCapacity(input_row.items[column_ref.ix]);
+                for (project.column_refs) |column_ref| {
+                    const scalar = input_row.items[column_ref.ix];
+                    if (scalar == .column) {
+                        if (scalar.column.len > 0)
+                            // sqlite magic - just pick an arbitrary row
+                            output_row.appendAssumeCapacity(scalar.column[0]);
+                    } else output_row.appendAssumeCapacity(scalar);
+                }
                 input_row.* = output_row;
             }
             output = input;
@@ -223,7 +229,6 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             return output;
         },
     }
-    //u.dump(.{ relation_expr, output });
     return output;
 }
 

@@ -446,7 +446,7 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
             for (node.row.get(p).elements) |row| {
                 var row_plan = try self.pushRelation(.{ .some = {} });
                 for (row.get(p).exprs.get(p).expr.get(p).elements) |expr, expr_ix| {
-                    const scalar = try self.planScalar(expr);
+                    const scalar = try self.planScalar(expr, null);
                     row_plan = try self.pushRelation(.{ .map = .{
                         .input = row_plan,
                         .column_def = column_defs[expr_ix],
@@ -475,32 +475,43 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
                 try self.planRelation(from)
             else
                 try self.pushRelation(.{ .some = {} });
+            var aggregate_column_defs = u.ArrayList(ColumnDef).init(self.allocator);
+            var aggregate_scalar_ids = u.ArrayList(ScalarExprId).init(self.allocator);
             var project_column_refs = u.ArrayList(ColumnRef).init(self.allocator);
             var project_column_renames = u.ArrayList(?[]const u8).init(self.allocator);
             for (node.result_column.get(p).elements) |result_column|
                 switch (result_column.get(p)) {
                     .result_expr => |result_expr| {
-                        const scalar_id = try self.planScalar(result_expr);
-                        const scalar = self.scalar_exprs.items[scalar_id];
+                        const scalar_id = try self.planScalar(result_expr, &plan);
                         const column_rename = if (result_expr.get(p).as_column.get(p)) |as_column|
                             as_column.get(p).column_name.getSource(p)
                         else
                             null;
+                        try project_column_renames.append(column_rename);
+                        const scalar = self.scalar_exprs.items[scalar_id];
                         if (scalar == .column) {
                             try project_column_refs.append(scalar.column);
-                            try project_column_renames.append(column_rename);
                         } else {
                             const def_id = self.nextDefId();
-                            plan = try self.pushRelation(.{ .map = .{
-                                .input = plan,
-                                .column_def = .{
-                                    .id = def_id,
-                                    .column_name = null,
-                                },
-                                .scalar = scalar_id,
-                            } });
+                            const column_def = ColumnDef{
+                                .id = def_id,
+                                .column_name = null,
+                            };
+                            var any_aggregates = false;
+                            self.hasAnyAggregates(scalar_id, &any_aggregates);
+                            if (any_aggregates) {
+                                // Have to apply these later, after where/group_by/having
+                                // TODO inside of aggregate has to be applied now though
+                                try aggregate_column_defs.append(column_def);
+                                try aggregate_scalar_ids.append(scalar_id);
+                            } else {
+                                plan = try self.pushRelation(.{ .map = .{
+                                    .input = plan,
+                                    .column_def = column_def,
+                                    .scalar = scalar_id,
+                                } });
+                            }
                             try project_column_refs.append(.{ .def_id = def_id });
-                            try project_column_renames.append(column_rename);
                         }
                     },
                     .star => {
@@ -523,9 +534,23 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
                 plan = try self.pushRelation(.{
                     .filter = .{
                         .input = plan,
-                        .cond = try self.planScalar(where.get(p).expr),
+                        .cond = try self.planScalar(where.get(p).expr, null),
                     },
                 });
+            if (aggregate_column_defs.items.len > 0)
+                plan = try self.pushRelation(.{
+                    .group_by = .{
+                        .input = plan,
+                    },
+                });
+            for (aggregate_column_defs.items) |column_def, i| {
+                const scalar_id = aggregate_scalar_ids.items[i];
+                plan = try self.pushRelation(.{ .map = .{
+                    .input = plan,
+                    .column_def = column_def,
+                    .scalar = scalar_id,
+                } });
+            }
             if (order_by_maybe) |order_by|
                 plan = try self.planOrderBy(plan, project_column_refs.items, order_by);
             plan = try self.pushRelation(.{ .project = .{
@@ -551,7 +576,7 @@ fn planOrderBy(self: *Self, input: RelationExprId, input_column_refs: []const Co
         const term = term_id.get(p);
         try self.noPlan(term.collate);
         try self.noPlan(term.nulls_first_or_last);
-        const scalar_id = try self.planScalar(term.expr);
+        const scalar_id = try self.planScalar(term.expr, null);
         const scalar = self.scalar_exprs.items[scalar_id];
         const column_ref = column_ref: {
             if (scalar == .value and scalar.value == .integer) {
@@ -585,24 +610,24 @@ fn planOrderBy(self: *Self, input: RelationExprId, input_column_refs: []const Co
     } });
 }
 
-pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
+pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationExprId) Error!ScalarExprId {
     comptime {
         u.comptimeAssert(@hasDecl(@TypeOf(node_id), "is_node_id"), @TypeOf(node_id));
     }
     const p = self.parser;
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
-        N.result_expr => return self.planScalar(node.expr),
-        N.expr => return self.planScalar(node.expr_or),
+        N.result_expr => return self.planScalar(node.expr, aggregate_context),
+        N.expr => return self.planScalar(node.expr_or, aggregate_context),
         N.expr_or, N.expr_and, N.expr_comp, N.expr_add, N.expr_mult, N.expr_bit => {
-            var plan = try self.planScalar(node.left);
+            var plan = try self.planScalar(node.left, aggregate_context);
             for (node.right.get(p).elements) |right_expr_id| {
-                plan = try self.planScalarBinary(node, plan, right_expr_id);
+                plan = try self.planScalarBinary(node, plan, right_expr_id, aggregate_context);
             }
             return plan;
         },
         N.expr_not, N.expr_unary => {
-            var plan = try self.planScalar(node.expr);
+            var plan = try self.planScalar(node.expr, aggregate_context);
             for (node.op.get(p).elements) |op|
                 plan = try self.pushScalar(.{ .unary = .{ .input = plan, .op = switch (@TypeOf(node)) {
                     N.expr_not => .bool_not,
@@ -616,7 +641,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             return plan;
         },
         N.expr_incomp => {
-            var plan = try self.planScalar(node.left);
+            var plan = try self.planScalar(node.left, aggregate_context);
             for (node.right.get(p).elements) |right_expr| {
                 switch (right_expr.get(p)) {
                     .expr_incomp_postop => |expr_incomp_postop| {
@@ -633,7 +658,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                             } });
                         }
                     },
-                    .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop),
+                    .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop, aggregate_context),
                     .expr_incomp_in => |expr_incomp_in| {
                         const subplan = subplan: {
                             // TODO handle correlated variables
@@ -650,7 +675,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                                                         .id = self.nextDefId(),
                                                         .column_name = null,
                                                     },
-                                                    .scalar = try self.planScalar(expr),
+                                                    .scalar = try self.planScalar(expr, aggregate_context),
                                                 } }),
                                             },
                                             .all = true,
@@ -675,8 +700,8 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                     },
                     .expr_incomp_between => |expr_incomp_between| {
                         // https://www.sqlite.org/lang_expr.html#between
-                        const start = try self.planScalar(expr_incomp_between.get(p).start);
-                        const end = try self.planScalar(expr_incomp_between.get(p).end);
+                        const start = try self.planScalar(expr_incomp_between.get(p).start, aggregate_context);
+                        const end = try self.planScalar(expr_incomp_between.get(p).end, aggregate_context);
                         // TODO should avoid evaluating plan twice
                         plan = try self.pushScalar(.{ .binary = .{
                             .inputs = .{
@@ -708,14 +733,14 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             return plan;
         },
         N.expr_atom => switch (node) {
-            .subexpr => |subexpr| return self.planScalar(subexpr),
-            .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref),
-            .column_ref => |column_ref| return self.planScalar(column_ref),
-            .value => |value| return self.planScalar(value),
-            .function_call => |function_call| return self.planScalar(function_call),
+            .subexpr => |subexpr| return self.planScalar(subexpr, aggregate_context),
+            .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref, aggregate_context),
+            .column_ref => |column_ref| return self.planScalar(column_ref, aggregate_context),
+            .value => |value| return self.planScalar(value, aggregate_context),
+            .function_call => |function_call| return self.planScalar(function_call, aggregate_context),
             else => return error.NoPlanExprAtom,
         },
-        N.subexpr => return self.planScalar(node.expr),
+        N.subexpr => return self.planScalar(node.expr, aggregate_context),
         N.table_column_ref => {
             return self.pushScalar(.{ .column = .{ .ref = .{
                 .table_name = node.table_name.getSource(p),
@@ -775,22 +800,6 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             else
                 false;
 
-            var inputs = u.ArrayList(ScalarExprId).init(self.allocator);
-            if (node.function_args.get(p)) |arg_or_star|
-                switch (arg_or_star.get(p)) {
-                    .args => |args| {
-                        for (args.get(p).expr.get(p).elements) |arg|
-                            try inputs.append(try self.planScalar(arg));
-                    },
-                    .star => {
-                        if (!std.mem.eql(u8, function_name, "count"))
-                            return error.AbortPlan;
-                        if (distinct)
-                            return error.AbortPlan;
-                        try inputs.append(try self.pushScalar(.{ .value = .{ .integer = 0 } }));
-                    },
-                };
-
             const aggregate_op: ?AggregateOp =
                 if (std.mem.eql(u8, function_name, "count"))
                 .count
@@ -804,6 +813,52 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                 .avg
             else
                 null;
+
+            if (distinct and aggregate_op == null)
+                return error.AbortPlan;
+
+            var inputs = u.ArrayList(ScalarExprId).init(self.allocator);
+            if (node.function_args.get(p)) |arg_or_star|
+                switch (arg_or_star.get(p)) {
+                    .args => |args| {
+                        for (args.get(p).expr.get(p).elements) |arg|
+                            if (aggregate_op == null)
+                                try inputs.append(try self.planScalar(arg, aggregate_context))
+                            else {
+                                // We have to perform arg before group_by but aggregate_op after group_by.
+                                // So we'll sneak the arg away early.
+                                const def_id = self.nextDefId();
+                                aggregate_context.?.* = try self.pushRelation(.{ .map = .{
+                                    .input = aggregate_context.?.*,
+                                    .column_def = .{
+                                        .id = def_id,
+                                        .column_name = null,
+                                    },
+                                    .scalar = try self.planScalar(arg, null),
+                                } });
+                                try inputs.append(try self.pushScalar(.{ .column = .{ .def_id = def_id } }));
+                            };
+                    },
+                    .star => {
+                        if (aggregate_op != AggregateOp.count)
+                            return error.AbortPlan;
+                        if (distinct)
+                            return error.AbortPlan;
+                        // We need a column to count but we don't know which columns exist.
+                        // Let's make a fake one just in case.
+                        const def_id = self.nextDefId();
+                        aggregate_context.?.* = try self.pushRelation(.{ .map = .{
+                            .input = aggregate_context.?.*,
+                            .column_def = .{
+                                .id = def_id,
+                                .column_name = null,
+                            },
+                            .scalar = try self.pushScalar(.{ .value = .{ .integer = 42 } }),
+                        } });
+                        try inputs.append(try self.pushScalar(.{ .column = .{ .def_id = def_id } }));
+                    },
+                };
+
             if (aggregate_op) |op| {
                 if (inputs.items.len != 1)
                     return error.AbortPlan;
@@ -847,10 +902,10 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
     }
 }
 
-fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_id: anytype) Error!ScalarExprId {
+fn planScalarBinary(self: *Self, parent: anytype, left: ScalarExprId, right_expr_id: anytype, aggregate_context: ?*RelationExprId) Error!ScalarExprId {
     const p = self.parser;
     const right_expr = right_expr_id.get(p);
-    const right = try self.planScalar(right_expr.right);
+    const right = try self.planScalar(right_expr.right, aggregate_context);
     return try self.pushScalar(.{ .binary = .{
         .inputs = .{ left, right },
         .op = switch (@TypeOf(parent)) {
@@ -1188,4 +1243,28 @@ fn arrangeRefAgainst(self: *Self, column_ref: ColumnRef, input: []const ColumnDe
         if (column_ref.def_id == column_def.id)
             return ColumnRef{ .ix = ix };
     return error.BadArrange;
+}
+
+fn hasAnyAggregates(self: *Self, scalar_expr_id: ScalarExprId, out: *bool) void {
+    const scalar_expr = &self.scalar_exprs.items[scalar_expr_id];
+    switch (scalar_expr.*) {
+        .value, .column => {},
+        .unary => |unary| {
+            self.hasAnyAggregates(unary.input, out);
+        },
+        .binary => |binary| {
+            self.hasAnyAggregates(binary.inputs[0], out);
+            self.hasAnyAggregates(binary.inputs[1], out);
+        },
+        .aggregate => {
+            out.* = true;
+        },
+        .coalesce => |coalesce| {
+            for (coalesce.inputs) |coalesce_input|
+                self.hasAnyAggregates(coalesce_input, out);
+        },
+        .in => |in| {
+            self.hasAnyAggregates(in.input, out);
+        },
+    }
 }
