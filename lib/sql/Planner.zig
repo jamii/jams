@@ -610,7 +610,7 @@ fn planJoinClause(self: *Self, input: RelationExprId, join_clause: N.join_clause
         .left_join => return error.NoPlanLeft,
         .right_join => return error.NoPlanRight,
         .full_join => return error.NoPlanFull,
-        .cross_join => return error.NoPlanCross,
+        .cross_join => .inner,
     };
     if (join_clause.join_constraint.get(p) != null)
         return error.NoPlanConstraint;
