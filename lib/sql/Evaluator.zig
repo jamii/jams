@@ -207,6 +207,20 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             return input;
         },
         .as => |as| return self.evalRelation(as.input),
+        .group_by => |group_by| {
+            const input = try self.evalRelation(group_by.input);
+            const output_columns = try self.allocator.alloc(u.ArrayList(Scalar), group_by.num_columns.?);
+            for (output_columns) |*output_column|
+                output_column.* = u.ArrayList(Scalar).init(self.allocator);
+            for (input.items) |row|
+                for (row.items) |value, i|
+                    try output_columns[i].append(value);
+            var output_row = try Row.initCapacity(self.allocator, group_by.num_columns.?);
+            for (output_columns) |*output_column|
+                output_row.appendAssumeCapacity(.{ .column = output_column.toOwnedSlice() });
+            try output.append(output_row);
+            return output;
+        },
     }
     //u.dump(.{ relation_expr, output });
     return output;

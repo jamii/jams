@@ -116,6 +116,12 @@ pub const RelationExpr = union(enum) {
         input: RelationExprId,
         table_name: []const u8,
     },
+    group_by: struct {
+        input: RelationExprId,
+        // TODO handle keys
+        // Filled in later by arrangeAll
+        num_columns: ?usize = null,
+    },
 };
 
 pub const Ordering = struct {
@@ -874,6 +880,9 @@ fn resolveAllRelation(self: *Self, relation_expr_id: RelationExprId) Error!void 
         .as => |as| {
             try self.resolveAllRelation(as.input);
         },
+        .group_by => |group_by| {
+            try self.resolveAllRelation(group_by.input);
+        },
     }
 }
 
@@ -966,6 +975,10 @@ fn resolveRefMany(
                 try self.resolveRefMany(column_ref, as.input, out_column_refs, out_column_defs);
             }
         },
+        .group_by => |group_by| {
+            // We allow selecting grouped columns, because sqlite is bananas.
+            try self.resolveRefMany(column_ref, group_by.input, out_column_refs, out_column_defs);
+        },
     }
 }
 
@@ -1029,6 +1042,11 @@ fn arrangeAllRelation(self: *Self, relation_expr_id: RelationExprId) Error![]con
         },
         .as => |as| {
             return try self.arrangeAllRelation(as.input);
+        },
+        .group_by => |*group_by| {
+            const input = try self.arrangeAllRelation(group_by.input);
+            group_by.num_columns = input.len;
+            return input;
         },
     }
 }
