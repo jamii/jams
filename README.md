@@ -1,4 +1,4 @@
-Goal: Pass all 4259065 tests in [sqllogictest](https://www.sqlite.org/sqllogictest/doc/trunk/about.wiki). From scratch. No dependencies. No surrender.*
+Goal: Pass all 4259065 tests in [sqllogictest](https://www.sqlite.org/sqllogictest/doc/trunk/about.wiki). From scratch. No dependencies. No surrender.
 
 ## Day 1
 
@@ -365,14 +365,73 @@ The big ones I'm missing are:
 
 So tomorrow I'll probably just try and crank through features in that order and see where I end up.
 
-&nbsp;
+## Day 7
 
-&nbsp;
+I completely rewrote the way name resolution works to handle the addition of all the weird edge cases in select_body. I can now handle stuff like `select a, count(a+1) as count, a+2 as c from foo where c > 0 order by b, count`. (Think about what order those scalar expressions have to get executed in). I'll go into depth about that in the final writeup.
 
-&nbsp;
+Then I just cranked. I added way more detail to the error reports so I could priority sort missing features and then I typed a lot of code.
 
-&nbsp;
+```
+> git diff 3b25276a871f752a700e7a4942d51fd50ce63f5 --stat                                                nix-shell
+ README.md             |    7 +
+ lib/sql.zig           |   22 +-
+ lib/sql/Evaluator.zig |  286 +++++++++++++++++++---
+ lib/sql/Planner.zig   | 1097 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++----------------
+ lib/sql/grammar.txt   |    2 +-
+ lib/sql/grammar.zig   |   21 +-
+ test/slt.zig          |    9 +-
+ 7 files changed, 1188 insertions(+), 256 deletions(-)
+```
 
-&nbsp;
+Funnily enough, it looks like I've been averaging about 1000 lines per day:
 
-*May contain surrender.
+```
+> scc ./lib                                                                                              nix-shell
+-------------------------------------------------------------------------------
+Language                 Files     Lines   Blanks  Comments     Code Complexity
+-------------------------------------------------------------------------------
+Zig                          8      6476      185       106     6185        708
+Plain Text                   3       390       17         0      373          0
+-------------------------------------------------------------------------------
+Total                       11      6866      202       106     6558        708
+-------------------------------------------------------------------------------
+Estimated Cost to Develop (organic) $194,627
+Estimated Schedule Effort (organic) 7.384347 months
+Estimated People Required (organic) 2.341581
+-------------------------------------------------------------------------------
+Processed 268876 bytes, 0.269 megabytes (SI)
+-------------------------------------------------------------------------------
+```
+
+I implemented ORDER BY, GROUP BY (without grouped columns), functions, aggregates, CASE, CAST, correlated IN, INNER/CROSS JOIN and various edge cases in sqlite's implicit coercions and comparisons. 
+
+I got pretty damn close.
+
+```
+> zig build generate_grammar && time zig build test_slt -Drelease-safe=true -- $(rg --files deps/slt | sort -h)
+...
+total => 5939714
+HashMap(
+    error.NoPlanOther => 133170,
+    error.TestExpectedEqual => 16820,
+    error.NoPlanExprAtom => 2848,
+    error.OutOfJuice => 2162,
+    error.WrongNumberOfColumnsReturned => 1681,
+    error.NoPlanCompound => 1000,
+    error.NoPlanConstraint => 550,
+    error.NoPlanLeft => 191,
+    error.BadEvalAggregate => 59,
+    error.NoPlanStatement => 32,
+    error.ParseError => 2,
+    error.StatementShouldError => 2,
+)
+skips => 123015
+passes => 5658182 (= 95.26%)
+
+________________________________________________________
+Executed in   18.64 mins    fish           external
+   usr time  462.87 secs    0.00 micros  462.87 secs
+   sys time  658.11 secs  891.00 micros  658.11 secs
+```
+
+Man, if I hadn't spent more than half the week in that parsing rabbit hole I really think I might have made it to 100%. But this'll do.
