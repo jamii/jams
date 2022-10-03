@@ -229,7 +229,6 @@ pub const Node = union(enum) {
     function_name: @field(types, "function_name"),
     anon_213: @field(types, "anon_213"),
     anon_214: @field(types, "anon_214"),
-    anon_215: @field(types, "anon_215"),
     function_args: @field(types, "function_args"),
     value: @field(types, "value"),
     cast: @field(types, "cast"),
@@ -1181,14 +1180,12 @@ pub const rules = struct {
     pub const function_name = Rule{ .all_of = &[_]RuleRef{
         RuleRef{ .field_name = "name", .rule_name = "name" },
     } };
-    pub const anon_213 = Rule{ .optional = RuleRef{ .field_name = "DISTINCT", .rule_name = "DISTINCT" } };
-    pub const anon_214 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
-    pub const anon_215 = Rule{ .all_of = &[_]RuleRef{
-        RuleRef{ .field_name = "DISTINCT", .rule_name = "anon_213" },
-        RuleRef{ .field_name = "expr", .rule_name = "anon_214" },
+    pub const anon_213 = Rule{ .repeat = .{ .min_count = 1, .element = RuleRef{ .field_name = "expr", .rule_name = "expr" }, .separator = RuleRef{ .field_name = "comma", .rule_name = "comma" } } };
+    pub const anon_214 = Rule{ .all_of = &[_]RuleRef{
+        RuleRef{ .field_name = "expr", .rule_name = "anon_213" },
     } };
     pub const function_args = Rule{ .one_of = &[_]OneOf{
-        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_215" } },
+        .{ .choice = RuleRef{ .field_name = "args", .rule_name = "anon_214" } },
         .{ .choice = RuleRef{ .field_name = "star", .rule_name = "star" } },
     } };
     pub const value = Rule{ .one_of = &[_]OneOf{
@@ -2153,17 +2150,15 @@ pub const types = struct {
     pub const function_name = struct {
         name: sql.Parser.NodeId("name"),
     };
-    pub const anon_213 = ?sql.Parser.NodeId("DISTINCT");
-    pub const anon_214 = struct {
+    pub const anon_213 = struct {
         elements: []const sql.Parser.NodeId("expr"),
         separators: []const sql.Parser.NodeId("comma"),
     };
-    pub const anon_215 = struct {
-        DISTINCT: sql.Parser.NodeId("anon_213"),
-        expr: sql.Parser.NodeId("anon_214"),
+    pub const anon_214 = struct {
+        expr: sql.Parser.NodeId("anon_213"),
     };
     pub const function_args = union(enum) {
-        args: sql.Parser.NodeId("anon_215"),
+        args: sql.Parser.NodeId("anon_214"),
         star: sql.Parser.NodeId("star"),
     };
     pub const value = union(enum) {

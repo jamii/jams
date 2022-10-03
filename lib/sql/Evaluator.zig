@@ -425,6 +425,23 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                         return Scalar.NULL;
             return Scalar.fromBool(input_in_subplan);
         },
+        .case => |case| {
+            if (case.comp) |comp_id| {
+                const comp0 = try self.evalScalar(comp_id, env);
+                for (case.whens) |when| {
+                    const comp1 = try self.evalScalar(when[0], env);
+                    if (comp0 != .nul and comp1 != .nul and Scalar.order(comp0, comp1) == .eq)
+                        return self.evalScalar(when[1], env);
+                }
+            } else {
+                for (case.whens) |when| {
+                    const cond = try self.evalScalar(when[0], env);
+                    if (cond != .nul and try cond.toBool())
+                        return self.evalScalar(when[1], env);
+                }
+            }
+            return self.evalScalar(case.default, env);
+        },
     }
 }
 

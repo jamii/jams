@@ -273,7 +273,7 @@ fn formatValue(arena: *u.ArenaAllocator, typ: sql.Type, value: sql.Value) ![]con
             .nul, .blob, .column => unreachable, // tests only contain I T R
         },
         .real => |real| switch (typ) {
-            .integer => std.fmt.allocPrint(arena.allocator(), "{}", .{@floatToInt(i64, real)}),
+            .integer => std.fmt.allocPrint(arena.allocator(), "{d:.0}", .{real}),
             .text => error.UnexpectedFormatComboRealText,
             .real => std.fmt.allocPrint(arena.allocator(), "{d:.3}", .{real}),
             .nul, .blob, .column => unreachable, // tests only contain I T R

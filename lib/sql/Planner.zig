@@ -154,6 +154,11 @@ pub const ScalarExpr = union(enum) {
         // We can't plan correlated subqueries, and non-correlated subqueries are always safe to cache
         subplan_cache: ?sql.Evaluator.Relation,
     },
+    case: struct {
+        comp: ?ScalarExprId,
+        whens: []const [2]ScalarExprId,
+        default: ScalarExprId,
+    },
 };
 
 pub const UnaryOp = enum {
@@ -733,6 +738,7 @@ pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationEx
             return plan;
         },
         N.expr_atom => switch (node) {
+            .case => |case| return self.planScalar(case, aggregate_context),
             .subexpr => |subexpr| return self.planScalar(subexpr, aggregate_context),
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref, aggregate_context),
             .column_ref => |column_ref| return self.planScalar(column_ref, aggregate_context),
@@ -741,6 +747,29 @@ pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationEx
             else => return error.NoPlanExprAtom,
         },
         N.subexpr => return self.planScalar(node.expr, aggregate_context),
+        N.case => {
+            const comp =
+                if (node.expr.get(p)) |comp_expr|
+                try self.planScalar(comp_expr, aggregate_context)
+            else
+                null;
+            const default = if (node.case_else.get(p)) |case_else|
+                try self.planScalar(case_else.get(p).expr, aggregate_context)
+            else
+                try self.pushScalar(.{ .value = sql.Value.NULL });
+            const case_whens = node.case_when.get(p).elements;
+            const whens = try self.allocator.alloc([2]ScalarExprId, case_whens.len);
+            for (whens) |*when, i|
+                when.* = .{
+                    try self.planScalar(case_whens[i].get(p).when, aggregate_context),
+                    try self.planScalar(case_whens[i].get(p).then, aggregate_context),
+                };
+            return self.pushScalar(.{ .case = .{
+                .comp = comp,
+                .whens = whens,
+                .default = default,
+            } });
+        },
         N.table_column_ref => {
             return self.pushScalar(.{ .column = .{ .ref = .{
                 .table_name = node.table_name.getSource(p),
@@ -1058,6 +1087,15 @@ fn resolveAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: RelationEx
             try self.resolveAllScalar(in.input, input);
             try self.resolveAllRelation(in.subplan);
         },
+        .case => |case| {
+            if (case.comp) |comp|
+                try self.resolveAllScalar(comp, input);
+            for (case.whens) |when| {
+                try self.resolveAllScalar(when[0], input);
+                try self.resolveAllScalar(when[1], input);
+            }
+            try self.resolveAllScalar(case.default, input);
+        },
     }
 }
 
@@ -1231,6 +1269,15 @@ fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const Co
             try self.arrangeAllScalar(in.input, input);
             _ = try self.arrangeAllRelation(in.subplan);
         },
+        .case => |case| {
+            if (case.comp) |comp|
+                try self.arrangeAllScalar(comp, input);
+            for (case.whens) |when| {
+                try self.arrangeAllScalar(when[0], input);
+                try self.arrangeAllScalar(when[1], input);
+            }
+            try self.arrangeAllScalar(case.default, input);
+        },
     }
 }
 
@@ -1265,6 +1312,15 @@ fn hasAnyAggregates(self: *Self, scalar_expr_id: ScalarExprId, out: *bool) void 
         },
         .in => |in| {
             self.hasAnyAggregates(in.input, out);
+        },
+        .case => |case| {
+            if (case.comp) |comp|
+                self.hasAnyAggregates(comp, out);
+            for (case.whens) |when| {
+                self.hasAnyAggregates(when[0], out);
+                self.hasAnyAggregates(when[1], out);
+            }
+            self.hasAnyAggregates(case.default, out);
         },
     }
 }
