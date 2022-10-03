@@ -227,7 +227,24 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
             for (output_columns) |*output_column|
                 output_row.appendAssumeCapacity(.{ .column = output_column.toOwnedSlice() });
             try output.append(output_row);
-            return output;
+        },
+        .join => |join| {
+            const left = try self.evalRelation(join.inputs[0]);
+            const right = try self.evalRelation(join.inputs[1]);
+            switch (join.op) {
+                .inner => {
+                    for (left.items) |left_row| {
+                        try self.useJuice();
+                        for (right.items) |right_row| {
+                            try self.useJuice();
+                            var output_row = try Row.initCapacity(self.allocator, left_row.items.len + right_row.items.len);
+                            output_row.appendSliceAssumeCapacity(left_row.items);
+                            output_row.appendSliceAssumeCapacity(right_row.items);
+                            try output.append(output_row);
+                        }
+                    }
+                },
+            }
         },
     }
     return output;

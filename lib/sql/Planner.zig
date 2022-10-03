@@ -122,11 +122,19 @@ pub const RelationExpr = union(enum) {
         // Filled in later by arrangeAll
         num_columns: ?usize = null,
     },
+    join: struct {
+        inputs: [2]RelationExprId,
+        op: JoinOp,
+    },
 };
 
 pub const Ordering = struct {
     column_ref: ColumnRef,
     desc: bool,
+};
+
+pub const JoinOp = enum {
+    inner,
 };
 
 pub const ScalarExpr = union(enum) {
@@ -221,6 +229,12 @@ pub const Error = error{
     NoPlanJoin,
     NoPlanOther,
     NoPlanStatement,
+    NoPlanConstraint,
+    NoPlanCross,
+    NoPlanFull,
+    NoPlanLeft,
+    NoPlanNatural,
+    NoPlanRight,
     NoPlanSubquerySubjoins,
     NoPlanFunctionCall,
     AbortPlan,
@@ -405,9 +419,10 @@ fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         },
         N.from => return self.planRelation(node.joins),
         N.joins => {
-            if (node.join_clause.get(p).elements.len > 0)
-                return error.NoPlanJoin;
-            return self.planRelation(node.table_or_subquery);
+            var plan = try self.planRelation(node.table_or_subquery);
+            for (node.join_clause.get(p).elements) |join_clause|
+                plan = try self.planJoinClause(plan, join_clause.get(p));
+            return plan;
         },
         N.table_or_subquery => switch (node) {
             .table_as => |table_as| return self.planRelation(table_as),
@@ -573,6 +588,35 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
         },
         else => @compileError("planSelect not implemented for " ++ @typeName(@TypeOf(node))),
     }
+}
+
+fn planJoinClause(self: *Self, input: RelationExprId, join_clause: N.join_clause) Error!RelationExprId {
+    const p = self.parser;
+    const op: JoinOp = switch (join_clause.join_op.get(p)) {
+        .comma => .inner,
+        .join => |join| if (join.get(p).NATURAL.get(p) != null)
+            return error.NoPlanNatural
+        else
+            .inner,
+        .inner_join => |inner_join| if (inner_join.get(p).NATURAL.get(p) != null)
+            return error.NoPlanNatural
+        else
+            .inner,
+        .left_join => return error.NoPlanLeft,
+        .right_join => return error.NoPlanRight,
+        .full_join => return error.NoPlanFull,
+        .cross_join => return error.NoPlanCross,
+    };
+    if (join_clause.join_constraint.get(p) != null)
+        return error.NoPlanConstraint;
+    const right = try self.planRelation(join_clause.table_or_subquery);
+    return self.pushRelation(.{ .join = .{
+        .inputs = .{
+            input,
+            right,
+        },
+        .op = op,
+    } });
 }
 
 fn planOrderBy(self: *Self, input: RelationExprId, input_column_refs: []const ColumnRef, order_by: N.order_by) Error!RelationExprId {
@@ -1072,6 +1116,10 @@ fn resolveAllRelation(self: *Self, relation_expr_id: RelationExprId) Error!void 
         .group_by => |group_by| {
             try self.resolveAllRelation(group_by.input);
         },
+        .join => |join| {
+            try self.resolveAllRelation(join.inputs[0]);
+            try self.resolveAllRelation(join.inputs[1]);
+        },
     }
 }
 
@@ -1184,6 +1232,10 @@ fn resolveRefMany(
             // We allow selecting grouped columns, because sqlite is bananas.
             try self.resolveRefMany(column_ref, group_by.input, out_column_refs, out_column_defs);
         },
+        .join => |join| {
+            try self.resolveRefMany(column_ref, join.inputs[0], out_column_refs, out_column_defs);
+            try self.resolveRefMany(column_ref, join.inputs[1], out_column_refs, out_column_defs);
+        },
     }
 }
 
@@ -1229,7 +1281,7 @@ fn arrangeAllRelation(self: *Self, relation_expr_id: RelationExprId) Error![]con
             return project.column_defs.?;
         },
         .unio => |unio| {
-            const input = self.arrangeAllRelation(unio.inputs[0]);
+            const input = try self.arrangeAllRelation(unio.inputs[0]);
             _ = try self.arrangeAllRelation(unio.inputs[1]);
             return input;
         },
@@ -1252,6 +1304,11 @@ fn arrangeAllRelation(self: *Self, relation_expr_id: RelationExprId) Error![]con
             const input = try self.arrangeAllRelation(group_by.input);
             group_by.num_columns = input.len;
             return input;
+        },
+        .join => |join| {
+            const left = try self.arrangeAllRelation(join.inputs[0]);
+            const right = try self.arrangeAllRelation(join.inputs[1]);
+            return std.mem.concat(self.allocator, ColumnDef, &.{ left, right });
         },
     }
 }
