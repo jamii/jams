@@ -158,7 +158,7 @@ pub const ScalarExpr = union(enum) {
     },
     in: struct {
         input: ScalarExprId,
-        subplan: RelationExprId,
+        subplan: InSubplan,
         // We can't plan correlated subqueries, and non-correlated subqueries are always safe to cache
         subplan_cache: ?sql.Evaluator.Relation,
     },
@@ -167,6 +167,11 @@ pub const ScalarExpr = union(enum) {
         whens: []const [2]ScalarExprId,
         default: ScalarExprId,
     },
+};
+
+pub const InSubplan = union(enum) {
+    column: []const ScalarExprId,
+    subquery: RelationExprId,
 };
 
 pub const UnaryOp = union(enum) {
@@ -715,26 +720,13 @@ pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationEx
                             // TODO handle correlated variables
                             switch (expr_incomp_in.get(p).right.get(p)) {
                                 .exprs => |exprs| {
-                                    var subplan = try self.pushRelation(.{ .none = {} });
+                                    var scalar_expr_ids = u.ArrayList(ScalarExprId).init(self.allocator);
                                     for (exprs.get(p).expr.get(p).elements) |expr|
-                                        subplan = try self.pushRelation(.{ .unio = .{
-                                            .inputs = .{
-                                                subplan,
-                                                try self.pushRelation(.{ .map = .{
-                                                    .input = try self.pushRelation(.{ .some = {} }),
-                                                    .column_def = .{
-                                                        .id = self.nextDefId(),
-                                                        .column_name = null,
-                                                    },
-                                                    .scalar = try self.planScalar(expr, aggregate_context),
-                                                } }),
-                                            },
-                                            .all = true,
-                                        } });
-                                    break :subplan subplan;
+                                        try scalar_expr_ids.append(try self.planScalar(expr, aggregate_context));
+                                    break :subplan InSubplan{ .column = scalar_expr_ids.toOwnedSlice() };
                                 },
                                 .select => |select| {
-                                    break :subplan try self.planRelation(select);
+                                    break :subplan InSubplan{ .subquery = try self.planRelation(select) };
                                 },
                             }
                         };
@@ -1146,7 +1138,11 @@ fn resolveAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: RelationEx
         },
         .in => |in| {
             try self.resolveAllScalar(in.input, input);
-            try self.resolveAllRelation(in.subplan);
+            switch (in.subplan) {
+                .column => |column| for (column) |column_expr_id|
+                    try self.resolveAllScalar(column_expr_id, input),
+                .subquery => |subquery| try self.resolveAllRelation(subquery),
+            }
         },
         .case => |case| {
             if (case.comp) |comp|
@@ -1337,7 +1333,11 @@ fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const Co
         },
         .in => |in| {
             try self.arrangeAllScalar(in.input, input);
-            _ = try self.arrangeAllRelation(in.subplan);
+            switch (in.subplan) {
+                .column => |column| for (column) |column_expr_id|
+                    try self.arrangeAllScalar(column_expr_id, input),
+                .subquery => |subquery| _ = try self.arrangeAllRelation(subquery),
+            }
         },
         .case => |case| {
             if (case.comp) |comp|

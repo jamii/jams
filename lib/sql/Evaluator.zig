@@ -456,21 +456,42 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
         },
         .in => |*in| {
             const input = try self.evalScalar(in.input, env);
-            const subplan = in.subplan_cache orelse try self.evalRelation(in.subplan);
-            in.subplan_cache = subplan;
             var input_in_subplan = false;
+            var null_in_subplan = false;
+            switch (in.subplan) {
+                .column => |column| {
+                    if (input == .nul)
+                        return if (column.len == 0) Scalar.FALSE else Scalar.NULL;
 
-            if (input == .nul)
-                return if (subplan.items.len == 0) Scalar.FALSE else Scalar.NULL;
-            for (subplan.items) |row| {
-                if (u.deepEqual(input, row.items[0]))
-                    input_in_subplan = true;
+                    for (column) |column_expr_id| {
+                        const value = try self.evalScalar(column_expr_id, env);
+                        if (value == .nul)
+                            null_in_subplan = true
+                        else if (u.deepEqual(input, value))
+                            input_in_subplan = true;
+                    }
+                },
+                .subquery => |subquery| {
+                    const subplan = in.subplan_cache orelse try self.evalRelation(subquery);
+                    in.subplan_cache = subplan;
+
+                    if (input == .nul)
+                        return if (subplan.items.len == 0) Scalar.FALSE else Scalar.NULL;
+
+                    for (subplan.items) |row| {
+                        if (row.items[0] == .nul)
+                            null_in_subplan = true
+                        else if (u.deepEqual(input, row.items[0]))
+                            input_in_subplan = true;
+                    }
+                },
             }
-            if (!input_in_subplan)
-                for (subplan.items) |row|
-                    if (row.items[0] == .nul)
-                        return Scalar.NULL;
-            return Scalar.fromBool(input_in_subplan);
+            return if (input_in_subplan)
+                Scalar.TRUE
+            else if (null_in_subplan)
+                Scalar.NULL
+            else
+                Scalar.FALSE;
         },
         .case => |case| {
             if (case.comp) |comp_id| {
