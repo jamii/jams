@@ -1000,12 +1000,13 @@ pub fn planType(self: *Self, node_id: NodeId("typ")) !sql.Type {
     // TODO fix case comparison
     if (u.deepEqual(name, "INTEGER"))
         return .integer;
-    if (u.deepEqual(name, "FLOAT"))
+    if (u.deepEqual(name, "FLOAT") or
+        u.deepEqual(name, "REAL"))
         return .real;
     if (u.deepEqual(name, "VARCHAR") or
         u.deepEqual(name, "TEXT"))
         return .text;
-    u.dump(name);
+    u.dump(.{ .bad_type = name });
     return error.BadType;
 }
 
