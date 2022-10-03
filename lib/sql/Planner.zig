@@ -161,7 +161,7 @@ pub const ScalarExpr = union(enum) {
     },
 };
 
-pub const UnaryOp = enum {
+pub const UnaryOp = union(enum) {
     is_null,
     is_not_null,
     bool_not,
@@ -169,6 +169,7 @@ pub const UnaryOp = enum {
     plus,
     minus,
     abs,
+    cast: sql.Type,
 };
 
 pub const BinaryOp = enum {
@@ -227,6 +228,7 @@ pub const Error = error{
     NoResolve,
     MultipleResolve,
     BadArrange,
+    BadType,
 };
 
 pub fn init(
@@ -264,7 +266,7 @@ fn pushScalar(self: *Self, scalar: ScalarExpr) Error!ScalarExprId {
     return id;
 }
 
-pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
+pub fn planStatement(self: *Self, node_id: anytype) Error!StatementExpr {
     const p = self.parser;
     const node = node_id.get(p);
     switch (@TypeOf(node)) {
@@ -739,6 +741,7 @@ pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationEx
         },
         N.expr_atom => switch (node) {
             .case => |case| return self.planScalar(case, aggregate_context),
+            .cast => |cast| return self.planScalar(cast, aggregate_context),
             .subexpr => |subexpr| return self.planScalar(subexpr, aggregate_context),
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref, aggregate_context),
             .column_ref => |column_ref| return self.planScalar(column_ref, aggregate_context),
@@ -768,6 +771,14 @@ pub fn planScalar(self: *Self, node_id: anytype, aggregate_context: ?*RelationEx
                 .comp = comp,
                 .whens = whens,
                 .default = default,
+            } });
+        },
+        N.cast => {
+            const input = try self.planScalar(node.expr, aggregate_context);
+            const typ = try self.planType(node.typ);
+            return self.pushScalar(.{ .unary = .{
+                .input = input,
+                .op = .{ .cast = typ },
             } });
         },
         N.table_column_ref => {
@@ -994,6 +1005,7 @@ pub fn planType(self: *Self, node_id: NodeId("typ")) !sql.Type {
     if (u.deepEqual(name, "VARCHAR") or
         u.deepEqual(name, "TEXT"))
         return .text;
+    u.dump(name);
     return error.BadType;
 }
 

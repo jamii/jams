@@ -17,6 +17,7 @@ pub const Error = error{
     AbortEval,
     BadEvalColumn,
     BadEvalAggregate,
+    BadEvalCast,
 };
 
 pub fn init(
@@ -273,6 +274,32 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                         },
                         .real => |real| Scalar{ .real = @fabs(real) },
                         else => error.TypeError,
+                    };
+                },
+                .cast => |typ| {
+                    return switch (input) {
+                        .integer => switch (typ) {
+                            .integer => input,
+                            .real => input.promoteToReal(),
+                            .text => .{ .text = try std.fmt.allocPrint(self.allocator, "{}", .{input.integer}) },
+                            else => error.BadEvalCast,
+                        },
+                        .real => switch (typ) {
+                            .integer => .{ .integer = @floatToInt(i64, @trunc(input.real)) },
+                            .real => input,
+                            .text => .{ .text = if (input.real == @trunc(input.real))
+                                try std.fmt.allocPrint(self.allocator, "{d:.1}", .{input.real})
+                            else
+                                try std.fmt.allocPrint(self.allocator, "{d}", .{input.real}) },
+                            else => error.BadEvalCast,
+                        },
+                        .text => switch (typ) {
+                            .integer => if (std.fmt.parseFloat(f64, input.text)) |real| .{ .integer = @floatToInt(i64, @trunc(real)) } else |_| .{ .integer = 0 },
+                            .real => if (std.fmt.parseFloat(f64, input.text)) |real| .{ .real = real } else |_| .{ .real = 0 },
+                            .text => input,
+                            else => error.BadEvalCast,
+                        },
+                        else => error.BadEvalCast,
                     };
                 },
             }
