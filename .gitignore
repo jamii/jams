@@ -9,3 +9,4 @@ zig-out
 imgui.ini
 .gdb_history
 test.test
+lib/sql/grammar.zig
