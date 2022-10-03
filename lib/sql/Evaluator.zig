@@ -285,7 +285,7 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                             else => error.BadEvalCast,
                         },
                         .real => switch (typ) {
-                            .integer => .{ .integer = @floatToInt(i64, @trunc(input.real)) },
+                            .integer => .{ .integer = realToInteger(input.real) },
                             .real => input,
                             .text => .{ .text = if (input.real == @trunc(input.real))
                                 try std.fmt.allocPrint(self.allocator, "{d:.1}", .{input.real})
@@ -294,7 +294,7 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                             else => error.BadEvalCast,
                         },
                         .text => switch (typ) {
-                            .integer => if (std.fmt.parseFloat(f64, input.text)) |real| .{ .integer = @floatToInt(i64, @trunc(real)) } else |_| .{ .integer = 0 },
+                            .integer => if (std.fmt.parseFloat(f64, input.text)) |real| .{ .integer = realToInteger(real) } else |_| .{ .integer = 0 },
                             .real => if (std.fmt.parseFloat(f64, input.text)) |real| .{ .real = real } else |_| .{ .real = 0 },
                             .text => input,
                             else => error.BadEvalCast,
@@ -475,4 +475,14 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
 fn useJuice(self: *Self) !void {
     if (self.juice == 0) return error.OutOfJuice;
     self.juice -= 1;
+}
+
+fn realToInteger(real: f64) i64 {
+    const integer = @trunc(real);
+    return if (integer > @intToFloat(f64, std.math.maxInt(i64)))
+        std.math.maxInt(i64)
+    else if (integer < @intToFloat(f64, std.math.minInt(i64)))
+        std.math.minInt(i64)
+    else
+        @floatToInt(i64, integer);
 }
