@@ -595,6 +595,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                     .expr_incomp_binop => |binop| plan = try self.planScalarBinary(node, plan, binop),
                     .expr_incomp_in => |expr_incomp_in| {
                         const subplan = subplan: {
+                            // TODO handle correlated variables
                             switch (expr_incomp_in.get(p).right.get(p)) {
                                 .exprs => |exprs| {
                                     var subplan = try self.pushRelation(.{ .none = {} });
@@ -615,9 +616,9 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                                         } });
                                     break :subplan subplan;
                                 },
-                                .select => |select|
-                                // TODO handle correlated variables
-                                break :subplan try self.planRelation(select),
+                                .select => |select| {
+                                    break :subplan try self.planRelation(select);
+                                },
                             }
                         };
                         plan = try self.pushScalar(.{ .in = .{
