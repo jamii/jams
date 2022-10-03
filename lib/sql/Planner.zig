@@ -186,7 +186,12 @@ pub const BinaryOp = enum {
 
 pub const Error = error{
     OutOfMemory,
-    NoPlan,
+    NoPlanCompound,
+    NoPlanExprAtom,
+    NoPlanJoin,
+    NoPlanOther,
+    NoPlanStatement,
+    NoPlanSubquerySubjoins,
     AbortPlan,
     InvalidLiteral,
     NoResolve,
@@ -239,7 +244,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             .insert => |insert| return self.planStatement(insert),
             .drop => |drop| return self.planStatement(drop),
             .reindex => return .{ .noop = {} },
-            else => return error.NoPlan,
+            else => return error.NoPlanStatement,
         },
         N.select => {
             const plan = try self.planRelation(node_id);
@@ -250,7 +255,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
         N.create => switch (node) {
             .create_table => |create_table| return self.planStatement(create_table),
             .create_index => |create_index| return self.planStatement(create_index),
-            else => return error.NoPlan,
+            else => return error.NoPlanStatement,
         },
         N.create_table => {
             const name = node.table_name.getSource(p);
@@ -334,7 +339,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
         N.drop => switch (node) {
             .drop_table => |drop_table| return self.planStatement(drop_table),
             .drop_index => |drop_index| return self.planStatement(drop_index),
-            else => return error.NoPlan,
+            else => return error.NoPlanStatement,
         },
         N.drop_table => {
             return .{ .drop_table = .{
@@ -362,19 +367,19 @@ fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         N.select => {
             try self.noPlan(node.limit);
             const select_or_values = node.select_or_values.get(p);
-            if (select_or_values.elements.len > 1) return error.NoPlan;
+            if (select_or_values.elements.len > 1) return error.NoPlanCompound;
             const order_by_maybe = if (node.order_by.get(p)) |order_by| order_by.get(p) else null;
             return self.planSelect(select_or_values.elements[0], order_by_maybe);
         },
         N.from => return self.planRelation(node.joins),
         N.joins => {
             if (node.join_clause.get(p).elements.len > 0)
-                return error.NoPlan;
+                return error.NoPlanJoin;
             return self.planRelation(node.table_or_subquery);
         },
         N.table_or_subquery => switch (node) {
             .table_as => |table_as| return self.planRelation(table_as),
-            else => return error.NoPlan,
+            else => return error.NoPlanSubquerySubjoins,
         },
         N.table_as => {
             const table_name = node.table_name.getSource(p);
@@ -682,7 +687,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref),
             .column_ref => |column_ref| return self.planScalar(column_ref),
             .value => |value| return self.planScalar(value),
-            else => return error.NoPlan,
+            else => return error.NoPlanExprAtom,
         },
         N.subexpr => return self.planScalar(node.expr),
         N.table_column_ref => {
@@ -809,7 +814,7 @@ pub fn planType(self: *Self, node_id: NodeId("typ")) !sql.Type {
 fn noPlan(self: *Self, node_id: anytype) Error!void {
     const p = self.parser;
     const node = node_id.get(p);
-    if (node != null) return error.NoPlan;
+    if (node != null) return error.NoPlanOther;
 }
 
 fn resolveAllRelation(self: *Self, relation_expr_id: RelationExprId) Error!void {
