@@ -94,6 +94,7 @@ pub const RelationExpr = union(enum) {
     project: struct {
         input: RelationExprId,
         column_refs: []ColumnRef,
+        column_renames: []?[]const u8,
         // Filled in later by resolveAll
         column_defs: ?[]ColumnDef = null,
     },
@@ -319,9 +320,13 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
                         } else return error.NoResolve;
                     };
                 }
+                const column_renames = try self.allocator.alloc(?[]const u8, column_names_expr.elements.len);
+                for (column_renames) |*column_rename|
+                    column_rename.* = null;
                 query = try self.pushRelation(.{ .project = .{
                     .input = query,
                     .column_refs = column_refs,
+                    .column_renames = column_renames,
                 } });
             }
             return .{ .insert = .{ .table_name = table_name, .query = query } };
@@ -441,28 +446,31 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
             else
                 try self.pushRelation(.{ .some = {} });
             var project_column_refs = u.ArrayList(ColumnRef).init(self.allocator);
+            var project_column_renames = u.ArrayList(?[]const u8).init(self.allocator);
             for (node.result_column.get(p).elements) |result_column|
                 switch (result_column.get(p)) {
                     .result_expr => |result_expr| {
                         const scalar_id = try self.planScalar(result_expr);
                         const scalar = self.scalar_exprs.items[scalar_id];
+                        const column_rename = if (result_expr.get(p).as_column.get(p)) |as_column|
+                            as_column.get(p).column_name.getSource(p)
+                        else
+                            null;
                         if (scalar == .column) {
                             try project_column_refs.append(scalar.column);
+                            try project_column_renames.append(column_rename);
                         } else {
                             const def_id = self.nextDefId();
-                            const column_name = if (result_expr.get(p).as_column.get(p)) |as_column|
-                                as_column.get(p).column_name.getSource(p)
-                            else
-                                null;
                             plan = try self.pushRelation(.{ .map = .{
                                 .input = plan,
                                 .column_def = .{
                                     .id = def_id,
-                                    .column_name = column_name,
+                                    .column_name = null,
                                 },
                                 .scalar = scalar_id,
                             } });
                             try project_column_refs.append(.{ .def_id = def_id });
+                            try project_column_renames.append(column_rename);
                         }
                     },
                     .star => {
@@ -470,6 +478,7 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
                             .table_name = null,
                             .column_name = null,
                         } });
+                        try project_column_renames.append(null);
                     },
                     .table_star => |table_star| {
                         const table_name = table_star.get(p).table_name.getSource(p);
@@ -477,6 +486,7 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
                             .table_name = table_name,
                             .column_name = null,
                         } });
+                        try project_column_renames.append(null);
                     },
                 };
             if (node.where.get(p)) |where|
@@ -491,6 +501,7 @@ fn planSelect(self: *Self, node_id: anytype, order_by_maybe: ?N.order_by) Error!
             plan = try self.pushRelation(.{ .project = .{
                 .input = plan,
                 .column_refs = project_column_refs.toOwnedSlice(),
+                .column_renames = project_column_renames.toOwnedSlice(),
             } });
             if (node.distinct_or_all.get(p)) |distinct_or_all| {
                 if (distinct_or_all.get(p) == .DISTINCT)
@@ -817,8 +828,14 @@ fn resolveAllRelation(self: *Self, relation_expr_id: RelationExprId) Error!void 
             try self.resolveAllRelation(project.input);
             var column_defs = u.ArrayList(ColumnDef).init(self.allocator);
             var new_column_refs = u.ArrayList(ColumnRef).init(self.allocator);
-            for (project.column_refs) |column_ref|
+            for (project.column_refs) |column_ref, column_ref_ix| {
+                const start_ix = column_defs.items.len;
                 try self.resolveRefMany(column_ref, project.input, &new_column_refs, &column_defs);
+                if (project.column_renames[column_ref_ix]) |column_rename| {
+                    for (column_defs.items[start_ix..]) |*column_def|
+                        column_def.column_name = column_rename;
+                }
+            }
             project.column_refs = new_column_refs.toOwnedSlice();
             project.column_defs = column_defs.toOwnedSlice();
         },
