@@ -133,7 +133,11 @@ pub const Value = union(Type) {
     }
 
     pub fn promoteToReal(self: Value) Value {
-        return Value{ .real = @intToFloat(f64, self.integer) };
+        return switch (self) {
+            .integer => |integer| .{ .real = @intToFloat(f64, integer) },
+            .real => |real| .{ .real = real },
+            else => unreachable,
+        };
     }
 
     pub fn promoteIfNeeded(a: *Value, b: *Value) void {

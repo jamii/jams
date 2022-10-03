@@ -212,7 +212,7 @@ fn evalRelation(self: *Self, relation_expr_id: sql.Planner.RelationExprId) Error
                     return false;
                 }
             }).lessThan);
-            return input;
+            output = input;
         },
         .as => |as| return self.evalRelation(as.input),
         .group_by => |group_by| {
