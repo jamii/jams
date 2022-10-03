@@ -435,3 +435,7 @@ Executed in   18.64 mins    fish           external
 ```
 
 Man, if I hadn't spent more than half the week in that parsing rabbit hole I really think I might have made it to 100%. But this'll do.
+
+---
+
+Detailed writeup to follow probably in a week or two.
