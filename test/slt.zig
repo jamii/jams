@@ -270,21 +270,22 @@ fn formatValue(arena: *u.ArenaAllocator, typ: sql.Type, value: sql.Value) ![]con
         .integer => |integer| switch (typ) {
             .integer, .text => std.fmt.allocPrint(arena.allocator(), "{}", .{integer}),
             .real => std.fmt.allocPrint(arena.allocator(), "{d:.3}", .{@intToFloat(f64, integer)}),
-            .nul, .blob => unreachable, // tests only contain I T R
+            .nul, .blob, .column => unreachable, // tests only contain I T R
         },
         .real => |real| switch (typ) {
             .integer => std.fmt.allocPrint(arena.allocator(), "{}", .{@floatToInt(i64, real)}),
             .text => error.UnexpectedFormatComboRealText,
             .real => std.fmt.allocPrint(arena.allocator(), "{d:.3}", .{real}),
-            .nul, .blob => unreachable, // tests only contain I T R
+            .nul, .blob, .column => unreachable, // tests only contain I T R
         },
         .text => |text| switch (typ) {
             .text => text,
             .integer => "0", // sqlite, why?
             .real => error.UnexpectedFormatComboTextReal,
-            .nul, .blob => unreachable, // tests only contain I T R
+            .nul, .blob, .column => unreachable, // tests only contain I T R
         },
         .blob => return error.UnexpectedFormatComboBlob,
+        .column => return error.UnexpectedFormatComboColumn,
     };
 }
 

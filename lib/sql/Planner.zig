@@ -687,6 +687,10 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref),
             .column_ref => |column_ref| return self.planScalar(column_ref),
             .value => |value| return self.planScalar(value),
+            .function_call => |function_call| {
+                u.dump(.{ .function = function_call.get(p).function_name.getSource(p) });
+                return error.NoPlanExprAtom;
+            },
             else => return error.NoPlanExprAtom,
         },
         N.subexpr => return self.planScalar(node.expr),

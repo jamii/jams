@@ -91,6 +91,7 @@ pub const Type = enum {
     real,
     text,
     blob,
+    column,
 };
 
 /// https://www.sqlite.org/datatype3.html
@@ -100,6 +101,7 @@ pub const Value = union(Type) {
     real: f64,
     text: []const u8,
     blob: []const u8,
+    column: []const Value,
 
     pub const NULL = Value{ .nul = {} };
     pub const TRUE = Value{ .integer = 1 };
