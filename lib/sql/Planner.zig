@@ -190,6 +190,7 @@ pub const Error = error{
     InvalidLiteral,
     NoResolve,
     MultipleResolve,
+    BadArrange,
 };
 
 pub fn init(
@@ -241,8 +242,9 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
         },
         N.select => {
             const plan = try self.planRelation(node_id);
-            _ = try self.resolveAllRelation(plan);
-            // _ = try self.arrangeAll(query);
+            try self.resolveAllRelation(plan);
+            const output = try self.arrangeAllRelation(plan);
+            u.dump(.{ .output = output });
             return .{ .select = plan };
         },
         N.create => switch (node) {
@@ -304,8 +306,8 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
             const table_def = self.database.table_defs.get(table_name) orelse
                 return error.AbortPlan;
             var query = try self.planSelect(node.select_or_values, null);
-            _ = try self.resolveAllRelation(query);
-            //_ = try self.arrangeAll(query);
+            try self.resolveAllRelation(query);
+            _ = try self.arrangeAllRelation(query);
             if (node.column_names.get(p)) |column_names_expr_id| {
                 const column_names_expr = column_names_expr_id.get(p).column_name.get(p);
                 const column_refs = try self.allocator.alloc(ColumnRef, column_names_expr.elements.len);
@@ -893,14 +895,17 @@ fn resolveRefMany(
         .none, .some => {},
         .map => |map| {
             try self.resolveRefMany(column_ref, map.input, out_column_refs, out_column_defs);
-            try self.resolveRefManyAgainst(column_ref, map.column_def, out_column_refs, out_column_defs);
+            if (column_ref == .ref and
+                column_ref.ref.column_name == null)
+                return;
+            try self.resolveRefAgainst(column_ref, map.column_def, out_column_refs, out_column_defs);
         },
         .filter => |filter| {
             try self.resolveRefMany(column_ref, filter.input, out_column_refs, out_column_defs);
         },
         .project => |project| {
             for (project.column_defs.?) |column_def|
-                try self.resolveRefManyAgainst(column_ref, column_def, out_column_refs, out_column_defs);
+                try self.resolveRefAgainst(column_ref, column_def, out_column_refs, out_column_defs);
         },
         .unio => |unio| {
             try self.resolveRefMany(column_ref, unio.inputs[0], out_column_refs, out_column_defs);
@@ -912,7 +917,7 @@ fn resolveRefMany(
                     if (!u.deepEqual(table_name, get_table.table_name))
                         return;
             for (get_table.column_defs.?) |column_def|
-                try self.resolveRefManyAgainst(column_ref, column_def, out_column_refs, out_column_defs);
+                try self.resolveRefAgainst(column_ref, column_def, out_column_refs, out_column_defs);
         },
         .distinct => |distinct| {
             try self.resolveRefMany(column_ref, distinct, out_column_refs, out_column_defs);
@@ -938,7 +943,7 @@ fn resolveRefMany(
     }
 }
 
-fn resolveRefManyAgainst(
+fn resolveRefAgainst(
     self: *Self,
     column_ref: ColumnRef,
     column_def: ColumnDef,
@@ -954,4 +959,80 @@ fn resolveRefManyAgainst(
         try out_column_refs.append(.{ .def_id = column_def.id });
         try out_column_defs.append(.{ .id = self.nextDefId(), .column_name = column_def.column_name });
     }
+}
+
+fn arrangeAllRelation(self: *Self, relation_expr_id: RelationExprId) Error![]const ColumnDef {
+    const relation = &self.relation_exprs.items[relation_expr_id];
+    switch (relation.*) {
+        .none, .some => return &.{},
+        .map => |map| {
+            const input = try self.arrangeAllRelation(map.input);
+            try self.arrangeAllScalar(map.scalar, input);
+            return std.mem.concat(self.allocator, ColumnDef, &.{
+                input,
+                &.{map.column_def},
+            });
+        },
+        .filter => |filter| {
+            const input = try self.arrangeAllRelation(filter.input);
+            try self.arrangeAllScalar(filter.cond, input);
+            return input;
+        },
+        .project => |project| {
+            const input = try self.arrangeAllRelation(project.input);
+            for (project.column_refs) |*column_ref|
+                column_ref.* = try self.arrangeRefAgainst(column_ref.*, input);
+            return project.column_defs.?;
+        },
+        .unio => |unio| {
+            const input = self.arrangeAllRelation(unio.inputs[0]);
+            _ = try self.arrangeAllRelation(unio.inputs[1]);
+            return input;
+        },
+        .get_table => |get_table| {
+            return get_table.column_defs.?;
+        },
+        .distinct => |distinct| {
+            return try self.arrangeAllRelation(distinct);
+        },
+        .order_by => |order_by| {
+            const input = try self.arrangeAllRelation(order_by.input);
+            for (order_by.orderings) |*ordering|
+                ordering.column_ref = try self.arrangeRefAgainst(ordering.column_ref, input);
+            return input;
+        },
+        .as => |as| {
+            return try self.arrangeAllRelation(as.input);
+        },
+    }
+}
+
+fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const ColumnDef) Error!void {
+    const scalar_expr = &self.scalar_exprs.items[scalar_expr_id];
+    u.dump(.{ scalar_expr_id, scalar_expr, input });
+    switch (scalar_expr.*) {
+        .value => {},
+        .column => |*column_ref| {
+            column_ref.* = try self.arrangeRefAgainst(column_ref.*, input);
+        },
+        .unary => |unary| {
+            try self.arrangeAllScalar(unary.input, input);
+        },
+        .binary => |binary| {
+            try self.arrangeAllScalar(binary.inputs[0], input);
+            try self.arrangeAllScalar(binary.inputs[1], input);
+        },
+        .in => |in| {
+            try self.arrangeAllScalar(in.input, input);
+            _ = try self.arrangeAllRelation(in.subplan);
+        },
+    }
+}
+
+fn arrangeRefAgainst(self: *Self, column_ref: ColumnRef, input: []const ColumnDef) Error!ColumnRef {
+    _ = self;
+    for (input) |column_def, ix|
+        if (column_ref.def_id == column_def.id)
+            return ColumnRef{ .ix = ix };
+    return error.BadArrange;
 }
