@@ -515,9 +515,9 @@ fn planOrderBy(self: *Self, input: RelationExprId, input_column_refs: []const Co
         const scalar = self.scalar_exprs.items[scalar_id];
         const column_ref = column_ref: {
             if (scalar == .value and scalar.value == .integer) {
-                const ix = @intCast(usize, scalar.value.integer);
-                if (ix < input_column_refs.len)
-                    break :column_ref input_column_refs[ix]
+                const ix = scalar.value.integer;
+                if (ix >= 1 and ix <= input_column_refs.len)
+                    break :column_ref input_column_refs[@intCast(usize, ix) - 1]
                 else
                     return error.NoResolve;
             } else {
