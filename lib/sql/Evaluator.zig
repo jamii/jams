@@ -401,17 +401,22 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                     return Scalar{ .integer = count };
                 },
                 .sum => {
+                    var count: usize = 0;
                     var sum = Scalar{ .integer = 0 };
                     for (column) |scalar|
                         if (scalar != .nul) {
                             var scalar_promoted = scalar;
                             Scalar.promoteIfNeeded(&sum, &scalar_promoted);
+                            count += 1;
                             if (sum == .integer)
                                 sum = .{ .integer = sum.integer + scalar_promoted.integer }
                             else
                                 sum = .{ .real = sum.real + scalar_promoted.real };
                         };
-                    return sum;
+                    return if (count == 0)
+                        Scalar.NULL
+                    else
+                        sum;
                 },
                 .min => {
                     var min = Scalar.NULL;
