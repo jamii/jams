@@ -243,8 +243,7 @@ pub fn planStatement(self: *Self, node_id: anytype) !StatementExpr {
         N.select => {
             const plan = try self.planRelation(node_id);
             try self.resolveAllRelation(plan);
-            const output = try self.arrangeAllRelation(plan);
-            u.dump(.{ .output = output });
+            _ = try self.arrangeAllRelation(plan);
             return .{ .select = plan };
         },
         N.create => switch (node) {
@@ -1009,7 +1008,6 @@ fn arrangeAllRelation(self: *Self, relation_expr_id: RelationExprId) Error![]con
 
 fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const ColumnDef) Error!void {
     const scalar_expr = &self.scalar_exprs.items[scalar_expr_id];
-    u.dump(.{ scalar_expr_id, scalar_expr, input });
     switch (scalar_expr.*) {
         .value => {},
         .column => |*column_ref| {
@@ -1031,6 +1029,9 @@ fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const Co
 
 fn arrangeRefAgainst(self: *Self, column_ref: ColumnRef, input: []const ColumnDef) Error!ColumnRef {
     _ = self;
+    if (column_ref == .ix)
+        // Sometimes scalar_exprs are shared, so we can visit the same column_ref twice
+        return column_ref;
     for (input) |column_def, ix|
         if (column_ref.def_id == column_def.id)
             return ColumnRef{ .ix = ix };
