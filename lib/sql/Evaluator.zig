@@ -416,14 +416,17 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                     return max;
                 },
                 .avg => {
-                    var count: f64 = 0.0;
+                    var count: f64 = 0;
                     var sum = Scalar{ .real = 0 };
                     for (column) |scalar|
                         if (scalar != .nul) {
                             count += 1;
                             sum = .{ .real = sum.real + scalar.promoteToReal().real };
                         };
-                    return Scalar{ .real = sum.real / count };
+                    return if (count == 0)
+                        Scalar.NULL
+                    else
+                        Scalar{ .real = sum.real / count };
                 },
             }
         },
