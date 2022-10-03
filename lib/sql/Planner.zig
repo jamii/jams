@@ -240,7 +240,7 @@ pub const Error = error{
     NoPlanLeft,
     NoPlanNatural,
     NoPlanRight,
-    NoPlanSubquerySubjoins,
+    NoPlanSubjoins,
     NoPlanFunctionCall,
     AbortPlan,
     InvalidLiteral,
@@ -431,7 +431,8 @@ fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
         },
         N.table_or_subquery => switch (node) {
             .table_as => |table_as| return self.planRelation(table_as),
-            else => return error.NoPlanSubquerySubjoins,
+            .subquery_as => |subquery_as| return self.planRelation(subquery_as),
+            .sub_joins => |sub_joins| return self.planRelation(sub_joins),
         },
         N.table_as => {
             const table_name = node.table_name.getSource(p);
@@ -445,6 +446,20 @@ fn planRelation(self: *Self, node_id: anytype) Error!RelationExprId {
                 } });
             return plan;
         },
+        N.subquery_as => {
+            var plan = try self.planRelation(node.subquery);
+            if (node.as_table.get(p)) |as_table|
+                plan = try self.pushRelation(.{ .as = .{
+                    .input = plan,
+                    .table_name = as_table.get(p).table_name.getSource(p),
+                } });
+            return plan;
+        },
+        N.subquery => {
+            try self.noPlan(node.exists_or_not_exists);
+            return self.planRelation(node.select);
+        },
+        N.sub_joins => return self.planRelation(node.joins),
         else => @compileError("planRelation not implemented for " ++ @typeName(@TypeOf(node))),
     }
 }
