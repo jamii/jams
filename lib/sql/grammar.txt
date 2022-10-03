@@ -201,7 +201,7 @@ case_else = ELSE expr;
 function_call = function_name open_paren distinct_or_all? function_args? close_paren; # TODO filter/over
 function_name = name; # TODO
 function_args =
-  | (DISTINCT? expr+comma)=args
+  | (expr+comma)=args
   | star;
 value =
   | number

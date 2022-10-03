@@ -135,6 +135,13 @@ pub const Value = union(Type) {
     pub fn promoteToReal(self: Value) Value {
         return Value{ .real = @intToFloat(f64, self.integer) };
     }
+
+    pub fn promoteIfNeeded(a: *Value, b: *Value) void {
+        if (a.* == .real and b.* == .integer)
+            b.* = b.promoteToReal();
+        if (b.* == .real and a.* == .integer)
+            a.* = a.promoteToReal();
+    }
 };
 
 var rule_usage = u.DeepHashMap([]const u8, struct { q: usize, s: usize }).init(std.heap.page_allocator);

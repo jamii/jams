@@ -15,7 +15,8 @@ pub const Error = error{
     TypeError,
     NoEval,
     AbortEval,
-    BadColumn,
+    BadEvalColumn,
+    BadEvalAggregate,
 };
 
 pub fn init(
@@ -232,7 +233,7 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
         .value => |value| return value,
         .column => |column| {
             return if (column.ix >= env.items.len)
-                error.BadColumn
+                error.BadEvalColumn
             else
                 env.items[column.ix];
         },
@@ -258,6 +259,17 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                         else => error.TypeError,
                     };
                 },
+                .abs => {
+                    return switch (input) {
+                        .integer => |integer| Scalar{
+                            .integer = std.math.absInt(integer) catch
+                            // Don't really care about overflow
+                                unreachable,
+                        },
+                        .real => |real| Scalar{ .real = @fabs(real) },
+                        else => error.TypeError,
+                    };
+                },
             }
         },
         .binary => |binary| {
@@ -273,8 +285,8 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
             return switch (binary.op) {
                 .bool_and => return Scalar.fromBool(try left.toBool() and try right.toBool()),
                 .bool_or => return Scalar.fromBool(try left.toBool() or try right.toBool()),
-                .equal, .is => return Scalar.fromBool(u.deepEqual(left, right)),
-                .not_equal, .is_not => return Scalar.fromBool(!u.deepEqual(left, right)),
+                .equal, .is => return Scalar.fromBool(Scalar.order(left, right) == .eq),
+                .not_equal, .is_not => return Scalar.fromBool(Scalar.order(left, right) != .eq),
                 .less_than => return Scalar.fromBool(Scalar.order(left, right) == .lt),
                 .greater_than => return Scalar.fromBool(Scalar.order(left, right) == .gt),
                 .less_than_or_equal => return Scalar.fromBool(Scalar.order(left, right) != .gt),
@@ -282,11 +294,8 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                 .plus, .minus, .star, .forward_slash => {
                     if (!left.isNumeric()) return error.TypeError;
                     if (!right.isNumeric()) return error.TypeError;
-                    if (left == .real and right == .integer)
-                        right = right.promoteToReal();
-                    if (right == .real and left == .integer)
-                        left = left.promoteToReal();
-                    return if (left == .real and right == .real)
+                    Scalar.promoteIfNeeded(&left, &right);
+                    return if (left == .real)
                         switch (binary.op) {
                             .plus => Scalar{ .real = left.real + right.real },
                             .minus => Scalar{ .real = left.real - right.real },
@@ -308,8 +317,90 @@ fn evalScalar(self: *Self, scalar_expr_id: sql.Planner.ScalarExprId, env: Row) E
                         else => unreachable,
                     };
                 },
+                .nullif => {
+                    return if (Scalar.order(left, right) == .eq)
+                        Scalar.NULL
+                    else
+                        left;
+                },
                 else => error.NoEval,
             };
+        },
+        .aggregate => |aggregate| {
+            var input = try self.evalScalar(aggregate.input, env);
+            if (input != .column)
+                return error.BadEvalAggregate;
+            var column = input.column;
+            if (aggregate.distinct) {
+                var scalars = u.DeepHashSet(Scalar).init(self.allocator);
+                for (column) |scalar|
+                    if (scalar != .nul)
+                        try scalars.put(scalar, {});
+                var new_column = try u.ArrayList(Scalar).initCapacity(self.allocator, scalars.count());
+                var iter = scalars.keyIterator();
+                while (iter.next()) |scalar|
+                    new_column.appendAssumeCapacity(scalar.*);
+                column = new_column.toOwnedSlice();
+            }
+            switch (aggregate.op) {
+                .count => {
+                    var count: i64 = 0;
+                    for (column) |scalar|
+                        if (scalar != .nul) {
+                            count += 1;
+                        };
+                    return Scalar{ .integer = count };
+                },
+                .sum => {
+                    var sum = Scalar{ .integer = 0 };
+                    for (column) |scalar|
+                        if (scalar != .nul) {
+                            var scalar_promoted = scalar;
+                            Scalar.promoteIfNeeded(&sum, &scalar_promoted);
+                            if (sum == .integer)
+                                sum = .{ .integer = sum.integer + scalar_promoted.integer }
+                            else
+                                sum = .{ .real = sum.real + scalar_promoted.real };
+                        };
+                    return sum;
+                },
+                .min => {
+                    var min = Scalar.NULL;
+                    for (column) |scalar|
+                        if (scalar != .nul) {
+                            if (min == .nul or Scalar.order(scalar, min) == .lt)
+                                min = scalar;
+                        };
+
+                    return min;
+                },
+                .max => {
+                    var max = Scalar.NULL;
+                    for (column) |scalar|
+                        if (scalar != .nul) {
+                            if (max == .nul or Scalar.order(scalar, max) == .gt)
+                                max = scalar;
+                        };
+                    return max;
+                },
+                .avg => {
+                    var count: f64 = 0.0;
+                    var sum = Scalar{ .real = 0 };
+                    for (column) |scalar|
+                        if (scalar != .nul) {
+                            count += 1;
+                            sum = .{ .real = sum.real + scalar.promoteToReal().real };
+                        };
+                    return Scalar{ .real = sum.real / count };
+                },
+            }
+        },
+        .coalesce => |coalesce| {
+            for (coalesce.inputs) |coalesce_input| {
+                const input = try self.evalScalar(coalesce_input, env);
+                if (input != .nul) return input;
+            }
+            return Scalar.NULL;
         },
         .in => |*in| {
             const input = try self.evalScalar(in.input, env);

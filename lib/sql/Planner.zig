@@ -140,6 +140,14 @@ pub const ScalarExpr = union(enum) {
         inputs: [2]ScalarExprId,
         op: BinaryOp,
     },
+    aggregate: struct {
+        input: ScalarExprId,
+        op: AggregateOp,
+        distinct: bool,
+    },
+    coalesce: struct {
+        inputs: []ScalarExprId,
+    },
     in: struct {
         input: ScalarExprId,
         subplan: RelationExprId,
@@ -155,6 +163,7 @@ pub const UnaryOp = enum {
     bit_not,
     plus,
     minus,
+    abs,
 };
 
 pub const BinaryOp = enum {
@@ -188,6 +197,15 @@ pub const BinaryOp = enum {
     shift_right,
     bit_and,
     bit_or,
+    nullif,
+};
+
+pub const AggregateOp = enum {
+    count,
+    sum,
+    min,
+    max,
+    avg,
 };
 
 pub const Error = error{
@@ -198,6 +216,7 @@ pub const Error = error{
     NoPlanOther,
     NoPlanStatement,
     NoPlanSubquerySubjoins,
+    NoPlanFunctionCall,
     AbortPlan,
     InvalidLiteral,
     NoResolve,
@@ -693,10 +712,7 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
             .table_column_ref => |table_column_ref| return self.planScalar(table_column_ref),
             .column_ref => |column_ref| return self.planScalar(column_ref),
             .value => |value| return self.planScalar(value),
-            .function_call => |function_call| {
-                u.dump(.{ .function = function_call.get(p).function_name.getSource(p) });
-                return error.NoPlanExprAtom;
-            },
+            .function_call => |function_call| return self.planScalar(function_call),
             else => return error.NoPlanExprAtom,
         },
         N.subexpr => return self.planScalar(node.expr),
@@ -750,6 +766,82 @@ pub fn planScalar(self: *Self, node_id: anytype) Error!ScalarExprId {
                 .NULL => sql.Value{ .nul = {} },
             };
             return self.pushScalar(.{ .value = value });
+        },
+        N.function_call => {
+            const function_name = try std.ascii.allocLowerString(self.allocator, node.function_name.getSource(p));
+
+            const distinct = if (node.distinct_or_all.get(p)) |distinct_or_all|
+                distinct_or_all.get(p) == .DISTINCT
+            else
+                false;
+
+            var inputs = u.ArrayList(ScalarExprId).init(self.allocator);
+            if (node.function_args.get(p)) |arg_or_star|
+                switch (arg_or_star.get(p)) {
+                    .args => |args| {
+                        for (args.get(p).expr.get(p).elements) |arg|
+                            try inputs.append(try self.planScalar(arg));
+                    },
+                    .star => {
+                        if (!std.mem.eql(u8, function_name, "count"))
+                            return error.AbortPlan;
+                        if (distinct)
+                            return error.AbortPlan;
+                        try inputs.append(try self.pushScalar(.{ .value = .{ .integer = 0 } }));
+                    },
+                };
+
+            const aggregate_op: ?AggregateOp =
+                if (std.mem.eql(u8, function_name, "count"))
+                .count
+            else if (std.mem.eql(u8, function_name, "sum"))
+                .sum
+            else if (std.mem.eql(u8, function_name, "min"))
+                .min
+            else if (std.mem.eql(u8, function_name, "max"))
+                .max
+            else if (std.mem.eql(u8, function_name, "avg"))
+                .avg
+            else
+                null;
+            if (aggregate_op) |op| {
+                if (inputs.items.len != 1)
+                    return error.AbortPlan;
+                return self.pushScalar(.{ .aggregate = .{
+                    .input = inputs.items[0],
+                    .op = op,
+                    .distinct = distinct,
+                } });
+            }
+
+            if (std.mem.eql(u8, function_name, "abs")) {
+                if (inputs.items.len != 1)
+                    return error.AbortPlan;
+                return self.pushScalar(.{ .unary = .{
+                    .input = inputs.items[0],
+                    .op = .abs,
+                } });
+            }
+
+            if (std.mem.eql(u8, function_name, "nullif")) {
+                if (inputs.items.len != 2)
+                    return error.AbortPlan;
+                return self.pushScalar(.{ .binary = .{
+                    .inputs = .{
+                        inputs.items[0],
+                        inputs.items[1],
+                    },
+                    .op = .nullif,
+                } });
+            }
+
+            if (std.mem.eql(u8, function_name, "coalesce")) {
+                return self.pushScalar(.{ .coalesce = .{
+                    .inputs = inputs.toOwnedSlice(),
+                } });
+            }
+
+            return error.NoPlanFunctionCall;
         },
         else => @compileError("planScalar not implemented for " ++ @typeName(@TypeOf(node))),
     }
@@ -899,6 +991,13 @@ fn resolveAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: RelationEx
         .binary => |binary| {
             try self.resolveAllScalar(binary.inputs[0], input);
             try self.resolveAllScalar(binary.inputs[1], input);
+        },
+        .aggregate => |aggregate| {
+            try self.resolveAllScalar(aggregate.input, input);
+        },
+        .coalesce => |coalesce| {
+            for (coalesce.inputs) |coalesce_input|
+                try self.resolveAllScalar(coalesce_input, input);
         },
         .in => |in| {
             try self.resolveAllScalar(in.input, input);
@@ -1064,6 +1163,14 @@ fn arrangeAllScalar(self: *Self, scalar_expr_id: ScalarExprId, input: []const Co
         .binary => |binary| {
             try self.arrangeAllScalar(binary.inputs[0], input);
             try self.arrangeAllScalar(binary.inputs[1], input);
+        },
+        .aggregate => |aggregate| {
+            try self.arrangeAllScalar(aggregate.input, input);
+        },
+
+        .coalesce => |coalesce| {
+            for (coalesce.inputs) |coalesce_input|
+                try self.arrangeAllScalar(coalesce_input, input);
         },
         .in => |in| {
             try self.arrangeAllScalar(in.input, input);
