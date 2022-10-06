@@ -1,5 +1,7 @@
 Goal: Pass all 4259065 tests in [sqllogictest](https://www.sqlite.org/sqllogictest/doc/trunk/about.wiki). From scratch. No dependencies. No surrender.
 
+[Post-mortem](https://www.scattered-thoughts.net/log/0028#sqllogictest-in-a-week).
+
 ## Day 1
 
 I wrote the test harness in advance, so my starting point on Monday morning was 4.2 million test failures.
@@ -435,7 +437,3 @@ Executed in   18.64 mins    fish           external
 ```
 
 Man, if I hadn't spent more than half the week in that parsing rabbit hole I really think I might have made it to 100%. But this'll do.
-
----
-
-Detailed writeup to follow probably in a week or two.
