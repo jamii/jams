@@ -1,0 +1,4 @@
+zig-out
+zig-cache
+test/zig-expected.c
+test/zig.cwasm-testsuite-output
