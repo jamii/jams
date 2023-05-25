@@ -1,15 +1,18 @@
 const std = @import("std");
-const ArrayList = std.ArrayList;
-const Allocator = std.mem.Allocator;
-const startsWith = std.mem.startsWith;
 const panic = std.debug.panic;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const startsWith = std.mem.startsWith;
 
 const Self = @This();
 allocator: Allocator,
+source: []const u8,
 tokens: ArrayList(Token),
 ranges: ArrayList([2]usize),
+error_message: ?[]const u8,
 
 pub const Token = enum {
+    comma,
     colon,
     semicolon,
     open_paren,
@@ -51,21 +54,28 @@ pub const Token = enum {
     Identifier,
     number,
     whitespace,
+    eof,
 };
 
 pub fn init(allocator: Allocator, source: []const u8) Self {
-    var self = Self{
+    return Self{
         .allocator = allocator,
+        .source = source,
         .tokens = ArrayList(Token).init(allocator),
         .ranges = ArrayList([2]usize).init(allocator),
+        .error_message = null,
     };
+}
 
+pub fn tokenize(self: *Self) !void {
+    const source = self.source;
     var i: usize = 0;
-    while (i < source.len) : (i += 1) {
+    while (i < source.len) {
         const start = i;
         const char = source[i];
         i += 1;
         const token: Token = switch (char) {
+            ',' => .comma,
             ':' => .colon,
             ';' => .semicolon,
             '(' => .open_paren,
@@ -132,6 +142,7 @@ pub fn init(allocator: Allocator, source: []const u8) Self {
                     .let,
                     .in,
                     .@"var",
+                    .@"let",
                     .@"struct",
                     .as,
                     .@"if",
@@ -142,13 +153,10 @@ pub fn init(allocator: Allocator, source: []const u8) Self {
                 if (match(source, &i, &keywords)) |token| {
                     break :token token;
                 } else {
-                    while (i < source.len) : (i += 1) {
+                    while (i < source.len) {
                         switch (source[i]) {
-                            'a'...'z', 'A'...'Z', '0'...'9' => {},
-                            else => {
-                                i -= 1;
-                                break;
-                            },
+                            'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
+                            else => break,
                         }
                     }
                     break :token Token.identifier;
@@ -165,49 +173,41 @@ pub fn init(allocator: Allocator, source: []const u8) Self {
                 if (match(source, &i, &types)) |token| {
                     break :token token;
                 } else {
-                    while (i < source.len) : (i += 1) {
+                    while (i < source.len) {
                         switch (source[i]) {
-                            'a'...'z', 'A'...'Z', '0'...'9' => {},
-                            else => {
-                                i -= 1;
-                                break;
-                            },
+                            'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
+                            else => break,
                         }
                     }
                     break :token Token.Identifier;
                 }
             },
             '0'...'9' => token: {
-                while (i < source.len) : (i += 1) {
+                while (i < source.len) {
                     switch (source[i]) {
-                        '0'...'9', '.' => {},
-                        else => {
-                            i -= 1;
-                            break;
-                        },
+                        '0'...'9', '.' => i += 1,
+                        else => break,
                     }
                 }
                 break :token Token.number;
             },
             ' ', '\n' => token: {
-                while (i < source.len) : (i += 1) {
+                while (i < source.len) {
                     switch (source[i]) {
-                        ' ', '\n' => {},
-                        else => {
-                            i -= 1;
-                            break;
-                        },
+                        ' ', '\n' => i += 1,
+                        else => break,
                     }
                 }
                 break :token Token.whitespace;
             },
-            else => self.fail(start),
+            else => return self.fail(start),
         };
         self.tokens.append(token) catch panic("OOM", .{});
         self.ranges.append(.{ start, i }) catch panic("OOM", .{});
     }
 
-    return self;
+    self.tokens.append(.eof) catch panic("OOM", .{});
+    self.ranges.append(.{ i, i }) catch panic("OOM", .{});
 }
 
 fn match(source: []const u8, start: *usize, comptime tokens: []const Token) ?Token {
@@ -220,13 +220,7 @@ fn match(source: []const u8, start: *usize, comptime tokens: []const Token) ?Tok
     return null;
 }
 
-fn fail(self: *Self, pos: usize) noreturn {
-    // Lazy error handling.
-    _ = self;
-    panic("Tokenizer error at {}", .{pos});
-}
-
-pub fn main() void {
-    const self = Self.init(std.testing.allocator, "foo + Any");
-    std.debug.print("{any}", .{self.tokens.items});
+fn fail(self: *Self, pos: usize) error{TokenizeError} {
+    self.error_message = std.fmt.allocPrint(self.allocator, "Tokenizer error at {}", .{pos}) catch panic("OOM", .{});
+    return error.TokenizeError;
 }
