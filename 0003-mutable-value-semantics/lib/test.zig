@@ -36,10 +36,12 @@ pub fn main() !void {
         const source = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
         var baton = Baton{};
         run(allocator, source, &baton) catch |err| {
-            if (baton.tokenizer) |tokenizer|
-                std.debug.print("{any}", .{tokenizer.tokens.items});
+            //if (baton.tokenizer) |tokenizer|
+            //    std.debug.print("{any}\n\n", .{tokenizer.tokens.items});
             if (baton.parser) |parser|
-                std.debug.print("{any}", .{parser.nodes.items});
+                std.debug.print("{any}\n\n", .{parser.nodes.items});
+            if (@errorReturnTrace()) |trace|
+                std.debug.dumpStackTrace(trace.*);
             const message = switch (err) {
                 error.TokenizeError => baton.tokenizer.?.error_message.?,
                 error.ParseError => baton.parser.?.error_message.?,

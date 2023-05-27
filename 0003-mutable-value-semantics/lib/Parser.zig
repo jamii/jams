@@ -51,6 +51,11 @@ pub const Type = union(enum) {
 };
 
 pub const Expr = union(enum) {
+    assign: struct {
+        path: NodeId,
+        value: NodeId,
+        tail: NodeId,
+    },
     seq: [2]NodeId,
     call: struct {
         fun: NodeId,
@@ -65,6 +70,11 @@ pub const Expr = union(enum) {
         cond: NodeId,
         true_branch: NodeId,
         false_branch: NodeId,
+    },
+    @"while": struct {
+        cond: NodeId,
+        body: NodeId,
+        tail: NodeId,
     },
     as: struct {
         value: NodeId,
@@ -81,7 +91,7 @@ pub const Expr = union(enum) {
     define: struct {
         mutability: Mutability,
         name: []const u8,
-        typ: NodeId,
+        typ: ?NodeId,
         value: NodeId,
         tail: NodeId,
     },
@@ -111,6 +121,9 @@ pub const Op = enum {
     minus,
     multiply,
     divide,
+    equals,
+    greater_than,
+    less_than,
 };
 
 pub fn init(allocator: Allocator, tokenizer: Tokenizer) Self {
@@ -133,7 +146,6 @@ pub fn parse(self: *Self) !void {
 }
 
 fn parseDecl(self: *Self) !NodeId {
-    std.debug.print("decl {}\n", .{self.token_ix});
     try self.expect(.@"struct");
     try self.expect(.Identifier);
     const name = self.lastTokenText();
@@ -143,6 +155,7 @@ fn parseDecl(self: *Self) !NodeId {
         if (self.takeIf(.close_brace)) break;
         fields.append(try self.parseField()) catch panic("OOM", .{});
     }
+    try self.expect(.in);
     return self.node(.{ .decl = .{
         .name = name,
         .fields = fields.toOwnedSlice() catch panic("OOM", .{}),
@@ -174,9 +187,9 @@ fn parseType(self: *Self) error{ParseError}!NodeId {
         .Int => Type.int,
         .Float => Type.float,
         .Identifier => Type{ .identifier = self.lastTokenText() },
-        .open_brace => typ: {
+        .open_bracket => typ: {
             const typ_inner = try self.parseType();
-            try self.expect(.close_brace);
+            try self.expect(.close_bracket);
             break :typ Type{ .list = typ_inner };
         },
         .open_paren => typ: {
@@ -199,7 +212,7 @@ fn parseType(self: *Self) error{ParseError}!NodeId {
     return self.node(.{ .typ = typ });
 }
 
-fn parseExpr0(self: *Self) !NodeId {
+fn parseExpr0(self: *Self) error{ParseError}!NodeId {
     var expr = try self.parseExpr1();
     while (true) {
         if (!self.takeIf(.semicolon)) break;
@@ -209,81 +222,81 @@ fn parseExpr0(self: *Self) !NodeId {
     return expr;
 }
 
-fn parseExpr1(self: *Self) !NodeId {
-    const expr = try self.parseExpr2();
-    const token = self.take();
-    std.debug.print("expr1: {} {s}\n", .{ token, self.lastTokenText() });
-    switch (token) {
-        .open_paren => {
-            var args = ArrayList(NodeId).init(self.allocator);
-            var mutabilities = ArrayList(Mutability).init(self.allocator);
-            while (true) {
-                if (self.peek() == .close_paren) break;
-                mutabilities.append(if (self.takeIf(.ampersand)) .@"var" else .let) catch panic("OOM", .{});
-                args.append(try self.parseExpr1()) catch panic("OOM", .{});
-                if (!self.takeIf(.comma)) break;
-            }
-            try self.expect(.close_paren);
-            return self.node(.{ .expr = .{ .call = .{
-                .fun = expr,
-                .mutabilities = mutabilities.toOwnedSlice() catch panic("OOM", .{}),
-                .args = args.toOwnedSlice() catch panic("OOM", .{}),
-            } } });
-        },
-        .question => {
-            const true_branch = try self.parseExpr1();
-            try self.expect(.colon);
-            const false_branch = try self.parseExpr1();
-            return self.node(.{ .expr = .{ .@"if" = .{
-                .cond = expr,
-                .true_branch = true_branch,
-                .false_branch = false_branch,
-            } } });
-        },
-        .as => {
-            const typ = try self.parseType();
-            return self.node(.{ .expr = .{ .as = .{
-                .value = expr,
-                .typ = typ,
-            } } });
-        },
-        .period => {
-            try self.expect(.identifier);
-            const field = self.lastTokenText();
-            return self.node(.{ .expr = .{ .field = .{
-                .value = expr,
-                .field = field,
-            } } });
-        },
-        .open_bracket => {
-            const elem = try self.parseExpr1();
-            try self.expect(.close_bracket);
-            return self.node(.{ .expr = .{ .elem = .{
-                .value = expr,
-                .elem = elem,
-            } } });
-        },
-        .plus, .minus, .multiply, .divide => {
-            const op = switch (token) {
-                .plus => Op.plus,
-                .minus => Op.minus,
-                .multiply => Op.multiply,
-                .divide => Op.divide,
-                else => unreachable,
-            };
-            const right = try self.parseExpr1();
-            return self.node(.{ .expr = .{ .op = .{ .op = op, .args = .{ expr, right } } } });
-        },
-        else => {
-            self.token_ix -= 1;
-            return expr;
-        },
+fn parseExpr1(self: *Self) error{ParseError}!NodeId {
+    var expr = try self.parseExpr2();
+    while (true) {
+        const token = self.take();
+        switch (token) {
+            .open_paren => {
+                var args = ArrayList(NodeId).init(self.allocator);
+                var mutabilities = ArrayList(Mutability).init(self.allocator);
+                while (true) {
+                    if (self.peek() == .close_paren) break;
+                    mutabilities.append(if (self.takeIf(.ampersand)) .@"var" else .let) catch panic("OOM", .{});
+                    args.append(try self.parseExpr1()) catch panic("OOM", .{});
+                    if (!self.takeIf(.comma)) break;
+                }
+                try self.expect(.close_paren);
+                expr = self.node(.{ .expr = .{ .call = .{
+                    .fun = expr,
+                    .mutabilities = mutabilities.toOwnedSlice() catch panic("OOM", .{}),
+                    .args = args.toOwnedSlice() catch panic("OOM", .{}),
+                } } });
+            },
+            .as => {
+                const typ = try self.parseType();
+                expr = self.node(.{ .expr = .{ .as = .{
+                    .value = expr,
+                    .typ = typ,
+                } } });
+            },
+            .period => {
+                try self.expect(.identifier);
+                const field = self.lastTokenText();
+                expr = self.node(.{ .expr = .{ .field = .{
+                    .value = expr,
+                    .field = field,
+                } } });
+            },
+            .open_bracket => {
+                const elem = try self.parseExpr1();
+                try self.expect(.close_bracket);
+                expr = self.node(.{ .expr = .{ .elem = .{
+                    .value = expr,
+                    .elem = elem,
+                } } });
+            },
+            .plus, .minus, .multiply, .divide, .double_equals, .greater_than, .less_than => {
+                const op = switch (token) {
+                    .plus => Op.plus,
+                    .minus => Op.minus,
+                    .multiply => Op.multiply,
+                    .divide => Op.divide,
+                    .double_equals => Op.equals,
+                    .greater_than => Op.greater_than,
+                    .less_than => Op.less_than,
+                    else => unreachable,
+                };
+                const right = try self.parseExpr1();
+                expr = self.node(.{ .expr = .{ .op = .{ .op = op, .args = .{ expr, right } } } });
+            },
+            .equals => {
+                const value = try self.parseExpr1();
+                try self.expect(.in);
+                const tail = try self.parseExpr0();
+                expr = self.node(.{ .expr = .{ .assign = .{ .path = expr, .value = value, .tail = tail } } });
+            },
+            else => {
+                self.token_ix -= 1;
+                break;
+            },
+        }
     }
+    return expr;
 }
 
 fn parseExpr2(self: *Self) error{ParseError}!NodeId {
     const token = self.take();
-    std.debug.print("expr2: {} {s}\n", .{ token, self.lastTokenText() });
     switch (token) {
         .@"let", .@"var" => {
             const mutability = switch (token) {
@@ -293,8 +306,10 @@ fn parseExpr2(self: *Self) error{ParseError}!NodeId {
             };
             try self.expect(.identifier);
             const name = self.lastTokenText();
-            try self.expect(.colon);
-            const typ = try self.parseType();
+            const typ = if (self.takeIf(.colon))
+                try self.parseType()
+            else
+                null;
             try self.expect(.equals);
             const value = try self.parseExpr1();
             try self.expect(.in);
@@ -304,6 +319,31 @@ fn parseExpr2(self: *Self) error{ParseError}!NodeId {
                 .name = name,
                 .typ = typ,
                 .value = value,
+                .tail = tail,
+            } } });
+        },
+        .@"if" => {
+            const cond = try self.parseExpr1();
+            try self.expect(.question);
+            const true_branch = try self.parseExpr1();
+            try self.expect(.exclamation);
+            const false_branch = try self.parseExpr1();
+            return self.node(.{ .expr = .{ .@"if" = .{
+                .cond = cond,
+                .true_branch = true_branch,
+                .false_branch = false_branch,
+            } } });
+        },
+        .@"while" => {
+            const cond = try self.parseExpr1();
+            try self.expect(.open_brace);
+            const body = try self.parseExpr0();
+            try self.expect(.close_brace);
+            try self.expect(.in);
+            const tail = try self.parseExpr0();
+            return self.node(.{ .expr = .{ .@"while" = .{
+                .cond = cond,
+                .body = body,
                 .tail = tail,
             } } });
         },
@@ -348,9 +388,12 @@ fn parseExpr2(self: *Self) error{ParseError}!NodeId {
         },
         .open_paren => {
             self.token_ix -= 1;
+            const start = self.token_ix;
             if (self.parseFun()) |fun| {
                 return fun;
             } else |_| {
+                //std.debug.print("{s}\n", .{self.error_message.?});
+                self.token_ix = start;
                 try self.expect(.open_paren);
                 const expr = self.parseExpr0();
                 try self.expect(.close_paren);
@@ -391,6 +434,7 @@ fn parseFun(self: *Self) !NodeId {
         if (self.peek() == .close_paren) break;
         try self.expect(.identifier);
         names.append(self.lastTokenText()) catch panic("OOM", .{});
+        try self.expect(.colon);
         params.append(try self.parseParam()) catch panic("OOM", .{});
         if (!self.takeIf(.comma)) break;
     }
@@ -412,6 +456,7 @@ fn parseFun(self: *Self) !NodeId {
     //}
     //try self.expect(.in);
     const body = try self.parseExpr0();
+    try self.expect(.close_brace);
     return self.node(.{ .expr = .{ .fun = .{
         .names = names.toOwnedSlice() catch panic("OOM", .{}),
         .params = params.toOwnedSlice() catch panic("OOM", .{}),
@@ -421,7 +466,6 @@ fn parseFun(self: *Self) !NodeId {
 }
 
 fn parseParam(self: *Self) !NodeId {
-    try self.expect(.colon);
     const mutability = if (self.takeIf(.inout)) Mutability.@"var" else Mutability.let;
     const typ = try self.parseType();
     return self.node(.{ .param = .{
@@ -466,8 +510,12 @@ fn fail(self: *Self, comptime message: []const u8, args: anytype) error{ParseErr
     const source_ix = self.tokenizer.ranges.items[self.token_ix - 1][0];
     self.error_message = std.fmt.allocPrint(
         self.allocator,
-        "At {}. " ++ message,
-        .{source_ix} ++ args,
+        "At {}. " ++
+            message ++
+            "\n\n{s}",
+        .{source_ix} ++
+            args ++
+            .{self.tokenizer.source[source_ix..@min(source_ix + 100, self.tokenizer.source.len)]},
     ) catch panic("OOM", .{});
     return error.ParseError;
 }

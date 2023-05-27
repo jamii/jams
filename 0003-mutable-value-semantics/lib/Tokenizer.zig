@@ -49,7 +49,6 @@ pub const Token = enum {
     Any,
     Int,
     Float,
-    Unit,
     identifier,
     Identifier,
     number,
@@ -117,7 +116,10 @@ pub fn tokenize(self: *Self) !void {
                 const next_char = if (i < source.len) source[i] else 0;
                 i += 1;
                 switch (next_char) {
-                    '/' => break :token Token.comment,
+                    '/' => {
+                        while (i < source.len and source[i] != '\n') : (i += 1) {}
+                        break :token Token.comment;
+                    },
                     else => {
                         i -= 1;
                         break :token Token.divide;
@@ -138,6 +140,13 @@ pub fn tokenize(self: *Self) !void {
             },
             'a'...'z' => token: {
                 i -= 1;
+                while (i < source.len) {
+                    switch (source[i]) {
+                        'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
+                        else => break,
+                    }
+                }
+                const name = source[start..i];
                 const keywords = [_]Token{
                     .let,
                     .in,
@@ -150,37 +159,23 @@ pub fn tokenize(self: *Self) !void {
                     .inout,
                     .@"while",
                 };
-                if (match(source, &i, &keywords)) |token| {
-                    break :token token;
-                } else {
-                    while (i < source.len) {
-                        switch (source[i]) {
-                            'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
-                            else => break,
-                        }
-                    }
-                    break :token Token.identifier;
-                }
+                break :token match(name, &keywords) orelse Token.identifier;
             },
             'A'...'Z' => token: {
                 i -= 1;
+                while (i < source.len) {
+                    switch (source[i]) {
+                        'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
+                        else => break,
+                    }
+                }
+                const name = source[start..i];
                 const types = [_]Token{
                     .Any,
                     .Int,
                     .Float,
-                    .Unit,
                 };
-                if (match(source, &i, &types)) |token| {
-                    break :token token;
-                } else {
-                    while (i < source.len) {
-                        switch (source[i]) {
-                            'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
-                            else => break,
-                        }
-                    }
-                    break :token Token.Identifier;
-                }
+                break :token match(name, &types) orelse Token.Identifier;
             },
             '0'...'9' => token: {
                 while (i < source.len) {
@@ -210,17 +205,18 @@ pub fn tokenize(self: *Self) !void {
     self.ranges.append(.{ i, i }) catch panic("OOM", .{});
 }
 
-fn match(source: []const u8, start: *usize, comptime tokens: []const Token) ?Token {
+fn match(name: []const u8, comptime tokens: []const Token) ?Token {
     inline for (tokens) |token| {
-        if (startsWith(u8, source[start.*..], @tagName(token))) {
-            start.* += @tagName(token).len;
+        if (std.mem.eql(u8, name, @tagName(token)))
             return token;
-        }
     }
     return null;
 }
 
 fn fail(self: *Self, pos: usize) error{TokenizeError} {
-    self.error_message = std.fmt.allocPrint(self.allocator, "Tokenizer error at {}", .{pos}) catch panic("OOM", .{});
+    self.error_message = std.fmt.allocPrint(self.allocator, "Tokenizer error at {}: {s}", .{
+        pos,
+        self.source[pos..@min(pos + 100, self.source.len)],
+    }) catch panic("OOM", .{});
     return error.TokenizeError;
 }
