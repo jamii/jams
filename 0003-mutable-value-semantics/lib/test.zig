@@ -4,10 +4,12 @@ const panic = std.debug.panic;
 
 const Tokenizer = @import("./Tokenizer.zig");
 const Parser = @import("./Parser.zig");
+const Typer = @import("./Typer.zig");
 
 const Baton = struct {
     tokenizer: ?Tokenizer = null,
     parser: ?Parser = null,
+    typer: ?Typer = null,
 };
 
 fn run(
@@ -19,6 +21,8 @@ fn run(
     try baton.tokenizer.?.tokenize();
     baton.parser = Parser.init(allocator, baton.tokenizer.?);
     try baton.parser.?.parse();
+    baton.typer = Typer.init(allocator, baton.parser.?);
+    try baton.typer.?.check();
 }
 
 pub fn main() !void {
@@ -45,6 +49,7 @@ pub fn main() !void {
             const message = switch (err) {
                 error.TokenizeError => baton.tokenizer.?.error_message.?,
                 error.ParseError => baton.parser.?.error_message.?,
+                error.TypeError => baton.typer.?.error_message.?,
             };
             panic("{s}", .{message});
         };

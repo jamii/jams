@@ -18,6 +18,7 @@ pub const Node = union(enum) {
     decl: struct {
         name: []const u8,
         fields: []NodeId,
+        tail: NodeId,
     },
     field: struct {
         mutability: Mutability,
@@ -137,12 +138,15 @@ pub fn init(allocator: Allocator, tokenizer: Tokenizer) Self {
 }
 
 pub fn parse(self: *Self) !void {
-    while (true) {
-        if (self.peek() != .@"struct") break;
-        _ = try self.parseDecl();
-    }
-    _ = try self.parseExpr0();
+    _ = try self.parseDeclOrExpr();
     try self.expect(.eof);
+}
+
+fn parseDeclOrExpr(self: *Self) !NodeId {
+    return if (self.peek() == .@"struct")
+        self.parseDecl()
+    else
+        self.parseExpr0();
 }
 
 fn parseDecl(self: *Self) !NodeId {
@@ -156,9 +160,11 @@ fn parseDecl(self: *Self) !NodeId {
         fields.append(try self.parseField()) catch panic("OOM", .{});
     }
     try self.expect(.in);
+    const tail = try self.parseDeclOrExpr();
     return self.node(.{ .decl = .{
         .name = name,
         .fields = fields.toOwnedSlice() catch panic("OOM", .{}),
+        .tail = tail,
     } });
 }
 
