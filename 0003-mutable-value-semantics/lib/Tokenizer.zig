@@ -12,46 +12,34 @@ ranges: ArrayList([2]usize),
 error_message: ?[]const u8,
 
 pub const Token = enum {
-    comma,
-    colon,
-    semicolon,
-    open_paren,
-    close_paren,
-    open_bracket,
-    close_bracket,
-    open_brace,
-    close_brace,
-    ampersand,
-    question,
-    exclamation,
-    greater_than,
-    less_than,
-    period,
-    multiply,
-    divide,
-    plus_equals,
-    plus,
-    double_equals,
-    equals,
-    comment,
-    arrow,
-    minus_equals,
-    minus,
-    let,
-    in,
-    @"var",
-    @"struct",
-    as,
-    @"if",
-    fun,
-    inout,
-    @"while",
-    Any,
-    Int,
-    Float,
-    identifier,
-    Identifier,
     number,
+    string,
+    name,
+    let,
+    mut,
+    set,
+    @"fn",
+    @"if",
+    @"else",
+    @"while",
+    @"(",
+    @")",
+    @"[",
+    @"]",
+    @",",
+    @".",
+    @";",
+    @"=",
+    @"==",
+    @"<",
+    @"<=",
+    @">",
+    @">=",
+    @"+",
+    @"-",
+    @"/",
+    @"*",
+    comment,
     whitespace,
     eof,
 };
@@ -74,108 +62,85 @@ pub fn tokenize(self: *Self) !void {
         const char = source[i];
         i += 1;
         const token: Token = switch (char) {
-            ',' => .comma,
-            ':' => .colon,
-            ';' => .semicolon,
-            '(' => .open_paren,
-            ')' => .close_paren,
-            '[' => .open_bracket,
-            ']' => .close_bracket,
-            '{' => .open_brace,
-            '}' => .close_brace,
-            '&' => .ampersand,
-            '?' => .question,
-            '!' => .exclamation,
-            '>' => .greater_than,
-            '<' => .less_than,
-            '.' => .period,
-            '*' => .multiply,
-            '+' => token: {
-                const next_char = if (i < source.len) source[i] else 0;
-                i += 1;
-                switch (next_char) {
-                    '=' => break :token Token.plus_equals,
-                    else => {
-                        i -= 1;
-                        break :token Token.plus;
-                    },
-                }
-            },
+            '(' => Token.@"(",
+            ')' => Token.@")",
+            '[' => Token.@"[",
+            ']' => Token.@"]",
+            ',' => Token.@",",
+            '.' => Token.@".",
+            ';' => Token.@";",
             '=' => token: {
-                const next_char = if (i < source.len) source[i] else 0;
-                i += 1;
-                switch (next_char) {
-                    '=' => break :token Token.double_equals,
-                    else => {
-                        i -= 1;
-                        break :token Token.equals;
-                    },
+                if (i < source.len and source[i] == '=') {
+                    i += 1;
+                    break :token Token.@"==";
+                } else {
+                    break :token Token.@"=";
                 }
             },
+            '<' => token: {
+                if (i < source.len and source[i] == '=') {
+                    i += 1;
+                    break :token Token.@"<=";
+                } else {
+                    break :token Token.@"<";
+                }
+            },
+            '>' => token: {
+                if (i < source.len and source[i] == '=') {
+                    i += 1;
+                    break :token Token.@">=";
+                } else {
+                    break :token Token.@">";
+                }
+            },
+            '+' => Token.@"+",
+            '-' => Token.@"-",
             '/' => token: {
-                const next_char = if (i < source.len) source[i] else 0;
-                i += 1;
-                switch (next_char) {
-                    '/' => {
-                        while (i < source.len and source[i] != '\n') : (i += 1) {}
-                        break :token Token.comment;
-                    },
-                    else => {
-                        i -= 1;
-                        break :token Token.divide;
-                    },
+                if (i < source.len and source[i] == '/') {
+                    while (i < source.len and source[i] != '\n') : (i += 1) {}
+                    break :token Token.comment;
+                } else {
+                    break :token Token.@"/";
                 }
             },
-            '-' => token: {
-                const next_char = if (i < source.len) source[i] else 0;
-                i += 1;
-                switch (next_char) {
-                    '>' => break :token Token.arrow,
-                    '=' => break :token Token.minus_equals,
-                    else => {
-                        i -= 1;
-                        break :token Token.minus;
-                    },
-                }
-            },
+            '*' => Token.@"*",
             'a'...'z' => token: {
                 i -= 1;
                 while (i < source.len) {
                     switch (source[i]) {
-                        'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
+                        'a'...'z', 'A'...'Z', '0'...'9', '-' => i += 1,
                         else => break,
                     }
                 }
                 const name = source[start..i];
                 const keywords = [_]Token{
                     .let,
-                    .in,
-                    .@"var",
-                    .@"let",
-                    .@"struct",
-                    .as,
+                    .mut,
+                    .set,
+                    .@"fn",
                     .@"if",
-                    .fun,
-                    .inout,
+                    .@"else",
                     .@"while",
                 };
-                break :token match(name, &keywords) orelse Token.identifier;
+                break :token match(name, &keywords) orelse Token.name;
             },
-            'A'...'Z' => token: {
-                i -= 1;
-                while (i < source.len) {
+            '\'' => token: {
+                var escaped = false;
+                while (i < source.len) : (i += 1) {
                     switch (source[i]) {
-                        'a'...'z', 'A'...'Z', '0'...'9' => i += 1,
-                        else => break,
+                        '\'' => {
+                            if (!escaped) {
+                                i += 1;
+                                break :token Token.string;
+                            } else {
+                                escaped = false;
+                            }
+                        },
+                        '\\' => escaped = true,
+                        else => escaped = false,
                     }
                 }
-                const name = source[start..i];
-                const types = [_]Token{
-                    .Any,
-                    .Int,
-                    .Float,
-                };
-                break :token match(name, &types) orelse Token.Identifier;
+                return self.fail(start);
             },
             '0'...'9' => token: {
                 while (i < source.len) {

@@ -1,0 +1,51 @@
+// comment
+
+// number
+1;
+2.5;
+
+// string
+'foo';
+'this is a:\n \'string\'';
+
+// array
+[];
+[1, 2];
+[1, 2,];
+[
+  1,
+  2
+];
+[ 
+  1,
+  2,
+];
+
+// map
+[];
+[a = 1, 'b' = 2];
+
+// mixed
+['a', b=2];
+
+// variables
+let a = 'foo';
+let mut b = [foo = 'bar'];
+
+// assigment
+set a = 1;
+set b.foo = 'barbara';
+
+// if
+if a b else b.foo;
+if (a + b) b else (b.foo; blah);
+
+// while
+while a b;
+while (a + b) (b; c; d);
+
+// fn
+let add = fn [a,b] a + b;
+add[1,2];
+let add-into = fn [mut a, b] set a = a + b;
+add[mut a, 2];

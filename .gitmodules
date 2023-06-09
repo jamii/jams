@@ -1,3 +1,0 @@
-[submodule "0003-mutable-value-semantics/mvs-calculus"]
-	path = 0003-mutable-value-semantics/mvs-calculus
-	url = git@github.com:kyouko-taiga/mvs-calculus.git
