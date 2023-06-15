@@ -1,51 +1,191 @@
 // comment
+---
+0
 
-// number
-1;
-2.5;
+// integers
+1
+---
+1
 
-// string
-'foo';
-'this is a:\n \'string\'';
+// floats
+2.5
+---
+2.5
+
+// strings
+'foo'
+---
+'foo'
+
+// escapes
+'this is a:\n \'string\''
+---
+'this is a:\n \'string\''
+
+// empty
+[]
+---
+[]
 
 // array
-[];
-[1, 2];
-[1, 2,];
-[
-  1,
-  2
-];
-[ 
-  1,
-  2,
-];
+[1, 2]
+---
+[1, 2]
+
+// trailing commas
+[1, 2,]
+---
+[1, 2]
 
 // map
-[];
-[a = 1, 'b' = 2];
+// TODO make a decision about ordering
+[a = 1, 'b' = 2]
+---
+['b' = 2, 'a' = 1]
 
 // mixed
-['a', b=2];
+['a', b=2]
+---
+['a', 'b' = 2]
 
-// variables
+// let
 let a = 'foo';
-let mut b = [foo = 'bar'];
+a
+---
+'foo'
 
-// assigment
-set a = 1;
-set b.foo = 'barbara';
+// let and mixed
+let a = 42;
+[a, 'a', a=2]
+---
+[42, 'a', 'a' = 2]
 
-// if
-if a b else b.foo;
-if (a + b) b else (b.foo; blah);
+// set
+let mut a = 1;
+set a = a + 1;
+a
+---
+2
+
+// set const
+let a = 1;
+set a = a + 1;
+a
+---
+Cannot set a non-mut variable: a
+
+// set path
+let mut b = [foo = 2];
+set b.foo = 'bar';
+b
+---
+['foo' = 'bar']
+
+// set path const
+let b = [foo = 2];
+set b.foo = 'bar';
+b
+---
+Cannot set a non-mut variable: b
+
+// if false
+if 0 'true' else 'false'
+---
+'false'
+
+// if true
+if 1 'true' else 'false'
+---
+'true'
+
+// if other
+if 2 'true' else 'false'
+---
+Expected boolean (0 or 1). Found 2
 
 // while
-while a b;
-while (a + b) (b; c; d);
+let not = fn [x] if x 0 else 1;
+let mut a = 0;
+while (not[a == 4]) (
+  set a = a + 1;
+);
+a
+---
+4
 
 // fn
 let add = fn [a,b] a + b;
-add[1,2];
+add[1,2]
+---
+3
+
+// fn mut-var
+let add = fn [a,b] a + b;
+let mut x = 42;
+add[1,x]
+---
+43
+
+// fn mut-arg
+let add = fn [a,b] a + b;
+let mut x = 42;
+add[1,mut x]
+---
+Expected const arg, found mut arg
+
+// mut-fn
 let add-into = fn [mut a, b] set a = a + b;
-add[mut a, 2];
+let mut x = 42;
+add-into[mut x, 2];
+x
+---
+44
+
+// mut-fn const-arg
+let add-into = fn [mut a, b] set a = a + b;
+let mut x = 42;
+add-into[x, 2];
+x
+---
+Expected mut arg, found const arg
+
+// mut-fn const-var
+let add-into = fn [mut a, b] set a = a + b;
+let x = 42;
+add-into[mut x, 2];
+x
+---
+Cannot set a non-mut variable: x
+
+// mut fn const-var const-arg
+let add-into = fn [mut a, b] set a = a + b;
+let x = 42;
+add-into[x, 2];
+x
+---
+Expected mut arg, found const arg
+
+// copy number var->var
+let mut x = 1;
+let y = x;
+set x = x + 1;
+[x,y]
+---
+[2, 1]
+
+// copy map var->var
+let mut x = [foo = [bar = 1]];
+let y = x;
+set x.foo.bar = x.foo.bar + 1;
+[x,y]
+---
+[['foo' = ['bar' = 2]], ['foo' = ['bar' = 1]]]
+
+// capture by value
+let mut x = [foo = [bar = 1]];
+let y = fn [] x;
+set x.foo.bar = x.foo.bar + 1;
+[x,y[]]
+---
+[['foo' = ['bar' = 2]], ['foo' = ['bar' = 1]]]
+

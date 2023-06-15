@@ -1,5 +1,6 @@
 const std = @import("std");
 const panic = std.debug.panic;
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
@@ -87,12 +88,13 @@ pub fn init(allocator: Allocator, tokenizer: Tokenizer) Self {
 
 pub fn parse(self: *Self) !void {
     _ = try self.parseExpr0(.eof);
+    try self.expect(.eof);
 }
 
 fn parseExpr0(self: *Self, end: Token) error{ParseError}!ExprId {
     var exprs = ArrayList(ExprId).init(self.allocator);
     while (true) {
-        if (self.takeIf(end)) break;
+        if (self.peek() == end) break;
         exprs.append(try self.parseExpr1()) catch panic("OOM", .{});
         if (!self.takeIf(.@";")) break;
     }
@@ -193,6 +195,10 @@ fn parseExpr2(self: *Self) error{ParseError}!ExprId {
                 if (self.takeIf(.@"=")) {
                     value = try self.parseExpr1();
                     key_ix = null;
+                    const key_expr = self.exprs.items[key];
+                    if (key_expr == .name) {
+                        key = self.expr(.{ .string = key_expr.name });
+                    }
                 } else {
                     if (key_ix == null)
                         return self.fail("Positional elems must be before key/value elems", .{});
@@ -214,7 +220,7 @@ fn parseExpr2(self: *Self) error{ParseError}!ExprId {
             const name = self.lastTokenText();
             return self.expr(.{ .name = name });
         },
-        .@"let" => {
+        .let => {
             const mut = self.takeIf(.mut);
             try self.expect(.name);
             const name = self.lastTokenText();
@@ -226,7 +232,7 @@ fn parseExpr2(self: *Self) error{ParseError}!ExprId {
                 .value = value,
             } });
         },
-        .@"set" => {
+        .set => {
             const path = try self.parseExpr1();
             try self.expect(.@"=");
             const value = try self.parseExpr1();
@@ -292,7 +298,7 @@ fn parseNumber(self: *Self, text: []const u8) !f64 {
 fn parseString(self: *Self, text: []const u8) ![]u8 {
     var chars = ArrayList(u8).initCapacity(self.allocator, text.len) catch panic("OOM", .{});
     var escaped = false;
-    for (text) |char| {
+    for (text[1 .. text.len - 1]) |char| {
         if (escaped) {
             switch (char) {
                 'n' => chars.appendAssumeCapacity('\n'),
@@ -308,6 +314,7 @@ fn parseString(self: *Self, text: []const u8) ![]u8 {
             }
         }
     }
+    assert(escaped == false);
     return chars.toOwnedSlice() catch panic("OOM", .{});
 }
 
