@@ -1,0 +1,3 @@
+[submodule "0004-mvs-to-wasm/binaryen"]
+	path = 0004-mvs-to-wasm/binaryen
+	url = git@github.com:WebAssembly/binaryen.git
