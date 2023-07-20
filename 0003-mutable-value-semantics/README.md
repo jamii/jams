@@ -1,3 +1,1 @@
-https://kyouko-taiga.github.io/assets/papers/jot2022-mvs.pdf
-
-https://github.com/kyouko-taiga/mvs-calculus
+See <https://www.scattered-thoughts.net/log/0037/#dynamic-mutable-value-semantics>.
