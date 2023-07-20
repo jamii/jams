@@ -11,17 +11,32 @@ pub fn main() !void {
     const module = c.BinaryenModuleCreate();
     defer c.BinaryenModuleDispose(module);
 
-    // Create a function type for  i32 (i32, i32)
-    var ii = [_:0]c.BinaryenType{ c.BinaryenTypeInt32(), c.BinaryenTypeInt32() };
-    const params = c.BinaryenTypeCreate(&ii, 2);
-    const results = c.BinaryenTypeInt32();
+    // Import inc = runtime.add
+    {
+        var i = [_]c.BinaryenType{c.BinaryenTypeInt32()};
+        const params = c.BinaryenTypeCreate(&i, i.len);
+        c.BinaryenAddFunctionImport(module, "inc", "runtime", "add", params, c.BinaryenTypeInt32());
+    }
 
-    const x = c.BinaryenLocalGet(module, 0, c.BinaryenTypeInt32());
-    const y = c.BinaryenLocalGet(module, 1, c.BinaryenTypeInt32());
-    const add = c.BinaryenBinary(module, c.BinaryenAddInt32(), x, y);
+    // Define add_inc = fn [x, y] inc(x + y)
+    {
+        var ii = [_]c.BinaryenType{ c.BinaryenTypeInt32(), c.BinaryenTypeInt32() };
+        const params = c.BinaryenTypeCreate(&ii, ii.len);
+        const results = c.BinaryenTypeInt32();
 
-    const adder = c.BinaryenAddFunction(module, "adder", params, results, null, 0, add);
-    _ = adder;
+        const x = c.BinaryenLocalGet(module, 0, c.BinaryenTypeInt32());
+        const y = c.BinaryenLocalGet(module, 1, c.BinaryenTypeInt32());
+        const add = c.BinaryenBinary(module, c.BinaryenAddInt32(), x, y);
+        var operands = [_]c.BinaryenExpressionRef{add};
+        const inc = c.BinaryenCall(module, "inc", &operands, operands.len, c.BinaryenTypeInt32());
+
+        _ = c.BinaryenAddFunction(module, "add_inc", params, results, null, 0, inc);
+    }
+
+    // Export add_inc.
+    {
+        _ = c.BinaryenAddFunctionExport(module, "add_inc", "add_inc");
+    }
 
     assert(c.BinaryenModuleValidate(module));
 
