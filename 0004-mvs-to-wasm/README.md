@@ -7,4 +7,5 @@ export CC=./zigcc
 cmake . && make
 cd ../../
 zig build-exe ./lib/binaryen.zig -Ideps/binaryen/src/ deps/binaryen/lib/libbinaryen.a -lc++
+zig build-lib lib/runtime.zig -target wasm32-freestanding -dynamic -rdynamic
 ```
