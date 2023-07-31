@@ -8,17 +8,20 @@ const c = @cImport({
 usingnamespace c;
 
 pub fn main() !void {
-    const module = c.BinaryenModuleCreate();
+    const runtime_file = try std.fs.cwd().openFile("runtime.wasm", .{});
+    defer runtime_file.close();
+
+    const runtime_bytes = runtime_file.reader().readAllAlloc(std.heap.c_allocator, std.math.maxInt(usize)) catch unreachable;
+
+    const module = c.BinaryenModuleRead(@ptrCast([*c]u8, runtime_bytes), runtime_bytes.len);
     defer c.BinaryenModuleDispose(module);
 
-    // Import inc = runtime.add
+    // Don't export runtime functions.
     {
-        var i = [_]c.BinaryenType{c.BinaryenTypeInt32()};
-        const params = c.BinaryenTypeCreate(&i, i.len);
-        c.BinaryenAddFunctionImport(module, "inc", "runtime", "add", params, c.BinaryenTypeInt32());
+        c.BinaryenRemoveExport(module, "add");
     }
 
-    // Define add_inc = fn [x, y] inc(x + y)
+    // Define add_inc = fn [x, y] add(x + y)
     {
         var ii = [_]c.BinaryenType{ c.BinaryenTypeInt32(), c.BinaryenTypeInt32() };
         const params = c.BinaryenTypeCreate(&ii, ii.len);
@@ -28,7 +31,7 @@ pub fn main() !void {
         const y = c.BinaryenLocalGet(module, 1, c.BinaryenTypeInt32());
         const add = c.BinaryenBinary(module, c.BinaryenAddInt32(), x, y);
         var operands = [_]c.BinaryenExpressionRef{add};
-        const inc = c.BinaryenCall(module, "inc", &operands, operands.len, c.BinaryenTypeInt32());
+        const inc = c.BinaryenCall(module, "add", &operands, operands.len, c.BinaryenTypeInt32());
 
         _ = c.BinaryenAddFunction(module, "add_inc", params, results, null, 0, inc);
     }
