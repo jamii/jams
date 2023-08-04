@@ -13,7 +13,7 @@ pub fn main() !void {
 
     const runtime_bytes = runtime_file.reader().readAllAlloc(std.heap.c_allocator, std.math.maxInt(usize)) catch unreachable;
 
-    const module = c.BinaryenModuleRead(@ptrCast([*c]u8, runtime_bytes), runtime_bytes.len);
+    const module = c.BinaryenModuleRead(@as([*c]u8, @ptrCast(runtime_bytes)), runtime_bytes.len);
     defer c.BinaryenModuleDispose(module);
 
     // Don't export runtime functions.
@@ -51,6 +51,6 @@ pub fn main() !void {
     const file = try std.fs.cwd().createFile("hello.wasm", .{ .truncate = true });
     defer file.close();
 
-    const bytes = @ptrCast([*c]u8, result.binary)[0..result.binaryBytes];
+    const bytes = @as([*c]u8, @ptrCast(result.binary))[0..result.binaryBytes];
     try file.writeAll(bytes);
 }
