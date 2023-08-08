@@ -7,12 +7,37 @@ const assert = std.debug.assert;
 const Tokenizer = @import("./Tokenizer.zig");
 const Parser = @import("./Parser.zig");
 const Semantalyzer = @import("./Semantalyzer.zig");
+const Compiler = @import("./Compiler.zig");
 
 const Baton = struct {
     tokenizer: ?Tokenizer = null,
     parser: ?Parser = null,
     semantalyzer: ?Semantalyzer = null,
+    compiler: ?Compiler = null,
 };
+
+fn eval_wasm(
+    allocator: Allocator,
+    wasm: []const u8,
+) []const u8 {
+    const file = std.fs.cwd().createFile("test.wasm", .{ .truncate = true }) catch |err|
+        panic("Error opening test.wasm: {}", .{err});
+    defer file.close();
+
+    file.writeAll(wasm) catch |err|
+        panic("Error writing test.wasm: {}", .{err});
+
+    if (std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = &.{ "deno", "run", "--allow-read", "test.js" },
+        .max_output_bytes = std.math.maxInt(usize),
+    })) |result| {
+        assert(std.meta.eql(result.term, .{ .Exited = 0 }));
+        return result.stdout;
+    } else |err| {
+        panic("Error running test.js: {}", .{err});
+    }
+}
 
 fn eval(
     allocator: Allocator,
@@ -24,8 +49,15 @@ fn eval(
     baton.parser = Parser.init(allocator, baton.tokenizer.?);
     try baton.parser.?.parse();
     baton.semantalyzer = Semantalyzer.init(allocator, baton.parser.?);
-    const value = try baton.semantalyzer.?.semantalyze();
-    return std.fmt.allocPrint(allocator, "{}", .{value});
+    const value_interpreted = try baton.semantalyzer.?.semantalyze();
+    baton.compiler = Compiler.init(allocator, baton.parser.?);
+    const wasm = try baton.compiler.?.compile();
+    const value_compiled = eval_wasm(allocator, wasm);
+    try std.testing.expectEqualStrings(
+        std.fmt.allocPrint(allocator, "{}", .{value_interpreted}) catch panic("OOM", .{}),
+        value_compiled,
+    );
+    return value_compiled;
 }
 
 fn run(
@@ -46,7 +78,8 @@ fn run(
             error.TokenizeError => baton.tokenizer.?.error_message.?,
             error.ParseError => baton.parser.?.error_message.?,
             error.SemantalyzeError => baton.semantalyzer.?.error_message.?,
-            error.OutOfMemory => panic("OOM", .{}),
+            error.CompileError => baton.compiler.?.error_message.?,
+            error.TestExpectedEqual => "Semantalyzer and Compiler produced different results",
         };
     }
 }
