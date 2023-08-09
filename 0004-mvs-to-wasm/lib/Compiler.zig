@@ -62,44 +62,17 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         self.module = null;
     }
 
-    // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
-    // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
-    // Binaryen also doesn't provide an api to set the name of a global.
-    // So we have to make our own separate shadow stack :(
-    _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(2 * 1048576)));
-
-    // We also have to grow memory to support that second stack.
+    // Import runtime functions.
     {
-        c.BinaryenAddMemoryImport(
+        _ = c.BinaryenAddFunctionImport(
             self.module.?,
-            "memory",
+            "runtime_start",
             "runtime",
-            "memory",
-            0,
-        );
-        c.BinaryenSetStart(
-            self.module.?,
-            c.BinaryenAddFunction(
-                self.module.?,
-                "start",
-                c.BinaryenTypeNone(),
-                c.BinaryenTypeNone(),
-                null,
-                0,
-                c.BinaryenDrop(
-                    self.module.?,
-                    c.BinaryenMemoryGrow(
-                        self.module.?,
-                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, 16)))),
-                        "memory",
-                        false,
-                    ),
-                ),
-            ),
+            "start",
+            c.BinaryenTypeNone(),
+            c.BinaryenTypeNone(),
         );
     }
-
-    // Import runtime functions.
     {
         var params = [_]c.BinaryenType{
             c.BinaryenTypeInt32(),
@@ -112,6 +85,28 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             "createNumber",
             c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeNone(),
+        );
+    }
+
+    // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
+    // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
+    // Binaryen also doesn't provide an api to set the name of a global.
+    // So we have to make our own separate shadow stack :(
+    _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(2 * 1048576)));
+
+    // We also have to grow memory to support that second stack.
+    {
+        c.BinaryenSetStart(
+            self.module.?,
+            c.BinaryenAddFunction(
+                self.module.?,
+                "start",
+                c.BinaryenTypeNone(),
+                c.BinaryenTypeNone(),
+                null,
+                0,
+                self.runtimeCall("runtime_start", &.{}),
+            ),
         );
     }
 
@@ -185,6 +180,7 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
+            // TODO Return stack pointer!
             return self.runtimeCall(
                 "createNumber",
                 &.{

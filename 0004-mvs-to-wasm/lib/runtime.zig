@@ -1,5 +1,6 @@
 const std = @import("std");
 const panic = std.debug.panic;
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
@@ -173,6 +174,10 @@ const global_allocator = std.heap.wasm_allocator;
 
 fn oom() noreturn {
     panic("OOM", .{});
+}
+
+export fn start() void {
+    assert(@wasmMemoryGrow(0, 16) >= 16);
 }
 
 export fn createNumber(ptr: *Value, number: f64) void {

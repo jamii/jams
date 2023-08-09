@@ -29,7 +29,9 @@ fn eval_wasm(
 
     if (std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &.{ "./deps/binaryen/bin/wasm-merge", "runtime.wasm", "runtime", "test-without-runtime.wasm", "test", "-o", "test.wasm" },
+        .argv = &.{
+            "./deps/binaryen/bin/wasm-merge", "runtime.wasm", "runtime", "test-without-runtime.wasm", "test", "-o", "test.wasm",
+        },
         .max_output_bytes = std.math.maxInt(usize),
     })) |result| {
         assert(std.meta.eql(result.term, .{ .Exited = 0 }));
