@@ -24,6 +24,7 @@ error_message: ?[]const u8,
 
 pub const Scope = struct {
     wasm_var_next: usize,
+    len_max: usize,
     bindings: ArrayList(Binding),
 };
 pub const Binding = struct {
@@ -54,25 +55,65 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         panic("Error reading runtime.wasm: {}", .{err});
     defer self.allocator.free(runtime_bytes);
 
-    self.module = c.BinaryenModuleRead(@as([*c]u8, @ptrCast(runtime_bytes)), runtime_bytes.len);
+    //self.module = c.BinaryenModuleRead(@as([*c]u8, @ptrCast(runtime_bytes)), runtime_bytes.len);
+    self.module = c.BinaryenModuleCreate();
     defer {
         c.BinaryenModuleDispose(self.module.?);
         self.module = null;
     }
-    
-    //// (memory 0) already exists, but doesn't have a name.
-    //void BinaryenSetMemory(self.module.?,
-    //                                16,
-    //                                BinaryenIndex maximum,
-    //                                const char* exportName,
-    //                                const char** segments,
-    //                                bool* segmentPassive,
-    //                                BinaryenExpressionRef* segmentOffsets,
-    //                                BinaryenIndex* segmentSizes,
-    //                                BinaryenIndex numSegments,
-    //                                bool shared,
-    //                                bool memory64,
-    //                                const char* name);
+
+    // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
+    // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
+    // Binaryen also doesn't provide an api to set the name of a global.
+    // So we have to make our own separate shadow stack :(
+    _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(2 * 1048576)));
+
+    // We also have to grow memory to support that second stack.
+    {
+        c.BinaryenAddMemoryImport(
+            self.module.?,
+            "memory",
+            "runtime",
+            "memory",
+            0,
+        );
+        c.BinaryenSetStart(
+            self.module.?,
+            c.BinaryenAddFunction(
+                self.module.?,
+                "start",
+                c.BinaryenTypeNone(),
+                c.BinaryenTypeNone(),
+                null,
+                0,
+                c.BinaryenDrop(
+                    self.module.?,
+                    c.BinaryenMemoryGrow(
+                        self.module.?,
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, 16)))),
+                        "memory",
+                        false,
+                    ),
+                ),
+            ),
+        );
+    }
+
+    // Import runtime functions.
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeFloat64(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "createNumber",
+            "runtime",
+            "createNumber",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
 
     // TODO Mangle main?
     _ = try self.compileFn("main", &.{}, self.parser.exprs.items.len - 1);
@@ -94,6 +135,7 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     // TODO How to retrieve closure environment?
     var scope = Scope{
         .wasm_var_next = 1, // Reserve param 0 for return value.
+        .len_max = 0,
         .bindings = ArrayList(Binding).initCapacity(self.allocator, params.len) catch oom(),
     };
     defer scope.bindings.deinit();
@@ -143,12 +185,24 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
-            return self.literalNumber(number);
+            return self.runtimeCall(
+                "createNumber",
+                &.{
+                    self.stackPtr(0), // TODO
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
+                },
+            );
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
-                return self.literalNumber(0);
+                return self.runtimeCall(
+                    "createNumber",
+                    &.{
+                        self.stackPtr(0), // TODO
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(0)),
+                    },
+                );
             } else {
                 const block = self.allocator.alloc(c.BinaryenExpressionRef, child_expr_ids.len) catch oom();
                 for (block, child_expr_ids) |*expr_ref, child_expr_id| {
@@ -165,52 +219,48 @@ fn scopePut(scope: *Scope, _binding: Binding) void {
     var binding = _binding;
     binding.wasm_var = scope.wasm_var_next;
     scope.wasm_var_next += 1;
+    scope.len_max = @max(scope.len_max, scope.bindings.items.len);
     scope.bindings.append(binding) catch oom();
 }
 
-fn literalNumber(self: *Self, number: f64) c.BinaryenExpressionRef {
-    var block = [_]c.BinaryenExpressionRef{
-        // Alloc stack space.
-        self.stackPush(@sizeOf(Kind) + @sizeOf(f64)),
-        // Set type tag.
-        c.BinaryenStore(
-            self.module.?,
-            @sizeOf(Kind),
-            0,
-            0,
-            c.BinaryenGlobalGet(self.module.?, "__stack_pointer", c.BinaryenTypeInt32()),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@intFromEnum(Kind.number))),
-            c.BinaryenTypeInt32(),
-            null,
-        ),
-        // Set value.
-        c.BinaryenStore(
-            self.module.?,
-            @sizeOf(f64),
-            @sizeOf(Kind),
-            0, // TODO Will this be misaligned? Should I do value first?
-            c.BinaryenGlobalGet(self.module.?, "__stack_pointer", c.BinaryenTypeInt32()),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
-            c.BinaryenTypeFloat64(),
-            null,
-        ),
-        // Return pointer.
-        c.BinaryenGlobalGet(self.module.?, "__stack_pointer", c.BinaryenTypeInt32()),
-    };
-    return c.BinaryenBlock(self.module.?, null, &block, block.len, c.BinaryenTypeInt32());
-}
-
-fn stackPush(self: *Self, bytes_count: u32) c.BinaryenExpressionRef {
-    // TODO Will this trap on stack overflow?
+fn stackPush(self: *Self, offset: u32) c.BinaryenExpressionRef {
     return c.BinaryenGlobalSet(
         self.module.?,
-        "__stack_pointer",
+        "__yet_another_stack_pointer",
         c.BinaryenBinary(
             self.module.?,
             c.BinaryenSubInt32(),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(bytes_count))),
-            c.BinaryenGlobalGet(self.module.?, "__stack_pointer", c.BinaryenTypeInt32()),
+            c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset))),
         ),
+    );
+}
+
+fn stackPop(self: *Self, offset: u32) c.BinaryenExpressionRef {
+    return c.BinaryenGlobalSet(
+        self.module.?,
+        "__yet_another_stack_pointer",
+        self.stackPtr(offset),
+    );
+}
+
+fn stackPtr(self: *Self, offset: u32) c.BinaryenExpressionRef {
+    // TODO Will this trap on stack overflow?
+    return c.BinaryenBinary(
+        self.module.?,
+        c.BinaryenAddInt32(),
+        c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
+        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset))),
+    );
+}
+
+fn runtimeCall(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return c.BinaryenCall(
+        self.module.?,
+        fn_name,
+        @constCast(args.ptr),
+        @intCast(args.len),
+        c.BinaryenTypeNone(),
     );
 }
 

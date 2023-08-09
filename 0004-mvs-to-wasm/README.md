@@ -6,6 +6,6 @@ export CXX=./zigc++
 export CC=./zigcc
 cmake . && make
 cd ../../
-zig build-lib lib/runtime.zig -target wasm32-freestanding -mcpu generic+multivalue -dynamic -rdynamic -O ReleaseSafe
+zig build-lib lib/runtime.zig -target wasm32-freestanding -dynamic -rdynamic -O ReleaseSafe -fstrip
 zig run -lc -lc++ -Ideps/binaryen/src/ deps/binaryen/lib/libbinaryen.a lib/test.zig -- test/basic
 ```

@@ -20,12 +20,22 @@ fn eval_wasm(
     allocator: Allocator,
     wasm: []const u8,
 ) []const u8 {
-    const file = std.fs.cwd().createFile("test.wasm", .{ .truncate = true }) catch |err|
-        panic("Error opening test.wasm: {}", .{err});
+    const file = std.fs.cwd().createFile("test-without-runtime.wasm", .{ .truncate = true }) catch |err|
+        panic("Error opening test-without-runtime.wasm: {}", .{err});
     defer file.close();
 
     file.writeAll(wasm) catch |err|
-        panic("Error writing test.wasm: {}", .{err});
+        panic("Error writing test-without-runtime.wasm: {}", .{err});
+
+    if (std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = &.{ "./deps/binaryen/bin/wasm-merge", "runtime.wasm", "runtime", "test-without-runtime.wasm", "test", "-o", "test.wasm" },
+        .max_output_bytes = std.math.maxInt(usize),
+    })) |result| {
+        assert(std.meta.eql(result.term, .{ .Exited = 0 }));
+    } else |err| {
+        panic("Error running wasm-merge: {}", .{err});
+    }
 
     if (std.ChildProcess.exec(.{
         .allocator = allocator,
