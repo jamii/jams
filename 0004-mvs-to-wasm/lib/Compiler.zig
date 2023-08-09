@@ -87,6 +87,20 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             c.BinaryenTypeNone(),
         );
     }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "copy",
+            "runtime",
+            "copy",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
 
     // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
     // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
@@ -138,7 +152,22 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     for (params) |param| {
         scopePut(&scope, param);
     }
-    const body_ref = try self.compileExpr(&scope, body);
+
+    var block = [_]c.BinaryenExpressionRef{
+        try self.compileExpr(&scope, body),
+        // Copy result to return value.
+        self.runtimeCall("copy", &.{
+            c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32()),
+            self.stackPtr(0), // TODO
+        }),
+    };
+    const body_ref = c.BinaryenBlock(
+        self.module.?,
+        null,
+        &block,
+        @intCast(block.len),
+        c.BinaryenTypeNone(),
+    );
 
     const wasm_params_types = self.allocator.alloc(
         c.BinaryenType,
@@ -180,14 +209,17 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
-            // TODO Return stack pointer!
-            return self.runtimeCall(
-                "createNumber",
-                &.{
-                    self.stackPtr(0), // TODO
-                    c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
-                },
-            );
+            var block = [_]c.BinaryenExpressionRef{
+                self.runtimeCall(
+                    "createNumber",
+                    &.{
+                        self.stackPtr(0), // TODO
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
+                    },
+                ),
+                self.stackPtr(0), // TODO
+            };
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {

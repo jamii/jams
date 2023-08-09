@@ -191,3 +191,11 @@ export fn createString(ptr: *Value, string_ptr: [*]const u8, string_len: usize) 
 export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
 }
+
+export fn move(ptr_a: *Value, ptr_b: *const Value) void {
+    ptr_a.* = ptr_b.*;
+}
+
+export fn copy(ptr_a: *Value, ptr_b: *const Value) void {
+    ptr_a.* = ptr_b.copy(global_allocator);
+}
