@@ -101,6 +101,19 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             c.BinaryenTypeNone(),
         );
     }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "print",
+            "runtime",
+            "print",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
 
     // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
     // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
@@ -124,8 +137,7 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         );
     }
 
-    // TODO Mangle main?
-    _ = try self.compileFn("main", &.{}, self.parser.exprs.items.len - 1);
+    _ = try self.compileMain(self.parser.exprs.items.len - 1);
     _ = c.BinaryenAddFunctionExport(self.module.?, "main", "main");
 
     if (!c.BinaryenModuleValidate(self.module.?))
@@ -136,6 +148,56 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
 
     const result_bytes = @as([*c]u8, @ptrCast(result.binary))[0..result.binaryBytes];
     return self.allocator.dupe(u8, result_bytes) catch oom();
+}
+
+fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunctionRef {
+    var scope = Scope{
+        .wasm_var_next = 0,
+        .len_max = 0,
+        .bindings = ArrayList(Binding).init(self.allocator),
+    };
+    defer scope.bindings.deinit();
+
+    var block = [_]c.BinaryenExpressionRef{
+        try self.compileExpr(&scope, body),
+        // Print result.
+        self.runtimeCall("print", &.{
+            self.stackPtr(0), // TODO
+        }),
+    };
+    const body_ref = c.BinaryenBlock(
+        self.module.?,
+        null,
+        &block,
+        @intCast(block.len),
+        c.BinaryenTypeNone(),
+    );
+
+    const wasm_params = c.BinaryenTypeCreate(null, 0);
+    const wasm_results = c.BinaryenTypeCreate(null, 0);
+
+    const wasm_vars_types = self.allocator.alloc(
+        c.BinaryenType,
+        // Count any variables needed.
+        scope.wasm_var_next,
+    ) catch oom();
+    defer self.allocator.free(wasm_vars_types);
+
+    for (wasm_vars_types) |*wasm_var_type| wasm_var_type.* = c.BinaryenTypeInt32();
+
+    // TODO Need to mangle names for closures?
+    const fn_ref = c.BinaryenAddFunction(
+        self.module.?,
+    // TODO Mangle main?
+        "main",
+        wasm_params,
+        wasm_results,
+        wasm_vars_types.ptr,
+        @intCast(wasm_vars_types.len),
+        body_ref,
+    );
+
+    return fn_ref;
 }
 
 fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: ExprId) error{CompileError}!c.BinaryenFunctionRef {
@@ -188,7 +250,7 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     ) catch oom();
     defer self.allocator.free(wasm_vars_types);
 
-    for (wasm_vars_types) |*wasm_param| wasm_param.* = c.BinaryenTypeInt32();
+    for (wasm_vars_types) |*wasm_var_type| wasm_var_type.* = c.BinaryenTypeInt32();
 
     // TODO Need to mangle names for closures?
     const fn_ref = c.BinaryenAddFunction(

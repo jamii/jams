@@ -67,7 +67,7 @@ fn eval(
     const value_compiled = eval_wasm(allocator, wasm);
     try std.testing.expectEqualStrings(
         std.fmt.allocPrint(allocator, "{}", .{value_interpreted}) catch panic("OOM", .{}),
-        value_compiled,
+        std.mem.trim(u8, value_compiled, "\n"),
     );
     return value_compiled;
 }

@@ -199,3 +199,12 @@ export fn move(ptr_a: *Value, ptr_b: *const Value) void {
 export fn copy(ptr_a: *Value, ptr_b: *const Value) void {
     ptr_a.* = ptr_b.copy(global_allocator);
 }
+
+extern fn print_string(ptr: [*]const u8, len: usize) void;
+
+export fn print(ptr: *Value) void {
+    const string = std.fmt.allocPrint(global_allocator, "{}", .{ptr.*}) catch oom();
+    defer global_allocator.free(string);
+
+    print_string(string.ptr, string.len);
+}
