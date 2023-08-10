@@ -24,7 +24,8 @@ error_message: ?[]const u8,
 
 pub const Scope = struct {
     wasm_var_next: usize,
-    len_max: usize,
+    stack_offset: u32,
+    stack_offset_max: u32,
     bindings: ArrayList(Binding),
 };
 pub const Binding = struct {
@@ -47,15 +48,16 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     // TODO Once stable, use:
     //const runtime_bytes = @embedFile("../runtime.wasm");
 
-    const runtime_file = std.fs.cwd().openFile("runtime.wasm", .{}) catch |err|
-        panic("Error opening runtime.wasm: {}", .{err});
-    defer runtime_file.close();
+    //const runtime_file = std.fs.cwd().openFile("runtime.wasm", .{}) catch |err|
+    //    panic("Error opening runtime.wasm: {}", .{err});
+    //defer runtime_file.close();
 
-    const runtime_bytes = runtime_file.reader().readAllAlloc(self.allocator, std.math.maxInt(usize)) catch |err|
-        panic("Error reading runtime.wasm: {}", .{err});
-    defer self.allocator.free(runtime_bytes);
+    //const runtime_bytes = runtime_file.reader().readAllAlloc(self.allocator, std.math.maxInt(usize)) catch |err|
+    //    panic("Error reading runtime.wasm: {}", .{err});
+    //defer self.allocator.free(runtime_bytes);
 
     //self.module = c.BinaryenModuleRead(@as([*c]u8, @ptrCast(runtime_bytes)), runtime_bytes.len);
+
     self.module = c.BinaryenModuleCreate();
     defer {
         c.BinaryenModuleDispose(self.module.?);
@@ -153,7 +155,8 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
 fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunctionRef {
     var scope = Scope{
         .wasm_var_next = 0,
-        .len_max = 0,
+        .stack_offset = 0,
+        .stack_offset_max = 0,
         .bindings = ArrayList(Binding).init(self.allocator),
     };
     defer scope.bindings.deinit();
@@ -195,14 +198,17 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     // TODO How to retrieve closure environment?
     var scope = Scope{
         .wasm_var_next = 1, // Reserve param 0 for return value.
-        .len_max = 0,
+        .stack_offset = 0,
+        .stack_offset_max = 0,
         .bindings = ArrayList(Binding).initCapacity(self.allocator, params.len) catch oom(),
     };
     defer scope.bindings.deinit();
 
     for (params) |param| {
-        scopePut(&scope, param);
+        scopePush(&scope, param);
     }
+    scope.stack_offset = 0;
+    scope.stack_offset_max = 0;
 
     var block = [_]c.BinaryenExpressionRef{
         try self.compileExpr(&scope, body),
@@ -260,12 +266,12 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
-            return self.createNumber(number);
+            return self.createNumber(number, scope.stack_offset);
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
-                return self.createNumber(0);
+                return self.createNumber(0, scope.stack_offset);
             } else {
                 const block = self.allocator.alloc(c.BinaryenExpressionRef, child_expr_ids.len) catch oom();
                 for (block, child_expr_ids, 0..) |*expr_ref, child_expr_id, child_ix| {
@@ -280,26 +286,32 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     }
 }
 
-fn createNumber(self: *Self, number: f64) c.BinaryenExpressionRef {
+fn createNumber(self: *Self, number: f64, offset: u32) c.BinaryenExpressionRef {
     var block = [_]c.BinaryenExpressionRef{
         self.runtimeCall(
             "createNumber",
             &.{
-                self.stackPtr(0), // TODO
+                self.stackPtr(offset), // TODO
                 c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
             },
         ),
-        self.stackPtr(0), // TODO
+        self.stackPtr(offset), // TODO
     };
     return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
 }
 
-fn scopePut(scope: *Scope, _binding: Binding) void {
+fn scopePush(scope: *Scope, _binding: Binding) void {
     var binding = _binding;
     binding.wasm_var = scope.wasm_var_next;
     scope.wasm_var_next += 1;
-    scope.len_max = @max(scope.len_max, scope.bindings.items.len);
+    scope.stack_offset += 1;
+    scope.stack_offset_max = @max(scope.stack_offset_max, scope.stack_offset);
     scope.bindings.append(binding) catch oom();
+}
+
+fn scopePop(scope: *Scope) void {
+    scope.stack_offset -= 1;
+    scope.bindings.pop();
 }
 
 fn stackPush(self: *Self, offset: u32) c.BinaryenExpressionRef {
@@ -310,7 +322,7 @@ fn stackPush(self: *Self, offset: u32) c.BinaryenExpressionRef {
             self.module.?,
             c.BinaryenSubInt32(),
             c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset))),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
         ),
     );
 }
@@ -329,7 +341,7 @@ fn stackPtr(self: *Self, offset: u32) c.BinaryenExpressionRef {
         self.module.?,
         c.BinaryenAddInt32(),
         c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset))),
+        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
     );
 }
 
