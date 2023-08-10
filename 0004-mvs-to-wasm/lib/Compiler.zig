@@ -158,20 +158,9 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
     };
     defer scope.bindings.deinit();
 
-    var block = [_]c.BinaryenExpressionRef{
+    const body_ref = self.runtimeCall("print", &.{
         try self.compileExpr(&scope, body),
-        // Print result.
-        self.runtimeCall("print", &.{
-            self.stackPtr(0), // TODO
-        }),
-    };
-    const body_ref = c.BinaryenBlock(
-        self.module.?,
-        null,
-        &block,
-        @intCast(block.len),
-        c.BinaryenTypeNone(),
-    );
+    });
 
     const wasm_params = c.BinaryenTypeCreate(null, 0);
     const wasm_results = c.BinaryenTypeCreate(null, 0);
@@ -188,7 +177,7 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
     // TODO Need to mangle names for closures?
     const fn_ref = c.BinaryenAddFunction(
         self.module.?,
-    // TODO Mangle main?
+        // TODO Mangle main?
         "main",
         wasm_params,
         wasm_results,
@@ -271,38 +260,38 @@ fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
-            var block = [_]c.BinaryenExpressionRef{
-                self.runtimeCall(
-                    "createNumber",
-                    &.{
-                        self.stackPtr(0), // TODO
-                        c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
-                    },
-                ),
-                self.stackPtr(0), // TODO
-            };
-            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
+            return self.createNumber(number);
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
-                return self.runtimeCall(
-                    "createNumber",
-                    &.{
-                        self.stackPtr(0), // TODO
-                        c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(0)),
-                    },
-                );
+                return self.createNumber(0);
             } else {
                 const block = self.allocator.alloc(c.BinaryenExpressionRef, child_expr_ids.len) catch oom();
-                for (block, child_expr_ids) |*expr_ref, child_expr_id| {
+                for (block, child_expr_ids, 0..) |*expr_ref, child_expr_id, child_ix| {
                     expr_ref.* = try self.compileExpr(scope, child_expr_id);
+                    if (child_ix < child_expr_ids.len - 1)
+                        expr_ref.* = c.BinaryenDrop(self.module.?, expr_ref.*);
                 }
                 return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeInt32());
             }
         },
         else => return self.fail("Unsupported expr: {}", .{expr}),
     }
+}
+
+fn createNumber(self: *Self, number: f64) c.BinaryenExpressionRef {
+    var block = [_]c.BinaryenExpressionRef{
+        self.runtimeCall(
+            "createNumber",
+            &.{
+                self.stackPtr(0), // TODO
+                c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
+            },
+        ),
+        self.stackPtr(0), // TODO
+    };
+    return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
 }
 
 fn scopePut(scope: *Scope, _binding: Binding) void {
