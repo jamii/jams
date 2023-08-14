@@ -155,6 +155,9 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     // So we have to make our own separate shadow stack :(
     _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)));
 
+    _ = try self.compileMain(self.parser.exprs.items.len - 1);
+    _ = c.BinaryenAddFunctionExport(self.module.?, "main", "main");
+
     // Start function.
     {
         const block = self.allocator.alloc(c.BinaryenExpressionRef, self.strings.items.len + 1) catch oom();
@@ -202,9 +205,6 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             ),
         );
     }
-
-    _ = try self.compileMain(self.parser.exprs.items.len - 1);
-    _ = c.BinaryenAddFunctionExport(self.module.?, "main", "main");
 
     if (!c.BinaryenModuleValidate(self.module.?))
         return self.fail("Produced an invalid wasm module", .{});

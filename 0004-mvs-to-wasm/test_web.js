@@ -1,4 +1,5 @@
 let memory = undefined;
+let bytes = undefined;
 
 function print_string(ptr, len) {
   let str = (new TextDecoder()).decode(new Uint8Array(memory.buffer, ptr, len));
@@ -10,6 +11,7 @@ WebAssembly.instantiateStreaming(fetch("./test.wasm"), {
   (results) => {
     const wasmInstance = results.instance;
     memory = wasmInstance.exports.memory;
+    bytes = new Uint8Array(memory.buffer);
     wasmInstance.exports.main();
   },
 );
