@@ -17,6 +17,9 @@ pub const Value = union(Kind) {
     map: Map,
     @"fn": Fn,
 
+    // TODO
+    pub const wasmSizeOf = 32;
+
     pub fn kind(self: Value) Kind {
         return std.meta.activeTag(self);
     }

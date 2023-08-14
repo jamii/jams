@@ -387,11 +387,9 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 const value_offset = shadowPush(scope);
                 const key_location = self.shadowPtr(key_offset);
                 const value_location = self.shadowPtr(value_offset);
-                const key = try self.compileExpr(scope, self.shadowPtr(key_offset), key_expr_id);
-                const value = try self.compileExpr(scope, self.shadowPtr(value_offset), value_expr_id);
                 var set_block = [_]c.BinaryenExpressionRef{
-                    key,
-                    value,
+                    try self.compileExpr(scope, self.shadowPtr(key_offset), key_expr_id),
+                    try self.compileExpr(scope, self.shadowPtr(value_offset), value_expr_id),
                     self.mapSet(result_location, key_location, value_location),
                 };
                 set_expr.* = c.BinaryenBlock(self.module.?, null, &set_block, @intCast(set_block.len), c.BinaryenTypeNone());
@@ -488,8 +486,8 @@ fn bindingPop(scope: *Scope, mut: bool, name: []const u8) void {
 
 fn shadowPush(scope: *Scope) u32 {
     const stack_offset = scope.stack_offset_next;
-    scope.stack_offset_max = @max(scope.stack_offset_max, stack_offset);
     scope.stack_offset_next += 1;
+    scope.stack_offset_max = @max(scope.stack_offset_max, scope.stack_offset_next);
     return stack_offset;
 }
 
@@ -506,7 +504,7 @@ fn framePush(self: *Self, offset: u32) c.BinaryenExpressionRef {
             self.module.?,
             c.BinaryenSubInt32(),
             c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * runtime.Value.wasmSizeOf))),
         ),
     );
 }
@@ -519,7 +517,7 @@ fn framePop(self: *Self, offset: u32) c.BinaryenExpressionRef {
             self.module.?,
             c.BinaryenAddInt32(),
             c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * runtime.Value.wasmSizeOf))),
         ),
     );
 }
@@ -530,7 +528,7 @@ fn shadowPtr(self: *Self, offset: u32) c.BinaryenExpressionRef {
         self.module.?,
         c.BinaryenAddInt32(),
         c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
+        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * runtime.Value.wasmSizeOf))),
     );
 }
 
