@@ -161,9 +161,18 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
     };
     defer scope.bindings.deinit();
 
-    const body_ref = self.runtimeCall("print", &.{
-        try self.compileExpr(&scope, body),
-    });
+    const shadow_offset = shadowPush(&scope);
+    const result_location = self.shadowPtr(shadow_offset);
+    const body_inner_ref = try self.compileExpr(&scope, result_location, body);
+    shadowPop(&scope, shadow_offset);
+
+    var block = [_]c.BinaryenExpressionRef{
+        self.framePush(scope.stack_offset_max),
+        body_inner_ref,
+        self.runtimeCall("print", &.{result_location}),
+        self.framePop(scope.stack_offset_max),
+    };
+    const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
 
     const wasm_params = c.BinaryenTypeCreate(null, 0);
     const wasm_results = c.BinaryenTypeCreate(null, 0);
@@ -197,7 +206,7 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
 
     // TODO How to retrieve closure environment?
     var scope = Scope{
-        .wasm_var_next = 1, // Reserve param 0 for return value.
+        .wasm_var_next = 1, // Reserve param 0 for result_location.
         .stack_offset = 0,
         .stack_offset_max = 0,
         .bindings = ArrayList(Binding).initCapacity(self.allocator, params.len) catch oom(),
@@ -210,25 +219,19 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     scope.stack_offset = 0;
     scope.stack_offset_max = 0;
 
+    const result_location = c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32());
+    const body_inner_ref = try self.compileExpr(&scope, result_location, body);
+
     var block = [_]c.BinaryenExpressionRef{
-        try self.compileExpr(&scope, body),
-        // Copy result to return value.
-        self.runtimeCall("copy", &.{
-            c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32()),
-            self.stackPtr(0), // TODO
-        }),
+        self.framePush(scope.stack_offset_max),
+        body_inner_ref,
+        self.framePop(scope.stack_offset_max),
     };
-    const body_ref = c.BinaryenBlock(
-        self.module.?,
-        null,
-        &block,
-        @intCast(block.len),
-        c.BinaryenTypeNone(),
-    );
+    const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
 
     const wasm_params_types = self.allocator.alloc(
         c.BinaryenType,
-        // Reserve param 0 for return value.
+        // Reserve param 0 for result_location.
         params.len + 1,
     ) catch oom();
     defer self.allocator.free(wasm_params_types);
@@ -240,7 +243,7 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
 
     const wasm_vars_types = self.allocator.alloc(
         c.BinaryenType,
-        // Count any variables needed beyond params and return value.
+        // Count any variables needed beyond params and result_location.
         scope.wasm_var_next - 1 - params.len,
     ) catch oom();
     defer self.allocator.free(wasm_vars_types);
@@ -262,51 +265,50 @@ fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: Exp
     return fn_ref;
 }
 
-fn compileExpr(self: *Self, scope: *Scope, expr_id: ExprId) error{CompileError}!c.BinaryenExpressionRef {
+fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpressionRef, expr_id: ExprId) error{CompileError}!c.BinaryenExpressionRef {
     const expr = self.parser.exprs.items[expr_id];
     switch (expr) {
         .number => |number| {
-            return self.createNumber(scope, number);
+            return self.createNumber(result_location, number);
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
-                return self.createNumber(scope, 0);
+                return self.createNumber(result_location, 0);
             } else {
                 const block = self.allocator.alloc(c.BinaryenExpressionRef, child_expr_ids.len) catch oom();
                 for (block, child_expr_ids, 0..) |*expr_ref, child_expr_id, child_ix| {
-                    expr_ref.* = try self.compileExpr(scope, child_expr_id);
-                    if (child_ix < child_expr_ids.len - 1)
-                        expr_ref.* = c.BinaryenDrop(self.module.?, expr_ref.*);
+                    if (child_ix < child_expr_ids.len - 1) {
+                        const shadow_offset = shadowPush(scope);
+                        expr_ref.* = try self.compileExpr(scope, self.shadowPtr(shadow_offset), child_expr_id);
+                        shadowPop(scope, shadow_offset);
+                    } else {
+                        expr_ref.* = try self.compileExpr(scope, result_location, child_expr_id);
+                    }
                 }
-                return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeInt32());
+                return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
             }
         },
         else => return self.fail("Unsupported expr: {}", .{expr}),
     }
 }
 
-fn createNumber(self: *Self, scope: *Scope, number: f64) c.BinaryenExpressionRef {
-    const offset = shadowPush(scope);
-    var block = [_]c.BinaryenExpressionRef{
-        self.runtimeCall(
-            "createNumber",
-            &.{
-                self.shadowPtr(offset),
-                c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
-            },
-        ),
-        self.shadowPtr(offset),
-    };
-    return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
+fn createNumber(self: *Self, result_location: c.BinaryenExpressionRef, number: f64) c.BinaryenExpressionRef {
+    return self.runtimeCall(
+        "createNumber",
+        &.{
+            result_location,
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
+        },
+    );
 }
 
 fn bindingPush(scope: *Scope, mut: bool, name: []const u8) void {
     const wasm_var = scope.wasm_var_next;
     scope.wasm_var_next += 1;
-    
+
     const shadow_offset = shadowPush(scope);
-    
+
     scope.bindings.append(.{
         .mut = mut,
         .name = name,
@@ -364,12 +366,10 @@ fn shadowPtr(self: *Self, offset: u32) c.BinaryenExpressionRef {
     // TODO How to trap before hitting the runtime's constant data?
     return c.BinaryenBinary(
         self.module.?,
-        c.BinaryenSubInt32(),
+        c.BinaryenAddInt32(),
         c.BinaryenGlobalGet(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32()),
-        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(
-            // Add 1 so that we point at the start of the region instead of the end.
-            (offset + 1) * @sizeOf(runtime.Value)),
-    )));
+        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(offset * @sizeOf(runtime.Value)))),
+    );
 }
 
 fn runtimeCall(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpressionRef) c.BinaryenExpressionRef {
