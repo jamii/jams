@@ -30,7 +30,7 @@ fn eval_wasm(
     if (std.ChildProcess.exec(.{
         .allocator = allocator,
         .argv = &.{
-            "./deps/binaryen/bin/wasm-merge", "--enable-bulk-memory", "--enable-multi-memories", "runtime.wasm", "runtime", "test-without-runtime.wasm", "test", "-o", "test.wasm",
+            "./deps/binaryen/bin/wasm-merge", "runtime_wasm.wasm", "runtime", "test-without-runtime.wasm", "test", "-o", "test.wasm",
         },
         .max_output_bytes = std.math.maxInt(usize),
     })) |result| {

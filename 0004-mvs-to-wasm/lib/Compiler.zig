@@ -80,12 +80,15 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
 
     // Import runtime functions.
     {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+        };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
             "runtime_start",
             "runtime",
             "start",
-            c.BinaryenTypeNone(),
+            c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeNone(),
         );
     }
@@ -152,29 +155,40 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     // So we have to make our own separate shadow stack :(
     _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)));
 
-    // In order to have a data segment, binaryen insists that we define a memory.
+    // Start function.
     {
-        var segments = [_][*c]u8{self.strings.items.ptr};
-        var passives = [_]bool{true};
-        var offsets = [_]c.BinaryenExpressionRef{null};
-        var lens = [_]u32{@intCast(self.strings.items.len)};
-        c.BinaryenSetMemory(
-            self.module.?,
-            0,
-            0,
-            null,
-            &segments,
-            &passives,
-            &offsets,
-            &lens,
-            1,
-            false,
-            false,
-            "dummy",
-        );
-    }
+        const block = self.allocator.alloc(c.BinaryenExpressionRef, self.strings.items.len + 1) catch oom();
+        defer self.allocator.free(block);
 
-    {
+        // We have to grow memory to support that second stack, by calling `runtime.start`.
+        block[0] = self.runtimeCall(
+            "runtime_start",
+            &.{
+                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(
+                    std.math.divCeil(
+                        usize,
+                        data_start + self.strings.items.len,
+                        16 * 1024,
+                    ) catch unreachable,
+                ))))),
+            },
+        );
+
+        // Binaryen doesn't expose any way to create a passive data segment without also creating a memory.
+        // So we'll init string data in the grossest fashion.
+        for (block[1..], self.strings.items, 0..) |*expr, char, i| {
+            expr.* = c.BinaryenStore(
+                self.module.?,
+                1,
+                @intCast(i),
+                0,
+                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)),
+                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(char)),
+                c.BinaryenTypeInt32(),
+                null,
+            );
+        }
+
         c.BinaryenSetStart(
             self.module.?,
             c.BinaryenAddFunction(
@@ -184,9 +198,7 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
                 c.BinaryenTypeNone(),
                 null,
                 0,
-                // We have to grow memory to support that second stack, by calling `runtime.start`.
-                //self.runtimeCall("runtime_start", &.{}),
-                c.BinaryenMemoryInit(self.module.?, "0", c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)), c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(0)), c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.strings.items.len))))), null),
+                c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone()),
             ),
         );
     }

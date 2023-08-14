@@ -16,8 +16,8 @@ fn oom() noreturn {
     panic("OOM", .{});
 }
 
-export fn start() void {
-    assert(@wasmMemoryGrow(0, 16) >= 16);
+export fn start(pages: usize) void {
+    assert(@wasmMemoryGrow(0, pages) >= pages);
 }
 
 export fn createNumber(ptr: *Value, number: f64) void {
