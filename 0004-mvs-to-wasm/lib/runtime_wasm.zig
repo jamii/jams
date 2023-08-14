@@ -32,6 +32,10 @@ export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
 }
 
+export fn mapSet(ptr: *Value, key: *Value, value: *Value) void {
+    ptr.*.map.put(key.*, value.*) catch oom();
+}
+
 export fn move(ptr_a: *Value, ptr_b: *const Value) void {
     ptr_a.* = ptr_b.*;
 }

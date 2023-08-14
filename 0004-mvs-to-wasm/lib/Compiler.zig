@@ -124,6 +124,34 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     {
         var params = [_]c.BinaryenType{
             c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "createMap",
+            "runtime",
+            "createMap",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "mapSet",
+            "runtime",
+            "mapSet",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
         };
         _ = c.BinaryenAddFunctionImport(
@@ -199,8 +227,8 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             expr.* = self.runtimeCall(
                 "set_byte",
                 &.{
-                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(data_start+i))))),
-                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(char)),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(data_start + i))))),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(char)),
                 },
             );
         }
@@ -351,6 +379,27 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
         .string => |string| {
             return self.createString(result_location, string);
         },
+        .map => |map| {
+            const block = self.allocator.alloc(c.BinaryenExpressionRef, map.keys.len + 1) catch oom();
+            block[0] = self.createMap(result_location);
+            for (block[1..], map.keys, map.values) |*set_expr, key_expr_id, value_expr_id| {
+                const key_offset = shadowPush(scope);
+                const value_offset = shadowPush(scope);
+                const key_location = self.shadowPtr(key_offset);
+                const value_location = self.shadowPtr(value_offset);
+                const key = try self.compileExpr(scope, self.shadowPtr(key_offset), key_expr_id);
+                const value = try self.compileExpr(scope, self.shadowPtr(value_offset), value_expr_id);
+                var set_block = [_]c.BinaryenExpressionRef{
+                    key,
+                    value,
+                    self.mapSet(result_location, key_location, value_location),
+                };
+                set_expr.* = c.BinaryenBlock(self.module.?, null, &set_block, @intCast(set_block.len), c.BinaryenTypeNone());
+                shadowPop(scope, value_offset);
+                shadowPop(scope, key_offset);
+            }
+            return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
+        },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
@@ -392,6 +441,26 @@ fn createString(self: *Self, result_location: c.BinaryenExpressionRef, string: [
             result_location,
             c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(ptr))))),
             c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(string.len))))),
+        },
+    );
+}
+
+fn createMap(self: *Self, result_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return self.runtimeCall(
+        "createMap",
+        &.{
+            result_location,
+        },
+    );
+}
+
+fn mapSet(self: *Self, map_location: c.BinaryenExpressionRef, key_location: c.BinaryenExpressionRef, value_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return self.runtimeCall(
+        "mapSet",
+        &.{
+            map_location,
+            key_location,
+            value_location,
         },
     );
 }
