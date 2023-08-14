@@ -19,8 +19,16 @@ const Self = @This();
 allocator: Allocator,
 parser: Parser,
 module: ?c.BinaryenModuleRef,
+strings: ArrayList(u8),
 fns: std.AutoHashMap(ExprId, c.BinaryenFunctionRef),
 error_message: ?[]const u8,
+
+// Memory layout:
+// 0:1048576 = zig stack
+// 1048576:? = zig data
+// ?:(2*1048576) = mvs stack
+// (2 * 1048576):? = mvs data
+const data_start = 2 * 1048576;
 
 pub const Scope = struct {
     wasm_var_next: usize,
@@ -39,6 +47,7 @@ pub fn init(allocator: Allocator, parser: Parser) Self {
         .allocator = allocator,
         .parser = parser,
         .module = null,
+        .strings = ArrayList(u8).init(allocator),
         .fns = std.AutoHashMap(ExprId, c.BinaryenFunctionRef).init(allocator),
         .error_message = null,
     };
@@ -64,6 +73,11 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         self.module = null;
     }
 
+    c.BinaryenModuleSetFeatures(
+        self.module.?,
+        c.BinaryenFeatureBulkMemory(),
+    );
+
     // Import runtime functions.
     {
         _ = c.BinaryenAddFunctionImport(
@@ -85,6 +99,21 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             "createNumber",
             "runtime",
             "createNumber",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "createString",
+            "runtime",
+            "createString",
             c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeNone(),
         );
@@ -121,9 +150,30 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
     // Binaryen also doesn't provide an api to set the name of a global.
     // So we have to make our own separate shadow stack :(
-    _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(2 * 1048576)));
+    _ = c.BinaryenAddGlobal(self.module.?, "__yet_another_stack_pointer", c.BinaryenTypeInt32(), true, c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)));
 
-    // We also have to grow memory to support that second stack, by calling `runtime.start`.
+    // In order to have a data segment, binaryen insists that we define a memory.
+    {
+        var segments = [_][*c]u8{self.strings.items.ptr};
+        var passives = [_]bool{true};
+        var offsets = [_]c.BinaryenExpressionRef{null};
+        var lens = [_]u32{@intCast(self.strings.items.len)};
+        c.BinaryenSetMemory(
+            self.module.?,
+            0,
+            0,
+            null,
+            &segments,
+            &passives,
+            &offsets,
+            &lens,
+            1,
+            false,
+            false,
+            "dummy",
+        );
+    }
+
     {
         c.BinaryenSetStart(
             self.module.?,
@@ -134,7 +184,9 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
                 c.BinaryenTypeNone(),
                 null,
                 0,
-                self.runtimeCall("runtime_start", &.{}),
+                // We have to grow memory to support that second stack, by calling `runtime.start`.
+                //self.runtimeCall("runtime_start", &.{}),
+                c.BinaryenMemoryInit(self.module.?, "0", c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)), c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(0)), c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.strings.items.len))))), null),
             ),
         );
     }
@@ -271,6 +323,9 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
         .number => |number| {
             return self.createNumber(result_location, number);
         },
+        .string => |string| {
+            return self.createString(result_location, string);
+        },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
@@ -299,6 +354,19 @@ fn createNumber(self: *Self, result_location: c.BinaryenExpressionRef, number: f
         &.{
             result_location,
             c.BinaryenConst(self.module.?, c.BinaryenLiteralFloat64(number)),
+        },
+    );
+}
+
+fn createString(self: *Self, result_location: c.BinaryenExpressionRef, string: []const u8) c.BinaryenExpressionRef {
+    const ptr = data_start + self.strings.items.len;
+    self.strings.appendSlice(string) catch oom();
+    return self.runtimeCall(
+        "createString",
+        &.{
+            result_location,
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(ptr))))),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(string.len))))),
         },
     );
 }
