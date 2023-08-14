@@ -148,6 +148,20 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             c.BinaryenTypeNone(),
         );
     }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "set_byte",
+            "runtime",
+            "set_byte",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
 
     // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
     // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
@@ -180,15 +194,14 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         // Binaryen doesn't expose any way to create a passive data segment without also creating a memory.
         // So we'll init string data in the grossest fashion.
         for (block[1..], self.strings.items, 0..) |*expr, char, i| {
-            expr.* = c.BinaryenStore(
-                self.module.?,
-                1,
-                @intCast(i),
-                0,
-                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(data_start)),
+            // Without being able to define or import a memory, we can't use `store`!
+            // Instead, we're stuck with this hack.
+            expr.* = self.runtimeCall(
+                "set_byte",
+                &.{
+                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(data_start+i))))),
                 c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(char)),
-                c.BinaryenTypeInt32(),
-                null,
+                },
             );
         }
 

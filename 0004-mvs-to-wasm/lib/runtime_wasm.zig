@@ -48,3 +48,7 @@ export fn print(ptr: *Value) void {
 
     print_string(string.ptr, string.len);
 }
+
+export fn set_byte(ptr: *u8, byte: u8) void {
+    ptr.* = byte;
+}
