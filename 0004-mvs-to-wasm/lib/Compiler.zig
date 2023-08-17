@@ -159,6 +159,20 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
+            "move",
+            "runtime",
+            "move",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
             "copy",
             "runtime",
             "copy",
@@ -379,7 +393,7 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
         },
         .name => |name| {
             const binding = try self.bindingFind(scope, name, true);
-            return self.copy(
+            return self.move(
                 result_location,
                 switch (binding.kind) {
                     .wasm_var => |wasm_var| c.BinaryenLocalGet(self.module.?, wasm_var, c.BinaryenTypeInt32()),
@@ -471,6 +485,13 @@ fn mapSet(self: *Self, map_location: c.BinaryenExpressionRef, key_location: c.Bi
             value_location,
         },
     );
+}
+
+fn move(self: *Self, result_location: c.BinaryenExpressionRef, source_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return self.runtimeCall("move", &.{
+        result_location,
+        source_location,
+    });
 }
 
 fn copy(self: *Self, result_location: c.BinaryenExpressionRef, source_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
