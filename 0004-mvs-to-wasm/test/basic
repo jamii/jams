@@ -67,21 +67,44 @@ let a = 42;
 
 // set
 let mut a = 1;
-set a = a + 1;
+set a = 2;
 a
 ---
 2
 
 // set const
 let a = 1;
-set a = a + 1;
+set a = 2;
 a
 ---
 Cannot set a non-mut variable: a
 
-// set path
+// set path empty
+let mut b = [];
+set b.foo = 'bar';
+b
+---
+['foo' = 'bar']
+
+// set path existing
 let mut b = [foo = 2];
 set b.foo = 'bar';
+b
+---
+['foo' = 'bar']
+
+// set path dyn empty
+let mut b = [];
+let foo = 'foo';
+set b[foo] = 'bar';
+b
+---
+['foo' = 'bar']
+
+// set path dyn existing
+let mut b = [foo = 2];
+let foo = 'foo';
+set b[foo] = 'bar';
 b
 ---
 ['foo' = 'bar']

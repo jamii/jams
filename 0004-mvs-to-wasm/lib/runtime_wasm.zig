@@ -32,8 +32,15 @@ export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
 }
 
-export fn mapSet(ptr: *Value, key: *Value, value: *Value) void {
-    ptr.*.map.put(key.*, value.*) catch oom();
+export fn mapSet(map: *Value, key: *Value, value: *Value) void {
+    map.*.map.put(key.*, value.*) catch oom();
+}
+
+export fn mapGet(map: *Value, key: *Value) *Value {
+    const result = map.*.map.getOrPut(key.*) catch oom();
+    // Ensure compiled code can't see uninitialized memory.
+    if (!result.found_existing) result.value_ptr.* = .{ .number = 0 };
+    return result.value_ptr;
 }
 
 export fn move(ptr_a: *Value, ptr_b: *const Value) void {

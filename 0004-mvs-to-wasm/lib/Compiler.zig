@@ -159,6 +159,20 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
+            "mapGet",
+            "runtime",
+            "mapGet",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeInt32(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
             "move",
             "runtime",
             "move",
@@ -223,7 +237,7 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         defer self.allocator.free(block);
 
         // We have to grow memory to support that second stack, by calling `runtime.start`.
-        block[0] = self.runtimeCall(
+        block[0] = self.runtimeCall0(
             "runtime_start",
             &.{
                 c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(
@@ -241,7 +255,7 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         for (block[1..], self.strings.items, 0..) |*expr, char, i| {
             // Without being able to define or import a memory, we can't use `store`!
             // Instead, we're stuck with this hack.
-            expr.* = self.runtimeCall(
+            expr.* = self.runtimeCall0(
                 "set_byte",
                 &.{
                     c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(data_start + i))))),
@@ -290,7 +304,7 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
     var block = [_]c.BinaryenExpressionRef{
         self.framePush(scope.shadow_offset_max),
         body_inner_ref,
-        self.runtimeCall("print", &.{result_location}),
+        self.runtimeCall0("print", &.{result_location}),
         self.framePop(scope.shadow_offset_max),
     };
     const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
@@ -391,14 +405,10 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             }
             return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
         },
-        .name => |name| {
-            const binding = try self.bindingFind(scope, name, true);
+        .name => {
             return self.move(
                 result_location,
-                switch (binding.kind) {
-                    .wasm_var => |wasm_var| c.BinaryenLocalGet(self.module.?, wasm_var, c.BinaryenTypeInt32()),
-                    .shadow_offset => |shadow_offset| self.shadowPtr(shadow_offset),
-                },
+                try self.compilePath(scope, expr_id, false),
             );
         },
         .let => |let| {
@@ -406,6 +416,22 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             const value = try self.compileExpr(scope, self.shadowPtr(binding.kind.shadow_offset), let.value);
             binding.visible = true;
             return value;
+        },
+        .set => |set| {
+            const shadow_offset = shadowPush(scope);
+            const value_location = self.shadowPtr(shadow_offset);
+            const value = try self.compileExpr(scope, value_location, set.value);
+            const path = try self.compilePath(scope, set.path, true);
+            shadowPop(scope, shadow_offset);
+            var block = [_]c.BinaryenExpressionRef{
+                value,
+                // TODO Drop previous value.
+                self.copy(
+                    path,
+                    value_location,
+                ),
+            };
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
@@ -426,6 +452,7 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 const block = self.allocator.alloc(c.BinaryenExpressionRef, child_expr_ids.len) catch oom();
                 for (block, child_expr_ids, 0..) |*expr_ref, child_expr_id, child_ix| {
                     if (child_ix < child_expr_ids.len - 1) {
+                        // TODO Might need to initialize this to 0?
                         const shadow_offset = shadowPush(scope);
                         expr_ref.* = try self.compileExpr(scope, self.shadowPtr(shadow_offset), child_expr_id);
                         shadowPop(scope, shadow_offset);
@@ -444,8 +471,55 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
     }
 }
 
+fn compilePath(self: *Self, scope: *Scope, expr_id: ExprId, mut: bool) error{CompileError}!c.BinaryenExpressionRef {
+    const expr = self.parser.exprs.items[expr_id];
+    switch (expr) {
+        .name => |name| {
+            const binding = try self.bindingFind(scope, name, true);
+            if (mut and !binding.mut)
+                return self.fail("Cannot set a non-mut variable: {s}", .{name});
+            return switch (binding.kind) {
+                .wasm_var => |wasm_var| c.BinaryenLocalGet(self.module.?, wasm_var, c.BinaryenTypeInt32()),
+                .shadow_offset => |shadow_offset| self.shadowPtr(shadow_offset),
+            };
+        },
+        .get_static => |get_static| {
+            const shadow_offset = shadowPush(scope);
+            const key_location = self.shadowPtr(shadow_offset);
+            const key = switch (get_static.key) {
+                .number => |number| self.createNumber(key_location, number),
+                .string => |string| self.createString(key_location, string),
+            };
+            const map = try self.compilePath(scope, get_static.map, mut);
+            shadowPop(scope, shadow_offset);
+            var block = [_]c.BinaryenExpressionRef{
+                key,
+                self.mapGet(map, key_location),
+            };
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
+        },
+        .call => |call| {
+            if (call.args.len != 1)
+                return self.fail("Wrong number of arguments ({}) to {}", .{ call.args.len, call.head });
+            if (call.muts[0] == true)
+                return self.fail("Can't pass mut arg to map", .{});
+            const shadow_offset = shadowPush(scope);
+            const key_location = self.shadowPtr(shadow_offset);
+            const key = try self.compileExpr(scope, key_location, call.args[0]);
+            const map = try self.compilePath(scope, call.head, mut);
+            shadowPop(scope, shadow_offset);
+            var block = [_]c.BinaryenExpressionRef{
+                key,
+                self.mapGet(map, key_location),
+            };
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeInt32());
+        },
+        else => return self.fail("Unsupported path: {}", .{expr}),
+    }
+}
+
 fn createNumber(self: *Self, result_location: c.BinaryenExpressionRef, number: f64) c.BinaryenExpressionRef {
-    return self.runtimeCall(
+    return self.runtimeCall0(
         "createNumber",
         &.{
             result_location,
@@ -457,7 +531,7 @@ fn createNumber(self: *Self, result_location: c.BinaryenExpressionRef, number: f
 fn createString(self: *Self, result_location: c.BinaryenExpressionRef, string: []const u8) c.BinaryenExpressionRef {
     const ptr = data_start + self.strings.items.len;
     self.strings.appendSlice(string) catch oom();
-    return self.runtimeCall(
+    return self.runtimeCall0(
         "createString",
         &.{
             result_location,
@@ -468,7 +542,7 @@ fn createString(self: *Self, result_location: c.BinaryenExpressionRef, string: [
 }
 
 fn createMap(self: *Self, result_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
-    return self.runtimeCall(
+    return self.runtimeCall0(
         "createMap",
         &.{
             result_location,
@@ -477,7 +551,7 @@ fn createMap(self: *Self, result_location: c.BinaryenExpressionRef) c.BinaryenEx
 }
 
 fn mapSet(self: *Self, map_location: c.BinaryenExpressionRef, key_location: c.BinaryenExpressionRef, value_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
-    return self.runtimeCall(
+    return self.runtimeCall0(
         "mapSet",
         &.{
             map_location,
@@ -487,15 +561,25 @@ fn mapSet(self: *Self, map_location: c.BinaryenExpressionRef, key_location: c.Bi
     );
 }
 
+fn mapGet(self: *Self, map_location: c.BinaryenExpressionRef, key_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return self.runtimeCall1(
+        "mapGet",
+        &.{
+            map_location,
+            key_location,
+        },
+    );
+}
+
 fn move(self: *Self, result_location: c.BinaryenExpressionRef, source_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
-    return self.runtimeCall("move", &.{
+    return self.runtimeCall0("move", &.{
         result_location,
         source_location,
     });
 }
 
 fn copy(self: *Self, result_location: c.BinaryenExpressionRef, source_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
-    return self.runtimeCall("copy", &.{
+    return self.runtimeCall0("copy", &.{
         result_location,
         source_location,
     });
@@ -579,13 +663,23 @@ fn shadowPtr(self: *Self, offset: u32) c.BinaryenExpressionRef {
     );
 }
 
-fn runtimeCall(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+fn runtimeCall0(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpressionRef) c.BinaryenExpressionRef {
     return c.BinaryenCall(
         self.module.?,
         fn_name,
         @constCast(args.ptr),
         @intCast(args.len),
         c.BinaryenTypeNone(),
+    );
+}
+
+fn runtimeCall1(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return c.BinaryenCall(
+        self.module.?,
+        fn_name,
+        @constCast(args.ptr),
+        @intCast(args.len),
+        c.BinaryenTypeInt32(),
     );
 }
 

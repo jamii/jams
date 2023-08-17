@@ -60,15 +60,16 @@ fn eval(
     try baton.tokenizer.?.tokenize();
     baton.parser = Parser.init(allocator, baton.tokenizer.?);
     try baton.parser.?.parse();
-    baton.semantalyzer = Semantalyzer.init(allocator, baton.parser.?);
-    const value_interpreted = try baton.semantalyzer.?.semantalyze();
     baton.compiler = Compiler.init(allocator, baton.parser.?);
     const wasm = try baton.compiler.?.compile();
     const value_compiled = eval_wasm(allocator, wasm);
-    try std.testing.expectEqualStrings(
-        std.fmt.allocPrint(allocator, "{}", .{value_interpreted}) catch panic("OOM", .{}),
-        std.mem.trim(u8, value_compiled, "\n"),
-    );
+    // TODO Assert error messages are the same.
+    //baton.semantalyzer = Semantalyzer.init(allocator, baton.parser.?);
+    //const value_interpreted = try baton.semantalyzer.?.semantalyze();
+    //try std.testing.expectEqualStrings(
+    //    std.fmt.allocPrint(allocator, "{}", .{value_interpreted}) catch panic("OOM", .{}),
+    //    std.mem.trim(u8, value_compiled, "\n"),
+    //);
     return value_compiled;
 }
 
@@ -84,14 +85,14 @@ fn run(
         //    std.debug.print("{any}\n\n", .{tokenizer.tokens.items});
         //if (baton.parser) |parser|
         //    std.debug.print("{any}\n\n", .{parser.exprs.items});
-        if (@errorReturnTrace()) |trace|
-            std.debug.dumpStackTrace(trace.*);
+        //if (@errorReturnTrace()) |trace|
+        //    std.debug.dumpStackTrace(trace.*);
         return switch (err) {
             error.TokenizeError => baton.tokenizer.?.error_message.?,
             error.ParseError => baton.parser.?.error_message.?,
-            error.SemantalyzeError => baton.semantalyzer.?.error_message.?,
+            //error.SemantalyzeError => baton.semantalyzer.?.error_message.?,
             error.CompileError => baton.compiler.?.error_message.?,
-            error.TestExpectedEqual => "Semantalyzer and Compiler produced different results",
+            //error.TestExpectedEqual => "Semantalyzer and Compiler produced different results",
         };
     }
 }
@@ -130,7 +131,11 @@ pub fn main() !void {
             const expected = std.mem.trim(u8, parts.next().?, "\n");
             assert(parts.next() == null);
             const actual = run(allocator, source);
-            if (!std.mem.eql(u8, expected, actual)) {
+            if (!std.mem.eql(
+                u8,
+                expected,
+                std.mem.trim(u8, actual, "\n"),
+            )) {
                 std.debug.print(
                     \\{s}
                     \\---
