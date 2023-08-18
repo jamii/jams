@@ -61,6 +61,10 @@ export fn copy(ptr_a: *Value, ptr_b: *const Value) void {
     ptr_a.* = ptr_b.copy(global_allocator);
 }
 
+export fn copyInPlace(ptr_a: *Value) void {
+    ptr_a.copyInPlace(global_allocator);
+}
+
 extern fn print_string(ptr: [*]const u8, len: usize) void;
 export fn print(ptr: *Value) void {
     const string = std.fmt.allocPrint(global_allocator, "{}", .{ptr.*}) catch oom();

@@ -213,6 +213,19 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
+            "copyInPlace",
+            "runtime",
+            "copyInPlace",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
             "print",
             "runtime",
             "print",
@@ -442,9 +455,13 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
         },
         .let => |let| {
             const binding = try self.bindingFind(scope, let.name, false);
-            const value = try self.compileExpr(scope, self.shadowPtr(binding.kind.shadow_offset), let.value);
+            const let_location = self.shadowPtr(binding.kind.shadow_offset);
+            var block = [_]c.BinaryenExpressionRef{
+                try self.compileExpr(scope, let_location, let.value),
+                self.runtimeCall0("copyInPlace", &.{let_location}),
+            };
             binding.visible = true;
-            return value;
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
         },
         .set => |set| {
             const shadow_offset = shadowPush(scope);
@@ -531,6 +548,12 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             } else {
                 return self.fail("Unsupported expr: {}", .{expr});
             }
+        },
+        .get_static => {
+            return self.move(
+                result_location,
+                try self.compilePath(scope, expr_id, false),
+            );
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
