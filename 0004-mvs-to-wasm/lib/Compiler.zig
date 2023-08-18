@@ -461,6 +461,34 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             shadowPop(scope, shadow_offset);
             return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
         },
+        .@"while" => |@"while"| {
+            const shadow_offset = shadowPush(scope);
+            const cond_location = self.shadowPtr(shadow_offset);
+            const loop_name = std.fmt.allocPrintZ(self.allocator, "{}", .{expr_id}) catch oom();
+            var block = [_]c.BinaryenExpressionRef{
+                try self.compileExpr(scope, cond_location, @"while".cond),
+                c.BinaryenBreak(
+                    self.module.?,
+                    loop_name,
+                    // Confusingly break is actually continue, so we have to negate the condition.
+                    c.BinaryenBinary(
+                        self.module.?,
+                        c.BinaryenSubInt32(),
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(1)),
+                        self.boolGet(cond_location),
+                    ),
+                    null,
+                ),
+                // Reusing `cond_location`.
+                try self.compileExpr(scope, cond_location, @"while".body),
+            };
+            shadowPop(scope, shadow_offset);
+            return c.BinaryenLoop(
+                self.module.?,
+                loop_name,
+                c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone()),
+            );
+        },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.

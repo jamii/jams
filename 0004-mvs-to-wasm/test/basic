@@ -131,7 +131,16 @@ if 2 'true' else 'false'
 ---
 Expected boolean (0 or 1). Found 2
 
-// while
+// while fn
+let mut a = 1;
+while (a) (
+  set a = 0;
+);
+a
+---
+0
+
+// while fn
 let not = fn [x] if x 0 else 1;
 let mut a = 0;
 while (not[a == 4]) (
