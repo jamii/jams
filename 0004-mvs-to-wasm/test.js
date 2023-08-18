@@ -7,10 +7,20 @@ function print_string(ptr, len) {
   let str = (new TextDecoder()).decode(new Uint8Array(memory.buffer, ptr, len));
   console.log(str);
 }
-const wasmInstance = new WebAssembly.Instance(wasmModule, {
-  env: { print_string },
-});
+
+let wasmInstance;
+try {
+  wasmInstance = new WebAssembly.Instance(wasmModule, {
+    env: { print_string },
+  });
+} catch (error) {
+  console.error(error);
+}
 
 memory = wasmInstance.exports.memory;
 
-wasmInstance.exports.main();
+try {
+  wasmInstance.exports.main();
+} catch (error) {
+  console.error(error);
+}

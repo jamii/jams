@@ -140,6 +140,19 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     {
         var params = [_]c.BinaryenType{
             c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "boolGet",
+            "runtime",
+            "boolGet",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeInt32(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
         };
@@ -433,6 +446,21 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             };
             return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
         },
+        .@"if" => |@"if"| {
+            const shadow_offset = shadowPush(scope);
+            const cond_location = self.shadowPtr(shadow_offset);
+            var block = [_]c.BinaryenExpressionRef{
+                try self.compileExpr(scope, cond_location, @"if".cond),
+                c.BinaryenIf(
+                    self.module.?,
+                    self.boolGet(cond_location),
+                    try self.compileExpr(scope, result_location, @"if".if_true),
+                    try self.compileExpr(scope, result_location, @"if".if_false),
+                ),
+            };
+            shadowPop(scope, shadow_offset);
+            return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
+        },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
                 // Empty block returns falsey.
@@ -467,6 +495,7 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
             }
         },
+        .builtin => unreachable,
         else => return self.fail("Unsupported expr: {}", .{expr}),
     }
 }
@@ -546,6 +575,15 @@ fn createMap(self: *Self, result_location: c.BinaryenExpressionRef) c.BinaryenEx
         "createMap",
         &.{
             result_location,
+        },
+    );
+}
+
+fn boolGet(self: *Self, bool_location: c.BinaryenExpressionRef) c.BinaryenExpressionRef {
+    return self.runtimeCall1(
+        "boolGet",
+        &.{
+            bool_location,
         },
     );
 }

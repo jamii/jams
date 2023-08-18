@@ -1,5 +1,4 @@
 const std = @import("std");
-const panic = std.debug.panic;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -13,7 +12,7 @@ const Fn = runtime.Fn;
 const global_allocator = std.heap.wasm_allocator;
 
 fn oom() noreturn {
-    panic("OOM", .{});
+    std.debug.panic("OOM", .{});
 }
 
 export fn start(pages: usize) void {
@@ -30,6 +29,17 @@ export fn createString(ptr: *Value, string_ptr: [*]const u8, string_len: usize) 
 
 export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
+}
+
+export fn boolGet(ptr: *Value) u32 {
+    if (ptr.* == .number) {
+        const number = ptr.*.number;
+        if (number == 0)
+            return 0
+        else if (number == 1)
+            return 1;
+    }
+    std.debug.panic("Expected boolean (0 or 1). Found {}", .{ptr.*});
 }
 
 export fn mapSet(map: *Value, key: *Value, value: *Value) void {
@@ -62,4 +72,13 @@ export fn print(ptr: *Value) void {
 
 export fn set_byte(ptr: *u8, byte: u8) void {
     ptr.* = byte;
+}
+
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+    @setCold(true);
+    print_string(msg.ptr, msg.len);
+    std.builtin.default_panic(msg, error_return_trace, ret_addr);
+}
+comptime {
+    assert(@hasDecl(@import("root"), "panic"));
 }
