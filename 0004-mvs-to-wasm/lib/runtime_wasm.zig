@@ -62,7 +62,6 @@ export fn copy(ptr_a: *Value, ptr_b: *const Value) void {
 }
 
 extern fn print_string(ptr: [*]const u8, len: usize) void;
-
 export fn print(ptr: *Value) void {
     const string = std.fmt.allocPrint(global_allocator, "{}", .{ptr.*}) catch oom();
     defer global_allocator.free(string);
@@ -72,6 +71,54 @@ export fn print(ptr: *Value) void {
 
 export fn set_byte(ptr: *u8, byte: u8) void {
     ptr.* = byte;
+}
+
+export fn equal(result: *Value, a: *Value, b: *Value) void {
+    result.* = Value.fromBool(Value.equal(a.*, b.*));
+}
+
+export fn less_than(result: *Value, a: *Value, b: *Value) void {
+    _ = result;
+    _ = a;
+    _ = b;
+    std.debug.panic("Unimplemented", .{});
+}
+
+export fn less_than_or_equal(result: *Value, a: *Value, b: *Value) void {
+    _ = result;
+    _ = a;
+    _ = b;
+    std.debug.panic("Unimplemented", .{});
+}
+
+export fn more_than(result: *Value, a: *Value, b: *Value) void {
+    _ = result;
+    _ = a;
+    _ = b;
+    std.debug.panic("Unimplemented", .{});
+}
+
+export fn more_than_or_equal(result: *Value, a: *Value, b: *Value) void {
+    _ = result;
+    _ = a;
+    _ = b;
+    std.debug.panic("Unimplemented", .{});
+}
+
+export fn add(result: *Value, a: *Value, b: *Value) void {
+    result.* = .{ .number = a.*.number + b.*.number };
+}
+
+export fn subtract(result: *Value, a: *Value, b: *Value) void {
+    result.* = .{ .number = a.*.number - b.*.number };
+}
+
+export fn multiply(result: *Value, a: *Value, b: *Value) void {
+    result.* = .{ .number = a.*.number * b.*.number };
+}
+
+export fn divide(result: *Value, a: *Value, b: *Value) void {
+    result.* = .{ .number = a.*.number / b.*.number };
 }
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {

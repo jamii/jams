@@ -154,6 +154,10 @@ pub const Value = union(Kind) {
         const value = self.copy(allocator);
         self.* = value;
     }
+
+    pub fn fromBool(b: bool) Value {
+        return if (b) .{ .number = 1 } else .{ .number = 0 };
+    }
 };
 
 pub const Map = std.HashMap(

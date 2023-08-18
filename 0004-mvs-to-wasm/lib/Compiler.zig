@@ -234,6 +234,22 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             c.BinaryenTypeNone(),
         );
     }
+    inline for (@typeInfo(Parser.Builtin).Enum.fields) |field_info| {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        const name = self.allocator.dupeZ(u8, field_info.name) catch oom();
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            name,
+            "runtime",
+            name,
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
 
     // We have to strip debug info from the runtime because binaryen crashes on unrecognized dwarf.
     // But that removes the name of the '__stack_pointer' variable, and binaryen can only reference globals by name.
@@ -488,6 +504,33 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 loop_name,
                 c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone()),
             );
+        },
+        .call => |call| {
+            const head_expr = self.parser.exprs.items[call.head];
+            if (head_expr == .builtin) {
+                if (call.args.len != 2) {
+                    return self.fail("Wrong number of arguments ({}) to {}", .{ call.args.len, head_expr.builtin });
+                }
+                const shadow_offsets = .{ shadowPush(scope), shadowPush(scope) };
+                const arg_locations = .{ self.shadowPtr(shadow_offsets[0]), self.shadowPtr(shadow_offsets[1]) };
+                shadowPop(scope, shadow_offsets[1]);
+                shadowPop(scope, shadow_offsets[0]);
+                var block = [_]c.BinaryenExpressionRef{
+                    try self.compileExpr(scope, arg_locations[0], call.args[0]),
+                    try self.compileExpr(scope, arg_locations[1], call.args[1]),
+                    self.runtimeCall0(
+                        @tagName(head_expr.builtin),
+                        &.{
+                            result_location,
+                            arg_locations[0],
+                            arg_locations[1],
+                        },
+                    ),
+                };
+                return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
+            } else {
+                return self.fail("Unsupported expr: {}", .{expr});
+            }
         },
         .exprs => |child_expr_ids| {
             if (child_expr_ids.len == 0) {
