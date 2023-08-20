@@ -155,6 +155,12 @@ a
 ---
 4
 
+// fn naked
+let add = fn [a,b] a + b;
+add
+---
+fn<1>
+
 // fn
 let add = fn [a,b] a + b;
 add[1,2]

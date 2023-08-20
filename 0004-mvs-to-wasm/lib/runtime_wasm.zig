@@ -31,6 +31,10 @@ export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
 }
 
+export fn createFn(ptr: *Value, fn_ix: u32) void {
+    ptr.* = .{ .@"fn" = .{ .ix = fn_ix } };
+}
+
 export fn boolGet(ptr: *Value) u32 {
     if (ptr.* == .number) {
         const number = ptr.*.number;

@@ -20,7 +20,7 @@ allocator: Allocator,
 parser: Parser,
 module: ?c.BinaryenModuleRef,
 strings: ArrayList(u8),
-fns: std.AutoHashMap(ExprId, c.BinaryenFunctionRef),
+fns: ArrayList([:0]const u8),
 error_message: ?[]const u8,
 
 // Memory layout:
@@ -51,7 +51,7 @@ pub fn init(allocator: Allocator, parser: Parser) Self {
         .parser = parser,
         .module = null,
         .strings = ArrayList(u8).init(allocator),
-        .fns = std.AutoHashMap(ExprId, c.BinaryenFunctionRef).init(allocator),
+        .fns = ArrayList([:0]const u8).init(allocator),
         .error_message = null,
     };
 }
@@ -133,6 +133,20 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             "createMap",
             "runtime",
             "createMap",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "createFn",
+            "runtime",
+            "createFn",
             c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeNone(),
         );
@@ -320,6 +334,27 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         );
     }
 
+    // Fn table.
+    {
+        _ = c.BinaryenAddTable(
+            self.module.?,
+            "fns",
+            @intCast(self.fns.items.len),
+            @intCast(self.fns.items.len),
+            c.BinaryenTypeFuncref(),
+        );
+        const fn_names = self.allocator.alloc([*c]const u8, self.fns.items.len) catch oom();
+        for (fn_names, self.fns.items) |*fn_name_c, fn_name| fn_name_c.* = fn_name.ptr;
+        _ = c.BinaryenAddActiveElementSegment(
+            self.module.?,
+            "fns",
+            "fns_init",
+            fn_names.ptr,
+            @intCast(fn_names.len),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(0)),
+        );
+    }
+
     if (!c.BinaryenModuleValidate(self.module.?))
         return self.fail("Produced an invalid wasm module", .{});
 
@@ -363,59 +398,6 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
         body_ref,
     );
 
-    return fn_ref;
-}
-
-fn compileFn(self: *Self, name: [:0]const u8, params: []const Binding, body: ExprId) error{CompileError}!c.BinaryenFunctionRef {
-    if (self.fns.get(body)) |fn_ref| return fn_ref;
-
-    // TODO How to retrieve closure environment?
-    var scope = Scope{
-        .wasm_var_next = 1, // Reserve param 0 for result_location.
-        .shadow_offset = 0,
-        .shadow_offset_max = 0,
-        .bindings = ArrayList(Binding).initCapacity(self.allocator, params.len) catch oom(),
-    };
-    defer scope.bindings.deinit();
-
-    //for (params) |param| {
-    //bindingPush(&scope, param.mut, param.name);
-    //}
-    scope.shadow_offset = 0;
-    scope.shadow_offset_max = 0;
-
-    const result_location = c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32());
-    const body_inner_ref = try self.compileExpr(&scope, result_location, body);
-
-    var block = [_]c.BinaryenExpressionRef{
-        self.framePush(scope.shadow_offset_max),
-        body_inner_ref,
-        self.framePop(scope.shadow_offset_max),
-    };
-    const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
-
-    const wasm_params_types = self.allocator.alloc(
-        c.BinaryenType,
-        // Reserve param 0 for result_location.
-        params.len + 1,
-    ) catch oom();
-    defer self.allocator.free(wasm_params_types);
-
-    for (wasm_params_types) |*wasm_param| wasm_param.* = c.BinaryenTypeInt32();
-    const wasm_params = c.BinaryenTypeCreate(wasm_params_types.ptr, @intCast(wasm_params_types.len));
-
-    // TODO Need to mangle names for closures?
-    const fn_ref = c.BinaryenAddFunction(
-        self.module.?,
-        name,
-        wasm_params,
-        c.BinaryenTypeNone(),
-        null,
-        0,
-        body_ref,
-    );
-
-    self.fns.put(body, fn_ref) catch oom();
     return fn_ref;
 }
 
@@ -522,6 +504,59 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone()),
             );
         },
+        .@"fn" => |@"fn"| {
+            const fn_name = std.fmt.allocPrintZ(self.allocator, "{}", .{expr_id}) catch oom();
+            self.fns.append(fn_name) catch oom();
+
+            // TODO closures
+            var fn_scope = Scope{
+                .shadow_offset_next = 0,
+                .shadow_offset_max = 0,
+                .bindings = ArrayList(Binding).initCapacity(self.allocator, @"fn".params.len) catch oom(),
+            };
+            defer fn_scope.bindings.deinit();
+
+            for (0.., @"fn".muts, @"fn".params) |wasm_var, mut, param| {
+                bindingParamPush(&fn_scope, @intCast(wasm_var), mut, param);
+            }
+
+            const fn_result_location = c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32());
+            const body_inner_ref = try self.compileExpr(&fn_scope, fn_result_location, @"fn".body);
+
+            var block = [_]c.BinaryenExpressionRef{
+                self.framePush(fn_scope.shadow_offset_max),
+                body_inner_ref,
+                self.framePop(fn_scope.shadow_offset_max),
+            };
+            const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
+
+            const wasm_params_types = self.allocator.alloc(
+                c.BinaryenType,
+                // Reserve param 0 for fn_result_location.
+                @"fn".params.len + 1,
+            ) catch oom();
+            defer self.allocator.free(wasm_params_types);
+
+            for (wasm_params_types) |*wasm_param| wasm_param.* = c.BinaryenTypeInt32();
+
+            _ = c.BinaryenAddFunction(
+                self.module.?,
+                fn_name,
+                c.BinaryenTypeCreate(wasm_params_types.ptr, @intCast(wasm_params_types.len)),
+                c.BinaryenTypeNone(),
+                null,
+                0,
+                body_ref,
+            );
+
+            return self.runtimeCall0(
+                "createFn",
+                &.{
+                    result_location,
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.fns.items.len))))),
+                },
+            );
+        },
         .call => |call| {
             const head_expr = self.parser.exprs.items[call.head];
             if (head_expr == .builtin) {
@@ -589,8 +624,8 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
             }
         },
+        // `.builtin` only appears as `.call.head`
         .builtin => unreachable,
-        else => return self.fail("Unsupported expr: {}", .{expr}),
     }
 }
 
@@ -729,12 +764,22 @@ fn bindingFind(self: *Self, scope: *Scope, name: []const u8, visible: bool) !*Bi
     }
 }
 
+fn bindingParamPush(scope: *Scope, wasm_var: u32, mut: bool, name: []const u8) void {
+    scope.bindings.append(.{
+        .mut = mut,
+        .name = name,
+        .kind = .{ .wasm_var = wasm_var },
+        .visible = true,
+    }) catch oom();
+}
+
 fn bindingLocalPush(scope: *Scope, mut: bool, name: []const u8) void {
     const shadow_offset = shadowPush(scope);
     scope.bindings.append(.{
         .mut = mut,
         .name = name,
         .kind = .{ .shadow_offset = shadow_offset },
+        // Set to true after the `let` statement.
         .visible = false,
     }) catch oom();
 }

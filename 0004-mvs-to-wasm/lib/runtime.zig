@@ -44,8 +44,7 @@ pub const Value = union(Kind) {
                 }
             },
             .@"fn" => |@"fn"| {
-                _ = @"fn";
-                panic("TODO", .{});
+                hasher.update(std.mem.asBytes(&@"fn".ix));
             },
         }
     }
@@ -69,7 +68,9 @@ pub const Value = union(Kind) {
                 return true;
             },
             .@"fn" => {
-                panic("TODO", .{});
+                const self_fn = self.@"fn";
+                const other_fn = other.@"fn";
+                return self_fn.ix == other_fn.ix;
             },
         }
     }
@@ -124,8 +125,7 @@ pub const Value = union(Kind) {
                 try writer.writeAll("]");
             },
             .@"fn" => |@"fn"| {
-                _ = @"fn";
-                try writer.print("fn", .{});
+                try writer.print("fn<{}>", .{@"fn".ix});
             },
         }
     }
@@ -144,8 +144,7 @@ pub const Value = union(Kind) {
                 return .{ .map = map_copy };
             },
             .@"fn" => |@"fn"| {
-                _ = @"fn";
-                panic("TODO", .{});
+                return .{ .@"fn" = @"fn" };
             },
         }
     }
@@ -174,4 +173,6 @@ pub const Map = std.HashMap(
     std.hash_map.default_max_load_percentage,
 );
 
-pub const Fn = struct {};
+pub const Fn = struct {
+    ix: u32,
+};
