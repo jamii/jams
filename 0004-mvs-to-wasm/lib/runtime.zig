@@ -73,7 +73,7 @@ pub const Value = union(Kind) {
                 const other_fn = other.@"fn";
                 if (self_fn.ix == other_fn.ix) return false;
                 for (self_fn.captures, other_fn.captures) |self_capture, other_capture| {
-                    if (!self_capture.equal(other_capture.*)) return false;
+                    if (!self_capture.equal(other_capture)) return false;
                 }
                 return true;
             },
@@ -154,8 +154,8 @@ pub const Value = union(Kind) {
             },
             .@"fn" => |@"fn"| {
                 const muts = allocator.dupe(bool, @"fn".muts) catch panic("OOM", .{});
-                const captures = allocator.dupe(*Value, @"fn".captures) catch panic("OOM", .{});
-                for (captures) |capture| capture.copyInPlace(allocator);
+                const captures = allocator.dupe(Value, @"fn".captures) catch panic("OOM", .{});
+                for (captures) |*capture| capture.copyInPlace(allocator);
                 return .{ .@"fn" = .{
                     .ix = @"fn".ix,
                     .muts = muts,
@@ -192,5 +192,5 @@ pub const Map = std.HashMap(
 pub const Fn = struct {
     ix: u32,
     muts: []bool,
-    captures: []*Value,
+    captures: []Value,
 };

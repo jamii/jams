@@ -41,6 +41,7 @@ pub const Binding = struct {
     kind: union(enum) {
         wasm_var: u32,
         shadow_offset: u32,
+        capture: u32,
     },
     visible: bool,
 };
@@ -217,26 +218,11 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
-            "fnGetArg",
+            "fnGetCapture",
             "runtime",
-            "fnGetArg",
+            "fnGetCapture",
             c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeInt32(),
-        );
-    }
-    {
-        var params = [_]c.BinaryenType{
-            c.BinaryenTypeInt32(),
-            c.BinaryenTypeInt32(),
-            c.BinaryenTypeInt32(),
-        };
-        _ = c.BinaryenAddFunctionImport(
-            self.module.?,
-            "fnSetArg",
-            "runtime",
-            "fnSetArg",
-            c.BinaryenTypeCreate(&params, params.len),
-            c.BinaryenTypeNone(),
         );
     }
     {
@@ -596,10 +582,15 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             );
         },
         .@"fn" => |@"fn"| {
+            var captures = ArrayList([]const u8).init(self.allocator);
+            {
+                var locals = ArrayList([]const u8).init(self.allocator);
+                try self.collectCaptures(expr_id, scope, &captures, &locals);
+            }
+
             const fn_name = std.fmt.allocPrintZ(self.allocator, "{}", .{expr_id}) catch oom();
             self.fns.append(fn_name) catch oom();
 
-            // TODO closures
             var fn_scope = Scope{
                 .shadow_offset_next = 0,
                 .shadow_offset_max = 0,
@@ -607,7 +598,10 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             };
             defer fn_scope.bindings.deinit();
 
-            for (1.., @"fn".muts, @"fn".params) |wasm_var, mut, param| {
+            for (0.., captures.items) |capture_ix, capture| {
+                bindingCapturePush(&fn_scope, @intCast(capture_ix), capture);
+            }
+            for (2.., @"fn".muts, @"fn".params) |wasm_var, mut, param| {
                 bindingParamPush(&fn_scope, @intCast(wasm_var), mut, param);
             }
 
@@ -623,8 +617,10 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
 
             const wasm_params_types = self.allocator.alloc(
                 c.BinaryenType,
-                // Reserve param 0 for fn_result_location.
-                @"fn".params.len + 1,
+                // Reserve:
+                //   param 0 for fn_result_location
+                //   param 1 for fn
+                @"fn".params.len + 2,
             ) catch oom();
             for (wasm_params_types) |*wasm_param| wasm_param.* = c.BinaryenTypeInt32();
 
@@ -638,23 +634,38 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 body_ref,
             );
 
-            const block = self.allocator.alloc(c.BinaryenExpressionRef, @"fn".muts.len + 1) catch oom();
+            const block = self.allocator.alloc(c.BinaryenExpressionRef, 1 + @"fn".muts.len + captures.items.len) catch oom();
             block[0] = self.runtimeCall0(
                 "createFn",
                 &.{
                     result_location,
                     c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.fns.items.len - 1))))),
                     c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(@"fn".muts.len))))),
-                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(0))))),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(captures.items.len))))),
                 },
             );
-            for (block[1..], 0.., @"fn".muts) |*mut_expr, mut_ix, mut| {
+            for (block[1 .. 1 + @"fn".muts.len], 0.., @"fn".muts) |*mut_expr, mut_ix, mut| {
                 mut_expr.* = self.runtimeCall0(
                     "fnSetMut",
                     &.{
                         result_location,
                         c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(mut_ix))))),
                         c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(if (mut) 1 else 0)),
+                    },
+                );
+            }
+            for (block[1 + @"fn".muts.len ..], 0.., captures.items) |*capture_expr, capture_ix, capture| {
+                capture_expr.* = self.runtimeCall0(
+                    "copy",
+                    &.{
+                        self.runtimeCall1(
+                            "fnGetCapture",
+                            &.{
+                                result_location,
+                                c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(capture_ix))))),
+                            },
+                        ),
+                        self.bindingPtr((try self.bindingFind(scope, capture, true)).*),
                     },
                 );
             }
@@ -695,11 +706,13 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                     }
                 }
 
-                const wasm_args = self.allocator.alloc(c.BinaryenExpressionRef, call.args.len + 1) catch oom();
-                const wasm_types = self.allocator.alloc(c.BinaryenType, call.args.len + 1) catch oom();
+                const wasm_args = self.allocator.alloc(c.BinaryenExpressionRef, 2 + call.args.len) catch oom();
+                const wasm_types = self.allocator.alloc(c.BinaryenType, 2 + call.args.len) catch oom();
                 wasm_args[0] = result_location;
                 wasm_types[0] = c.BinaryenTypeInt32();
-                for (wasm_args[1..], wasm_types[1..], call.args, call.muts, arg_shadow_offsets) |*wasm_arg, *wasm_type, arg, mut, arg_shadow_offset| {
+                wasm_args[1] = head_location;
+                wasm_types[1] = c.BinaryenTypeInt32();
+                for (wasm_args[2..], wasm_types[2..], call.args, call.muts, arg_shadow_offsets) |*wasm_arg, *wasm_type, arg, mut, arg_shadow_offset| {
                     if (mut) {
                         wasm_arg.* = try self.compilePath(scope, arg, mut);
                     } else {
@@ -725,7 +738,6 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                     );
                 }
 
-                // TODO Check muts on call.
                 var block = [_]c.BinaryenExpressionRef{
                     try self.compileExpr(scope, head_location, call.head),
                     self.runtimeCall0(
@@ -812,10 +824,7 @@ fn compilePath(self: *Self, scope: *Scope, expr_id: ExprId, mut: bool) error{Com
             const binding = try self.bindingFind(scope, name, true);
             if (mut and !binding.mut)
                 return self.fail("Cannot set a non-mut variable: {s}", .{name});
-            return switch (binding.kind) {
-                .wasm_var => |wasm_var| c.BinaryenLocalGet(self.module.?, wasm_var, c.BinaryenTypeInt32()),
-                .shadow_offset => |shadow_offset| self.shadowPtr(shadow_offset),
-            };
+            return self.bindingPtr(binding.*);
         },
         .get_static => |get_static| {
             const shadow_offset = shadowPush(scope);
@@ -940,6 +949,17 @@ fn bindingFind(self: *Self, scope: *Scope, name: []const u8, visible: bool) !*Bi
     }
 }
 
+fn bindingPtr(self: *Self, binding: Binding) c.BinaryenExpressionRef {
+    return switch (binding.kind) {
+        .wasm_var => |wasm_var| c.BinaryenLocalGet(self.module.?, wasm_var, c.BinaryenTypeInt32()),
+        .shadow_offset => |shadow_offset| self.shadowPtr(shadow_offset),
+        .capture => |capture| self.runtimeCall1("fnGetCapture", &.{
+            c.BinaryenLocalGet(self.module.?, 1, c.BinaryenTypeInt32()),
+            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(capture))))),
+        }),
+    };
+}
+
 fn bindingParamPush(scope: *Scope, wasm_var: u32, mut: bool, name: []const u8) void {
     scope.bindings.append(.{
         .mut = mut,
@@ -957,6 +977,15 @@ fn bindingLocalPush(scope: *Scope, mut: bool, name: []const u8) void {
         .kind = .{ .shadow_offset = shadow_offset },
         // Set to true after the `let` statement.
         .visible = false,
+    }) catch oom();
+}
+
+fn bindingCapturePush(scope: *Scope, capture_ix: u32, name: []const u8) void {
+    scope.bindings.append(.{
+        .mut = false,
+        .name = name,
+        .kind = .{ .capture = capture_ix },
+        .visible = true,
     }) catch oom();
 }
 
@@ -1034,6 +1063,72 @@ fn runtimeCall1(self: *Self, fn_name: [*c]const u8, args: []const c.BinaryenExpr
         @intCast(args.len),
         c.BinaryenTypeInt32(),
     );
+}
+
+fn collectCaptures(self: *Self, expr_id: ExprId, scope: *Scope, captures: *ArrayList([]const u8), locals: *ArrayList([]const u8)) error{CompileError}!void {
+    const expr = self.parser.exprs.items[expr_id];
+    switch (expr) {
+        .number, .string, .builtin => {},
+        .map => |map| {
+            for (map.keys) |key| try self.collectCaptures(key, scope, captures, locals);
+            for (map.values) |value| try self.collectCaptures(value, scope, captures, locals);
+        },
+        .name => |name| {
+            for (locals.items) |local| {
+                if (std.mem.eql(u8, name, local)) {
+                    return; // Not a capture - bound locally.
+                }
+            }
+            for (captures.items) |capture| {
+                if (std.mem.eql(u8, name, capture)) {
+                    return; // Already captured.
+                }
+            }
+            _ = try self.bindingFind(scope, name, true);
+            captures.append(name) catch oom();
+        },
+        .let => |let| {
+            try self.collectCaptures(let.value, scope, captures, locals);
+            locals.append(let.name) catch oom();
+        },
+        .set => |set| {
+            try self.collectCaptures(set.path, scope, captures, locals);
+            try self.collectCaptures(set.value, scope, captures, locals);
+        },
+        .@"if" => |@"if"| {
+            try self.collectCaptures(@"if".cond, scope, captures, locals);
+            try self.collectCaptures(@"if".if_true, scope, captures, locals);
+            try self.collectCaptures(@"if".if_false, scope, captures, locals);
+        },
+        .@"while" => |@"while"| {
+            try self.collectCaptures(@"while".cond, scope, captures, locals);
+            try self.collectCaptures(@"while".body, scope, captures, locals);
+        },
+        .@"fn" => |@"fn"| {
+            const locals_len = locals.items.len;
+            for (@"fn".params) |param| {
+                locals.append(param) catch oom();
+            }
+            try self.collectCaptures(@"fn".body, scope, captures, locals);
+            locals.shrinkRetainingCapacity(locals_len);
+        },
+        .call => |call| {
+            try self.collectCaptures(call.head, scope, captures, locals);
+            for (call.args) |arg| {
+                try self.collectCaptures(arg, scope, captures, locals);
+            }
+        },
+        .get_static => |get_static| {
+            try self.collectCaptures(get_static.map, scope, captures, locals);
+        },
+        .exprs => |exprs| {
+            const locals_len = locals.items.len;
+            for (exprs) |subexpr| {
+                try self.collectCaptures(subexpr, scope, captures, locals);
+            }
+            locals.shrinkRetainingCapacity(locals_len);
+        },
+    }
 }
 
 fn fail(self: *Self, comptime message: []const u8, args: anytype) error{CompileError} {

@@ -35,7 +35,7 @@ export fn createFn(ptr: *Value, fn_ix: u32, mut_count: u32, capture_count: u32) 
     ptr.* = .{ .@"fn" = .{
         .ix = fn_ix,
         .muts = global_allocator.alloc(bool, mut_count) catch oom(),
-        .captures = global_allocator.alloc(*Value, capture_count) catch oom(),
+        .captures = global_allocator.alloc(Value, capture_count) catch oom(),
     } };
 }
 
@@ -85,12 +85,8 @@ export fn fnSetMut(ptr: *Value, mut_ix: u32, mut: u32) void {
     };
 }
 
-export fn fnGetArg(ptr: *Value, capture_ix: u32) *Value {
-    return ptr.*.@"fn".captures[capture_ix];
-}
-
-export fn fnSetArg(ptr: *Value, capture_ix: u32, capture: *Value) void {
-    ptr.*.@"fn".captures[capture_ix] = capture;
+export fn fnGetCapture(ptr: *Value, capture_ix: u32) *Value {
+    return &ptr.*.@"fn".captures[capture_ix];
 }
 
 export fn mapSet(map: *Value, key: *Value, value: *Value) void {

@@ -235,6 +235,13 @@ set x.foo.bar = x.foo.bar + 1;
 ---
 [['foo' = ['bar' = 2]], ['foo' = ['bar' = 1]]]
 
+// capture
+let x = 42;
+let y = fn [] x;
+y[]
+---
+42
+
 // capture by value
 let mut x = [foo = [bar = 1]];
 let y = fn [] x;
@@ -242,3 +249,10 @@ set x.foo.bar = x.foo.bar + 1;
 [x,y[]]
 ---
 [['foo' = ['bar' = 2]], ['foo' = ['bar' = 1]]]
+
+// capture no mut
+let mut x = 1;
+let f = fn [] set x = x + 1;
+f[]
+---
+Cannot set a non-mut variable: x
