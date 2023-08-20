@@ -493,28 +493,31 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             const shadow_offset = shadowPush(scope);
             const cond_location = self.shadowPtr(shadow_offset);
             const loop_name = std.fmt.allocPrintZ(self.allocator, "{}", .{expr_id}) catch oom();
-            var block = [_]c.BinaryenExpressionRef{
+            var block_cond = [_]c.BinaryenExpressionRef{
                 try self.compileExpr(scope, cond_location, @"while".cond),
+                self.boolGet(cond_location),
+            };
+            var block_body = [_]c.BinaryenExpressionRef{
+                // Reusing `cond_location`.
+                try self.compileExpr(scope, cond_location, @"while".body),
+                // Confusingly break is actually continue.
                 c.BinaryenBreak(
                     self.module.?,
                     loop_name,
-                    // Confusingly break is actually continue, so we have to negate the condition.
-                    c.BinaryenBinary(
-                        self.module.?,
-                        c.BinaryenSubInt32(),
-                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(1)),
-                        self.boolGet(cond_location),
-                    ),
+                    null,
                     null,
                 ),
-                // Reusing `cond_location`.
-                try self.compileExpr(scope, cond_location, @"while".body),
             };
             shadowPop(scope, shadow_offset);
             return c.BinaryenLoop(
                 self.module.?,
                 loop_name,
-                c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone()),
+                c.BinaryenIf(
+                    self.module.?,
+                    c.BinaryenBlock(self.module.?, null, &block_cond, @intCast(block_cond.len), c.BinaryenTypeInt32()),
+                    c.BinaryenBlock(self.module.?, null, &block_body, @intCast(block_body.len), c.BinaryenTypeNone()),
+                    c.BinaryenNop(self.module.?),
+                ),
             );
         },
         .@"fn" => |@"fn"| {
