@@ -167,6 +167,12 @@ add[1,2]
 ---
 3
 
+// fn wrong-args
+let add = fn [a,b] a + b;
+add[1]
+---
+Expected 2 args, found 1 args
+
 // fn mut-var
 let add = fn [a,b] a + b;
 let mut x = 42;

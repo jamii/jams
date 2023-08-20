@@ -31,8 +31,12 @@ export fn createMap(ptr: *Value) void {
     ptr.* = .{ .map = Map.init(global_allocator) };
 }
 
-export fn createFn(ptr: *Value, fn_ix: u32) void {
-    ptr.* = .{ .@"fn" = .{ .ix = fn_ix } };
+export fn createFn(ptr: *Value, fn_ix: u32, mut_count: u32, capture_count: u32) void {
+    ptr.* = .{ .@"fn" = .{
+        .ix = fn_ix,
+        .muts = global_allocator.alloc(bool, mut_count) catch oom(),
+        .captures = global_allocator.alloc(*Value, capture_count) catch oom(),
+    } };
 }
 
 export fn boolGet(ptr: *Value) u32 {
@@ -48,6 +52,45 @@ export fn boolGet(ptr: *Value) u32 {
 
 export fn fnGetIx(ptr: *Value) u32 {
     return ptr.*.@"fn".ix;
+}
+
+export fn fnAssertMutCount(ptr: *Value, mut_count_found: u32) void {
+    const mut_count_expected = ptr.*.@"fn".muts.len;
+    if (mut_count_expected != mut_count_found)
+        std.debug.panic("Expected {} args, found {} args", .{
+            mut_count_expected,
+            mut_count_found,
+        });
+}
+
+export fn fnAssertMut(ptr: *Value, mut_ix: u32, mut: u32) void {
+    const mut_expected = ptr.*.@"fn".muts[mut_ix];
+    const mut_found = switch (mut) {
+        0 => false,
+        1 => true,
+        else => unreachable,
+    };
+    if (mut_expected != mut_found)
+        std.debug.panic("Expected {s} arg, found {s} arg", .{
+            if (mut_expected) "mut" else "const",
+            if (mut_found) "mut" else "const",
+        });
+}
+
+export fn fnSetMut(ptr: *Value, mut_ix: u32, mut: u32) void {
+    ptr.*.@"fn".muts[mut_ix] = switch (mut) {
+        0 => false,
+        1 => true,
+        else => unreachable,
+    };
+}
+
+export fn fnGetArg(ptr: *Value, capture_ix: u32) *Value {
+    return ptr.*.@"fn".captures[capture_ix];
+}
+
+export fn fnSetArg(ptr: *Value, capture_ix: u32, capture: *Value) void {
+    ptr.*.@"fn".captures[capture_ix] = capture;
 }
 
 export fn mapSet(map: *Value, key: *Value, value: *Value) void {

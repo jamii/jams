@@ -45,6 +45,7 @@ pub const Value = union(Kind) {
             },
             .@"fn" => |@"fn"| {
                 hasher.update(std.mem.asBytes(&@"fn".ix));
+                for (@"fn".captures) |capture| capture.update(hasher);
             },
         }
     }
@@ -70,7 +71,11 @@ pub const Value = union(Kind) {
             .@"fn" => {
                 const self_fn = self.@"fn";
                 const other_fn = other.@"fn";
-                return self_fn.ix == other_fn.ix;
+                if (self_fn.ix == other_fn.ix) return false;
+                for (self_fn.captures, other_fn.captures) |self_capture, other_capture| {
+                    if (!self_capture.equal(other_capture.*)) return false;
+                }
+                return true;
             },
         }
     }
@@ -125,7 +130,11 @@ pub const Value = union(Kind) {
                 try writer.writeAll("]");
             },
             .@"fn" => |@"fn"| {
-                try writer.print("fn<{}>", .{@"fn".ix});
+                try writer.print("fn<{}", .{@"fn".ix});
+                for (@"fn".captures) |capture| {
+                    try writer.print(", {}", .{capture});
+                }
+                try writer.writeAll(">");
             },
         }
     }
@@ -144,7 +153,14 @@ pub const Value = union(Kind) {
                 return .{ .map = map_copy };
             },
             .@"fn" => |@"fn"| {
-                return .{ .@"fn" = @"fn" };
+                const muts = allocator.dupe(bool, @"fn".muts) catch panic("OOM", .{});
+                const captures = allocator.dupe(*Value, @"fn".captures) catch panic("OOM", .{});
+                for (captures) |capture| capture.copyInPlace(allocator);
+                return .{ .@"fn" = .{
+                    .ix = @"fn".ix,
+                    .muts = muts,
+                    .captures = captures,
+                } };
             },
         }
     }
@@ -175,4 +191,6 @@ pub const Map = std.HashMap(
 
 pub const Fn = struct {
     ix: u32,
+    muts: []bool,
+    captures: []*Value,
 };

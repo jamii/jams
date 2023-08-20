@@ -141,6 +141,8 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
         var params = [_]c.BinaryenType{
             c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
         };
         _ = c.BinaryenAddFunctionImport(
             self.module.?,
@@ -162,6 +164,79 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
             "boolGet",
             c.BinaryenTypeCreate(&params, params.len),
             c.BinaryenTypeInt32(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnAssertMutCount",
+            "runtime",
+            "fnAssertMutCount",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnAssertMut",
+            "runtime",
+            "fnAssertMut",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnSetMut",
+            "runtime",
+            "fnSetMut",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnGetArg",
+            "runtime",
+            "fnGetArg",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeInt32(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+            c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnSetArg",
+            "runtime",
+            "fnSetArg",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeNone(),
         );
     }
     {
@@ -539,12 +614,12 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             const fn_result_location = c.BinaryenLocalGet(self.module.?, 0, c.BinaryenTypeInt32());
             const body_inner_ref = try self.compileExpr(&fn_scope, fn_result_location, @"fn".body);
 
-            var block = [_]c.BinaryenExpressionRef{
+            var fn_block = [_]c.BinaryenExpressionRef{
                 self.framePush(fn_scope.shadow_offset_max),
                 body_inner_ref,
                 self.framePop(fn_scope.shadow_offset_max),
             };
-            const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
+            const body_ref = c.BinaryenBlock(self.module.?, null, &fn_block, @intCast(fn_block.len), c.BinaryenTypeNone());
 
             const wasm_params_types = self.allocator.alloc(
                 c.BinaryenType,
@@ -563,13 +638,28 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 body_ref,
             );
 
-            return self.runtimeCall0(
+            const block = self.allocator.alloc(c.BinaryenExpressionRef, @"fn".muts.len + 1) catch oom();
+            block[0] = self.runtimeCall0(
                 "createFn",
                 &.{
                     result_location,
                     c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.fns.items.len - 1))))),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(@"fn".muts.len))))),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(0))))),
                 },
             );
+            for (block[1..], 0.., @"fn".muts) |*mut_expr, mut_ix, mut| {
+                mut_expr.* = self.runtimeCall0(
+                    "fnSetMut",
+                    &.{
+                        result_location,
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(mut_ix))))),
+                        c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(if (mut) 1 else 0)),
+                    },
+                );
+            }
+
+            return c.BinaryenBlock(self.module.?, null, block.ptr, @intCast(block.len), c.BinaryenTypeNone());
         },
         .call => |call| {
             const head_expr = self.parser.exprs.items[call.head];
@@ -623,9 +713,29 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                     wasm_type.* = c.BinaryenTypeInt32();
                 }
 
+                const mut_block = self.allocator.alloc(c.BinaryenExpressionRef, call.muts.len) catch oom();
+                for (mut_block, 0.., call.muts) |*mut_expr, mut_ix, mut| {
+                    mut_expr.* = self.runtimeCall0(
+                        "fnAssertMut",
+                        &.{
+                            head_location,
+                            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(mut_ix))))),
+                            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(if (mut) 1 else 0)),
+                        },
+                    );
+                }
+
                 // TODO Check muts on call.
                 var block = [_]c.BinaryenExpressionRef{
                     try self.compileExpr(scope, head_location, call.head),
+                    self.runtimeCall0(
+                        "fnAssertMutCount",
+                        &.{
+                            head_location,
+                            c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(call.muts.len))))),
+                        },
+                    ),
+                    c.BinaryenBlock(self.module.?, null, mut_block.ptr, @intCast(mut_block.len), c.BinaryenTypeNone()),
                     c.BinaryenCallIndirect(
                         self.module.?,
                         "fns",
