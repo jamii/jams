@@ -167,6 +167,19 @@ pub fn compile(self: *Self) error{CompileError}![]const u8 {
     {
         var params = [_]c.BinaryenType{
             c.BinaryenTypeInt32(),
+        };
+        _ = c.BinaryenAddFunctionImport(
+            self.module.?,
+            "fnGetIx",
+            "runtime",
+            "fnGetIx",
+            c.BinaryenTypeCreate(&params, params.len),
+            c.BinaryenTypeInt32(),
+        );
+    }
+    {
+        var params = [_]c.BinaryenType{
+            c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
             c.BinaryenTypeInt32(),
         };
@@ -516,7 +529,7 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
             };
             defer fn_scope.bindings.deinit();
 
-            for (0.., @"fn".muts, @"fn".params) |wasm_var, mut, param| {
+            for (1.., @"fn".muts, @"fn".params) |wasm_var, mut, param| {
                 bindingParamPush(&fn_scope, @intCast(wasm_var), mut, param);
             }
 
@@ -535,8 +548,6 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 // Reserve param 0 for fn_result_location.
                 @"fn".params.len + 1,
             ) catch oom();
-            defer self.allocator.free(wasm_params_types);
-
             for (wasm_params_types) |*wasm_param| wasm_param.* = c.BinaryenTypeInt32();
 
             _ = c.BinaryenAddFunction(
@@ -553,7 +564,7 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 "createFn",
                 &.{
                     result_location,
-                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.fns.items.len))))),
+                    c.BinaryenConst(self.module.?, c.BinaryenLiteralInt32(@bitCast(@as(u32, @intCast(self.fns.items.len - 1))))),
                 },
             );
         },
@@ -581,7 +592,59 @@ fn compileExpr(self: *Self, scope: *Scope, result_location: c.BinaryenExpression
                 };
                 return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
             } else {
-                return self.fail("Unsupported expr: {}", .{expr});
+                const head_shadow_offset = shadowPush(scope);
+                const head_location = self.shadowPtr(head_shadow_offset);
+
+                const arg_shadow_offsets = self.allocator.alloc(u32, call.args.len) catch oom();
+                for (arg_shadow_offsets, call.muts) |*arg_shadow_offset, mut| {
+                    if (!mut) {
+                        arg_shadow_offset.* = shadowPush(scope);
+                    }
+                }
+
+                const wasm_args = self.allocator.alloc(c.BinaryenExpressionRef, call.args.len + 1) catch oom();
+                const wasm_types = self.allocator.alloc(c.BinaryenType, call.args.len + 1) catch oom();
+                wasm_args[0] = result_location;
+                wasm_types[0] = c.BinaryenTypeInt32();
+                for (wasm_args[1..], wasm_types[1..], call.args, call.muts, arg_shadow_offsets) |*wasm_arg, *wasm_type, arg, mut, arg_shadow_offset| {
+                    if (mut) {
+                        wasm_arg.* = try self.compilePath(scope, arg, mut);
+                    } else {
+                        const arg_location = self.shadowPtr(arg_shadow_offset);
+                        var arg_block = [_]c.BinaryenExpressionRef{
+                            try self.compileExpr(scope, arg_location, arg),
+                            arg_location,
+                        };
+                        wasm_arg.* = c.BinaryenBlock(self.module.?, null, &arg_block, @intCast(arg_block.len), c.BinaryenTypeInt32());
+                    }
+                    wasm_type.* = c.BinaryenTypeInt32();
+                }
+
+                // TODO Check muts on call.
+                var block = [_]c.BinaryenExpressionRef{
+                    try self.compileExpr(scope, head_location, call.head),
+                    c.BinaryenCallIndirect(
+                        self.module.?,
+                        "fns",
+                        self.runtimeCall1("fnGetIx", &.{head_location}),
+                        wasm_args.ptr,
+                        @intCast(wasm_args.len),
+                        c.BinaryenTypeCreate(wasm_types.ptr, @intCast(wasm_types.len)),
+                        c.BinaryenTypeNone(),
+                    ),
+                };
+
+                {
+                    var i: usize = arg_shadow_offsets.len;
+                    while (i > 0) : (i -= 1) {
+                        if (!call.muts[i - 1]) {
+                            shadowPop(scope, arg_shadow_offsets[i - 1]);
+                        }
+                    }
+                }
+                shadowPop(scope, head_shadow_offset);
+
+                return c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
             }
         },
         .get_static => {

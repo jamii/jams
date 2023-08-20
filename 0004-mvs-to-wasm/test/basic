@@ -136,7 +136,7 @@ if 2 'true' else 'false'
 ---
 Expected boolean (0 or 1). Found 2
 
-// while fn
+// while
 let mut a = 1;
 while (a) (
   set a = 0;
@@ -159,7 +159,7 @@ a
 let add = fn [a,b] a + b;
 add
 ---
-fn<1>
+fn<0>
 
 // fn
 let add = fn [a,b] a + b;
@@ -236,4 +236,3 @@ set x.foo.bar = x.foo.bar + 1;
 [x,y[]]
 ---
 [['foo' = ['bar' = 2]], ['foo' = ['bar' = 1]]]
-

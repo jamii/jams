@@ -46,6 +46,10 @@ export fn boolGet(ptr: *Value) u32 {
     std.debug.panic("Expected boolean (0 or 1). Found {}", .{ptr.*});
 }
 
+export fn fnGetIx(ptr: *Value) u32 {
+    return ptr.*.@"fn".ix;
+}
+
 export fn mapSet(map: *Value, key: *Value, value: *Value) void {
     map.*.map.put(key.*, value.*) catch oom();
 }
