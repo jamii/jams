@@ -8,7 +8,6 @@ const Value = runtime.Value;
 const Map = runtime.Map;
 const Fn = runtime.Fn;
 
-// TODO Need to reserve space for both stacks.
 const global_allocator = std.heap.wasm_allocator;
 
 fn oom() noreturn {

@@ -58,19 +58,6 @@ pub fn init(allocator: Allocator, parser: Parser) Self {
 }
 
 pub fn compile(self: *Self) error{CompileError}![]const u8 {
-    // TODO Once stable, use:
-    //const runtime_bytes = @embedFile("../runtime.wasm");
-
-    //const runtime_file = std.fs.cwd().openFile("runtime.wasm", .{}) catch |err|
-    //    panic("Error opening runtime.wasm: {}", .{err});
-    //defer runtime_file.close();
-
-    //const runtime_bytes = runtime_file.reader().readAllAlloc(self.allocator, std.math.maxInt(usize)) catch |err|
-    //    panic("Error reading runtime.wasm: {}", .{err});
-    //defer self.allocator.free(runtime_bytes);
-
-    //self.module = c.BinaryenModuleRead(@as([*c]u8, @ptrCast(runtime_bytes)), runtime_bytes.len);
-
     self.module = c.BinaryenModuleCreate();
     defer {
         c.BinaryenModuleDispose(self.module.?);
@@ -460,10 +447,8 @@ fn compileMain(self: *Self, body: ExprId) error{CompileError}!c.BinaryenFunction
     };
     const body_ref = c.BinaryenBlock(self.module.?, null, &block, @intCast(block.len), c.BinaryenTypeNone());
 
-    // TODO Need to mangle names for closures?
     const fn_ref = c.BinaryenAddFunction(
         self.module.?,
-        // TODO Mangle main?
         "main",
         c.BinaryenTypeNone(),
         c.BinaryenTypeNone(),
