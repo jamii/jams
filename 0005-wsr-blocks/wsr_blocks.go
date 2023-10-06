@@ -36,6 +36,14 @@ func SumGenericGeneric[Num constraints.Integer, Op Operator[Num]](op Op, nums []
 	return total
 }
 
+func SumGenericGeneric2[Num constraints.Integer, Op func(Num, Num) Num](op Op, nums []Num) Num {
+	var total Num = 0
+	for _, num := range nums {
+		total = op(total, num)
+	}
+	return total
+}
+
 type Operator[Num constraints.Integer] interface {
 	operate(a Num, b Num) Num
 }
