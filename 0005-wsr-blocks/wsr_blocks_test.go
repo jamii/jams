@@ -16,11 +16,12 @@ func TestCompress(t *testing.T) {
 
 	for _, vector := range vectors {
 		for _, compression := range wsr_blocks.Compressions() {
-			compressed, ok := vector.Compress(compression)
+			compressed, ok := vector.Compressed(compression)
 			if ok {
-				decompressed, ok := compressed.Decompress()
-				assert.Assert(t, ok)
-				assert.DeepEqual(t, vector, decompressed)
+				decompressed := compressed.Decompressed()
+				vector_raw, _ := vector.AsRaw()
+				decompressed_raw, _ := decompressed.AsRaw()
+				assert.DeepEqual(t, vector_raw, decompressed_raw)
 			}
 		}
 	}
