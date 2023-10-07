@@ -4,52 +4,91 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-func Sum64(nums []int64) int64 {
-	var total int64 = 0
-	for _, num := range nums {
-		total += num
+type Vector interface{}
+
+type DictCompressedVector struct {
+	Codes       Vector
+	UniqueElems Vector
+}
+
+type Compression = int64
+
+const (
+	Raw Compression = iota
+	Dict
+	RunLength
+)
+
+func Compress(compression Compression, vector Vector) Vector {
+	switch compression {
+	case Raw:
+		return vector
+	case Dict:
+		switch vector.(type) {
+		case []uint64:
+			return DictCompress(vector.([]uint64))
+		case []string:
+			return DictCompress(vector.([]string))
+		default:
+			panic("!")
+		}
+	case RunLength:
+		switch vector.(type) {
+		case []uint64:
+			return RunLengthCompress(vector.([]uint64))
+		case []string:
+			panic("Unsupported")
+		default:
+			panic("!")
+		}
+	default:
+		panic("!")
 	}
-	return total
 }
 
-func Sum64Indirect(nums []int64) int64 {
-	var total int64 = 0
-	for _, num := range nums {
-		total = Add[int64]{}.operate(total, num)
+func DictCompress[Elem comparable](vector []Elem) DictCompressedVector {
+	unique_elems := make([]Elem, 0)
+	dict := make(map[Elem]uint64)
+	for _, elem := range vector {
+		if _, ok := dict[elem]; !ok {
+			dict[elem] = uint64(len(unique_elems))
+			unique_elems = append(unique_elems, elem)
+		}
 	}
-	return total
-}
-
-func SumGeneric[Num constraints.Integer](nums []Num) Num {
-	var total Num = 0
-	for _, num := range nums {
-		total = Add[Num]{}.operate(total, num)
+	codes := make([]uint64, len(vector))
+	for i, elem := range vector {
+		codes[i] = dict[elem]
 	}
-	return total
-}
-
-func SumGenericGeneric[Num constraints.Integer, Op Operator[Num]](op Op, nums []Num) Num {
-	var total Num = 0
-	for _, num := range nums {
-		total = op.operate(total, num)
+	return DictCompressedVector{
+		Codes:       codes,
+		UniqueElems: unique_elems,
 	}
-	return total
 }
 
-func SumGenericGeneric2[Num constraints.Integer, Op func(Num, Num) Num](op Op, nums []Num) Num {
-	var total Num = 0
-	for _, num := range nums {
-		total = op(total, num)
+func RunLengthCompress[Elem constraints.Integer](vector []Elem) Vector {
+	var max_elem Elem
+	for _, elem := range vector {
+		// TODO go 1.21 has a `max` function
+		if elem > max_elem {
+			max_elem = elem
+		}
 	}
-	return total
+	switch {
+	case uint64(max_elem) < (1 << 8):
+		return RunLengthCompressTo[Elem, uint8](vector)
+	case uint64(max_elem) < (1 << 16):
+		return RunLengthCompressTo[Elem, uint16](vector)
+	case uint64(max_elem) < (1 << 32):
+		return RunLengthCompressTo[Elem, uint32](vector)
+	default:
+		return vector
+	}
 }
 
-type Operator[Num constraints.Integer] interface {
-	operate(a Num, b Num) Num
-}
-
-type Add[Num constraints.Integer] struct{}
-
-func (add Add[int64]) operate(a int64, b int64) int64 {
-	return a + b
+func RunLengthCompressTo[From constraints.Integer, To constraints.Integer](from []From) []To {
+	var to = make([]To, len(from))
+	for i, elem := range from {
+		to[i] = To(elem)
+	}
+	return to
 }

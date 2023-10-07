@@ -1,87 +1,65 @@
 package wsr_blocks_test
 
 import (
-	"math/rand"
 	"testing"
 	"wsr_blocks"
+
+	"gotest.tools/assert"
 )
 
-func BenchmarkSum64(b *testing.B) {
-	rand := rand.New(rand.NewSource(42))
-	nums := make([]int64, 1<<16)
-	for i := range nums {
-		nums[i] = int64(rand.Intn(1000))
-	}
-	b.ResetTimer()
-	var total int64 = 0
-	for i := 0; i < b.N; i++ {
-		total += wsr_blocks.Sum64(nums)
-	}
-	if total == 0 {
-		panic("Unreachable")
-	}
-}
+func TestCompress(t *testing.T) {
+	empty := []uint64{}
+	ints := []uint64{42, 102, 42, 42, 87, 1 << 11}
+	strings := []string{"foo", "bar", "bar", "quux"}
 
-func BenchmarkSum64Indirect(b *testing.B) {
-	rand := rand.New(rand.NewSource(42))
-	nums := make([]int64, 1<<16)
-	for i := range nums {
-		nums[i] = int64(rand.Intn(1000))
-	}
-	b.ResetTimer()
-	var total int64 = 0
-	for i := 0; i < b.N; i++ {
-		total += wsr_blocks.Sum64(nums)
-	}
-	if total == 0 {
-		panic("Unreachable")
-	}
-}
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.Dict, empty),
+		wsr_blocks.DictCompressedVector{
+			Codes:       []uint64{},
+			UniqueElems: []uint64{},
+		},
+	)
 
-func BenchmarkSumGeneric(b *testing.B) {
-	rand := rand.New(rand.NewSource(42))
-	nums := make([]int64, 1<<16)
-	for i := range nums {
-		nums[i] = int64(rand.Intn(1000))
-	}
-	b.ResetTimer()
-	var total int64 = 0
-	for i := 0; i < b.N; i++ {
-		total += wsr_blocks.SumGeneric(nums)
-	}
-	if total == 0 {
-		panic("Unreachable")
-	}
-}
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.Dict, ints),
+		wsr_blocks.DictCompressedVector{
+			Codes:       []uint64{0, 1, 0, 0, 2, 3},
+			UniqueElems: []uint64{42, 102, 87, 1 << 11},
+		},
+	)
 
-func BenchmarkSumGenericGeneric(b *testing.B) {
-	rand := rand.New(rand.NewSource(42))
-	nums := make([]int64, 1<<16)
-	for i := range nums {
-		nums[i] = int64(rand.Intn(1000))
-	}
-	b.ResetTimer()
-	var total int64 = 0
-	for i := 0; i < b.N; i++ {
-		total += wsr_blocks.SumGenericGeneric(wsr_blocks.Add[int64]{}, nums)
-	}
-	if total == 0 {
-		panic("Unreachable")
-	}
-}
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.Dict, strings),
+		wsr_blocks.DictCompressedVector{
+			Codes:       []uint64{0, 1, 1, 2},
+			UniqueElems: []string{"foo", "bar", "quux"},
+		},
+	)
 
-func BenchmarkSumGenericGeneric2(b *testing.B) {
-	rand := rand.New(rand.NewSource(42))
-	nums := make([]int64, 1<<16)
-	for i := range nums {
-		nums[i] = int64(rand.Intn(1000))
-	}
-	b.ResetTimer()
-	var total int64 = 0
-	for i := 0; i < b.N; i++ {
-		total += wsr_blocks.SumGenericGeneric2(func(a int64, b int64) int64 { return a + b }, nums)
-	}
-	if total == 0 {
-		panic("Unreachable")
-	}
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.RunLength, empty),
+		wsr_blocks.RunLengthCompressedVector{
+			Elems: []uint8{},
+		},
+	)
+
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.RunLength, ints),
+		wsr_blocks.RunLengthCompressedVector{
+			Elems: []uint16{42, 102, 42, 42, 87, 1 << 11},
+		},
+	)
+
+	assert.DeepEqual(
+		t,
+		wsr_blocks.Compress(wsr_blocks.RunLength, []uint64{1 << 63}),
+		wsr_blocks.RawCompressedVector{
+			Elems: []uint64{1 << 63},
+		},
+	)
 }
