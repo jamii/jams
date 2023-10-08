@@ -27,13 +27,13 @@ func (vector Vector) Compressed(compression Compression) (Vector, bool) {
 		}
 	case RunLength:
 		if elems, ok := vector.AsRawUint8(); ok {
-			return RunLengthCompress(elems)
+			return runLengthCompress(elems)
 		} else if elems, ok := vector.AsRawUint16(); ok {
-			return RunLengthCompress(elems)
+			return runLengthCompress(elems)
 		} else if elems, ok := vector.AsRawUint32(); ok {
-			return RunLengthCompress(elems)
+			return runLengthCompress(elems)
 		} else if elems, ok := vector.AsRawUint64(); ok {
-			return RunLengthCompress(elems)
+			return runLengthCompress(elems)
 		} else if _, ok := vector.AsRawString(); ok {
 			return Vector{}, false
 		} else {
@@ -68,7 +68,7 @@ func dictCompress[Elem comparable](elems []Elem) (Vector, bool) {
 	return result, true
 }
 
-func RunLengthCompress[Elem constraints.Integer](elems []Elem) (Vector, bool) {
+func runLengthCompress[Elem constraints.Integer](elems []Elem) (Vector, bool) {
 	var max_elem Elem
 	for _, elem := range elems {
 		// TODO go 1.21 has a `max` function
