@@ -25,14 +25,14 @@ type Compression = uint64
 const (
 	Raw Compression = iota
 	Dict
-	RunLength
+	Size
 	Bias
 )
 
 func Compressions() []Compression {
 	return []Compression{
 		Dict,
-		RunLength,
+		Size,
 		Bias,
 	}
 }
@@ -48,7 +48,7 @@ type dictCompressedElems struct {
 	uniqueElems Vector
 }
 
-type runLengthCompressedElems struct {
+type sizeCompressedElems struct {
 	elems Vector
 }
 
@@ -174,11 +174,11 @@ func (vector Vector) asDictCompressed() (dictCompressedElems, bool) {
 	}
 }
 
-func (vector Vector) asRunLengthCompressed() (runLengthCompressedElems, bool) {
-	if vector.compression == RunLength {
-		return vector.data.(runLengthCompressedElems), true
+func (vector Vector) asSizeCompressed() (sizeCompressedElems, bool) {
+	if vector.compression == Size {
+		return vector.data.(sizeCompressedElems), true
 	} else {
-		return runLengthCompressedElems{}, false
+		return sizeCompressedElems{}, false
 	}
 }
 
@@ -201,7 +201,7 @@ func (vector Vector) Count() int {
 		return len(data)
 	} else if data, ok := vector.asDictCompressed(); ok {
 		return data.codes.Count()
-	} else if data, ok := vector.asRunLengthCompressed(); ok {
+	} else if data, ok := vector.asSizeCompressed(); ok {
 		return data.elems.Count()
 	} else if data, ok := vector.asBiasCompressed(); ok {
 		return data.count

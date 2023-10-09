@@ -26,15 +26,15 @@ func (vector Vector) Compressed(compression Compression) (Vector, bool) {
 		} else {
 			return Vector{}, false
 		}
-	case RunLength:
+	case Size:
 		if elems, ok := vector.AsRawUint8(); ok {
-			return runLengthCompress(elems)
+			return sizeCompress(elems)
 		} else if elems, ok := vector.AsRawUint16(); ok {
-			return runLengthCompress(elems)
+			return sizeCompress(elems)
 		} else if elems, ok := vector.AsRawUint32(); ok {
-			return runLengthCompress(elems)
+			return sizeCompress(elems)
 		} else if elems, ok := vector.AsRawUint64(); ok {
-			return runLengthCompress(elems)
+			return sizeCompress(elems)
 		} else if _, ok := vector.AsRawString(); ok {
 			return Vector{}, false
 		} else {
@@ -83,7 +83,7 @@ func dictCompress[Elem comparable](elems []Elem) (Vector, bool) {
 	return result, true
 }
 
-func runLengthCompress[Elem constraints.Integer](elems []Elem) (Vector, bool) {
+func sizeCompress[Elem constraints.Integer](elems []Elem) (Vector, bool) {
 	var max_elem Elem
 	for _, elem := range elems {
 		// TODO go 1.21 has a `max` function
@@ -94,25 +94,25 @@ func runLengthCompress[Elem constraints.Integer](elems []Elem) (Vector, bool) {
 	var result_inner Vector
 	switch {
 	case uint64(max_elem) < (1 << 8):
-		result_inner = VectorFromElems(runLengthCompressTo[Elem, uint8](elems))
+		result_inner = VectorFromElems(sizeCompressTo[Elem, uint8](elems))
 	case uint64(max_elem) < (1 << 16):
-		result_inner = VectorFromElems(runLengthCompressTo[Elem, uint16](elems))
+		result_inner = VectorFromElems(sizeCompressTo[Elem, uint16](elems))
 	case uint64(max_elem) < (1 << 32):
-		result_inner = VectorFromElems(runLengthCompressTo[Elem, uint32](elems))
+		result_inner = VectorFromElems(sizeCompressTo[Elem, uint32](elems))
 	default:
 		return Vector{}, false
 	}
 	result := Vector{
 		Kind:        kindFromElems(elems),
-		compression: RunLength,
-		data: runLengthCompressedElems{
+		compression: Size,
+		data: sizeCompressedElems{
 			elems: result_inner,
 		},
 	}
 	return result, true
 }
 
-func runLengthCompressTo[From constraints.Integer, To constraints.Integer](from []From) []To {
+func sizeCompressTo[From constraints.Integer, To constraints.Integer](from []From) []To {
 	var to = make([]To, len(from))
 	for i, elem := range from {
 		to[i] = To(elem)
@@ -173,8 +173,8 @@ func (vector Vector) Decompressed() Vector {
 	result := vector.zeroedVector()
 	if data, ok := vector.asDictCompressed(); ok {
 		dictDecompress1(data.uniqueElems.Decompressed().data, data.codes.Decompressed().data, result.data)
-	} else if data, ok := vector.asRunLengthCompressed(); ok {
-		runLengthDecompress1(data.elems.Decompressed().data, result.data)
+	} else if data, ok := vector.asSizeCompressed(); ok {
+		sizeDecompress1(data.elems.Decompressed().data, result.data)
 	} else if data, ok := vector.asBiasCompressed(); ok {
 		biasDecompress1(data.elem.Data, data.presence, data.remainder.Decompressed().data, result.data)
 	} else {
@@ -217,33 +217,33 @@ func dictDecompress3[Elem any, Code constraints.Integer](uniqueElems []Elem, cod
 	}
 }
 
-func runLengthDecompress1(from interface{}, to interface{}) {
+func sizeDecompress1(from interface{}, to interface{}) {
 	switch from.(type) {
 	case []uint8:
-		runLengthDecompress2(from.([]uint8), to)
+		sizeDecompress2(from.([]uint8), to)
 	case []uint16:
-		runLengthDecompress2(from.([]uint16), to)
+		sizeDecompress2(from.([]uint16), to)
 	case []uint32:
-		runLengthDecompress2(from.([]uint32), to)
+		sizeDecompress2(from.([]uint32), to)
 	case []uint64:
-		runLengthDecompress2(from.([]uint64), to)
+		sizeDecompress2(from.([]uint64), to)
 	}
 }
 
-func runLengthDecompress2[From constraints.Integer](from []From, to interface{}) {
+func sizeDecompress2[From constraints.Integer](from []From, to interface{}) {
 	switch to.(type) {
 	case []uint8:
-		runLengthDecompress3(from, to.([]uint8))
+		sizeDecompress3(from, to.([]uint8))
 	case []uint16:
-		runLengthDecompress3(from, to.([]uint16))
+		sizeDecompress3(from, to.([]uint16))
 	case []uint32:
-		runLengthDecompress3(from, to.([]uint32))
+		sizeDecompress3(from, to.([]uint32))
 	case []uint64:
-		runLengthDecompress3(from, to.([]uint64))
+		sizeDecompress3(from, to.([]uint64))
 	}
 }
 
-func runLengthDecompress3[From constraints.Integer, To constraints.Integer](from []From, to []To) {
+func sizeDecompress3[From constraints.Integer, To constraints.Integer](from []From, to []To) {
 	for i := range from {
 		to[i] = To(from[i])
 	}
