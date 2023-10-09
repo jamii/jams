@@ -93,23 +93,6 @@ func kindFromElems(elems interface{}) Kind {
 	}
 }
 
-func (vector Vector) zeroedElems() interface{} {
-	switch vector.Kind {
-	case Uint8:
-		return make([]uint8, vector.Count())
-	case Uint16:
-		return make([]uint16, vector.Count())
-	case Uint32:
-		return make([]uint32, vector.Count())
-	case Uint64:
-		return make([]uint64, vector.Count())
-	case String:
-		return make([]string, vector.Count())
-	default:
-		panic("Unreachable")
-	}
-}
-
 func (vector Vector) zeroedVector() Vector {
 	switch vector.Kind {
 	case Uint8:
