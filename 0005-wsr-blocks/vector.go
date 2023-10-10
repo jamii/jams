@@ -4,208 +4,157 @@ import (
 	"github.com/RoaringBitmap/roaring"
 )
 
-type Kind = uint64
+type VectorUncompressedInt interface {
+	is_vector_uncompressed_int()
 
-const (
-	Uint8 Kind = iota
-	Uint16
-	Uint32
-	Uint64
-	String
-)
-
-type BoxedElem struct {
-	Kind Kind
-	// Just heap-allocate all elems for now.
-	Data interface{}
+	SizeCompressed() (VectorSize, bool)
 }
 
-type Compression = uint64
+type VectorUncompressed interface {
+	is_vector_uncompressed()
 
-const (
-	Raw Compression = iota
-	Dict
-	Size
-	Bias
-)
-
-func Compressions() []Compression {
-	return []Compression{
-		Dict,
-		Size,
-		Bias,
-	}
+	DictCompressed() (VectorDict, bool)
+	BiasCompressed() (VectorBias, bool)
 }
 
-type Vector struct {
-	Kind        Kind
-	compression Compression
-	data        interface{}
+type VectorCompressed interface {
+	is_vector_compressed()
+
+	Decompressed() VectorUncompressed
 }
 
-type dictCompressedElems struct {
-	codes       Vector
-	uniqueElems Vector
+type Vector interface {
+	is_vector()
+	zeroedVectorWithCount(count int) VectorUncompressed
+
+	Count() int
 }
 
-type sizeCompressedElems struct {
-	elems Vector
+type VectorUint8 []uint8
+type VectorUint16 []uint16
+type VectorUint32 []uint32
+type VectorUint64 []uint64
+type VectorString []string
+
+type VectorDict struct {
+	codes        Vector
+	uniqueValues Vector
 }
 
-type biasCompressedElems struct {
+type VectorSize struct {
+	originalSizeBits uint8
+	values           Vector
+}
+
+type VectorBias struct {
 	count     int
-	elem      BoxedElem
+	value     BoxedValue
 	presence  roaring.Bitmap
 	remainder Vector
 }
 
-func kindFromElem(elem interface{}) Kind {
-	switch elem.(type) {
-	case uint8:
-		return Uint8
-	case uint16:
-		return Uint16
-	case uint32:
-		return Uint32
-	case uint64:
-		return Uint64
-	case string:
-		return String
-	default:
-		panic("Unsupported elem kind")
-	}
-}
+func (_ VectorUint8) is_vector_uncompressed_int()  {}
+func (_ VectorUint16) is_vector_uncompressed_int() {}
+func (_ VectorUint32) is_vector_uncompressed_int() {}
+func (_ VectorUint64) is_vector_uncompressed_int() {}
 
-func kindFromElems(elems interface{}) Kind {
-	switch elems.(type) {
+func (_ VectorUint8) is_vector_uncompressed()  {}
+func (_ VectorUint16) is_vector_uncompressed() {}
+func (_ VectorUint32) is_vector_uncompressed() {}
+func (_ VectorUint64) is_vector_uncompressed() {}
+func (_ VectorString) is_vector_uncompressed() {}
+
+func (_ VectorDict) is_vector_compressed() {}
+func (_ VectorSize) is_vector_compressed() {}
+func (_ VectorBias) is_vector_compressed() {}
+
+func (_ VectorUint8) is_vector()  {}
+func (_ VectorUint16) is_vector() {}
+func (_ VectorUint32) is_vector() {}
+func (_ VectorUint64) is_vector() {}
+func (_ VectorString) is_vector() {}
+func (_ VectorDict) is_vector()   {}
+func (_ VectorSize) is_vector()   {}
+func (_ VectorBias) is_vector()   {}
+
+func VectorFromValues(values interface{}) VectorUncompressed {
+	switch values.(type) {
 	case []uint8:
-		return Uint8
+		return VectorUint8(values.([]uint8))
 	case []uint16:
-		return Uint16
+		return VectorUint16(values.([]uint16))
 	case []uint32:
-		return Uint32
+		return VectorUint32(values.([]uint32))
 	case []uint64:
-		return Uint64
+		return VectorUint64(values.([]uint64))
 	case []string:
-		return String
+		return VectorString(values.([]string))
 	default:
-		panic("Unsupported elem kind")
+		panic("Unsupported value type")
 	}
 }
 
-func (vector Vector) zeroedVector() Vector {
-	switch vector.Kind {
-	case Uint8:
-		return VectorFromElems(make([]uint8, vector.Count()))
-	case Uint16:
-		return VectorFromElems(make([]uint16, vector.Count()))
-	case Uint32:
-		return VectorFromElems(make([]uint32, vector.Count()))
-	case Uint64:
-		return VectorFromElems(make([]uint64, vector.Count()))
-	case String:
-		return VectorFromElems(make([]string, vector.Count()))
+func (vector VectorUint8) Count() int {
+	return len(vector)
+}
+func (vector VectorUint16) Count() int {
+	return len(vector)
+}
+func (vector VectorUint32) Count() int {
+	return len(vector)
+}
+func (vector VectorUint64) Count() int {
+	return len(vector)
+}
+func (vector VectorString) Count() int {
+	return len(vector)
+}
+func (vector VectorDict) Count() int {
+	return vector.codes.Count()
+}
+func (vector VectorSize) Count() int {
+	return vector.values.Count()
+}
+func (vector VectorBias) Count() int {
+	return vector.count
+}
+
+func zeroedVector(vector Vector) VectorUncompressed {
+	return vector.zeroedVectorWithCount(vector.Count())
+}
+
+func (vector VectorUint8) zeroedVectorWithCount(count int) VectorUncompressed {
+	return VectorUint8(make([]uint8, count))
+}
+func (vector VectorUint16) zeroedVectorWithCount(count int) VectorUncompressed {
+	return VectorUint16(make([]uint16, count))
+}
+func (vector VectorUint32) zeroedVectorWithCount(count int) VectorUncompressed {
+	return VectorUint32(make([]uint32, count))
+}
+func (vector VectorUint64) zeroedVectorWithCount(count int) VectorUncompressed {
+	return VectorUint64(make([]uint64, count))
+}
+func (vector VectorString) zeroedVectorWithCount(count int) VectorUncompressed {
+	return VectorString(make([]string, count))
+}
+func (vector VectorDict) zeroedVectorWithCount(count int) VectorUncompressed {
+	return vector.uniqueValues.zeroedVectorWithCount(count)
+}
+func (vector VectorSize) zeroedVectorWithCount(count int) VectorUncompressed {
+	switch vector.originalSizeBits {
+	case 8:
+		return VectorUint8(make([]uint8, count))
+	case 16:
+		return VectorUint16(make([]uint16, count))
+	case 32:
+		return VectorUint32(make([]uint32, count))
+	case 64:
+		return VectorUint64(make([]uint64, count))
 	default:
 		panic("Unreachable")
 	}
 }
-
-func VectorFromElems[Elem any](elems []Elem) Vector {
-	return Vector{
-		Kind:        kindFromElems(elems),
-		compression: Raw,
-		data:        elems,
-	}
-}
-
-func (vector Vector) AsRaw() (interface{}, bool) {
-	if vector.compression == Raw {
-		return vector.data, true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) AsRawUint8() ([]uint8, bool) {
-	if vector.compression == Raw && vector.Kind == Uint8 {
-		return vector.data.([]uint8), true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) AsRawUint16() ([]uint16, bool) {
-	if vector.compression == Raw && vector.Kind == Uint16 {
-		return vector.data.([]uint16), true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) AsRawUint32() ([]uint32, bool) {
-	if vector.compression == Raw && vector.Kind == Uint32 {
-		return vector.data.([]uint32), true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) AsRawUint64() ([]uint64, bool) {
-	if vector.compression == Raw && vector.Kind == Uint64 {
-		return vector.data.([]uint64), true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) AsRawString() ([]string, bool) {
-	if vector.compression == Raw && vector.Kind == Uint16 {
-		return vector.data.([]string), true
-	} else {
-		return nil, false
-	}
-}
-
-func (vector Vector) asDictCompressed() (dictCompressedElems, bool) {
-	if vector.compression == Dict {
-		return vector.data.(dictCompressedElems), true
-	} else {
-		return dictCompressedElems{}, false
-	}
-}
-
-func (vector Vector) asSizeCompressed() (sizeCompressedElems, bool) {
-	if vector.compression == Size {
-		return vector.data.(sizeCompressedElems), true
-	} else {
-		return sizeCompressedElems{}, false
-	}
-}
-
-func (vector Vector) asBiasCompressed() (biasCompressedElems, bool) {
-	if vector.compression == Bias {
-		return vector.data.(biasCompressedElems), true
-	} else {
-		return biasCompressedElems{}, false
-	}
-}
-
-func (vector Vector) Count() int {
-	if data, ok := vector.AsRawUint8(); ok {
-		return len(data)
-	} else if data, ok := vector.AsRawUint16(); ok {
-		return len(data)
-	} else if data, ok := vector.AsRawUint32(); ok {
-		return len(data)
-	} else if data, ok := vector.AsRawUint64(); ok {
-		return len(data)
-	} else if data, ok := vector.asDictCompressed(); ok {
-		return data.codes.Count()
-	} else if data, ok := vector.asSizeCompressed(); ok {
-		return data.elems.Count()
-	} else if data, ok := vector.asBiasCompressed(); ok {
-		return data.count
-	} else {
-		panic("Unreachable")
-	}
+func (vector VectorBias) zeroedVectorWithCount(count int) VectorUncompressed {
+	return vector.remainder.zeroedVectorWithCount(count)
 }

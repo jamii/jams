@@ -8,20 +8,18 @@ import (
 )
 
 func TestCompress(t *testing.T) {
-	vectors := []wsr_blocks.Vector{
-		wsr_blocks.VectorFromElems([]uint64{}),
-		wsr_blocks.VectorFromElems([]uint64{42, 102, 42, 42, 87, 1 << 11}),
-		wsr_blocks.VectorFromElems([]string{"foo", "bar", "bar", "quux"}),
+	vectors := []wsr_blocks.VectorUncompressed{
+		wsr_blocks.VectorFromValues([]uint64{}),
+		wsr_blocks.VectorFromValues([]uint64{42, 102, 42, 42, 87, 1 << 11}),
+		wsr_blocks.VectorFromValues([]string{"foo", "bar", "bar", "quux"}),
 	}
 
 	for _, vector := range vectors {
 		for _, compression := range wsr_blocks.Compressions() {
-			compressed, ok := vector.Compressed(compression)
+			compressed, ok := wsr_blocks.Compressed(vector, compression)
 			if ok {
 				decompressed := compressed.Decompressed()
-				vector_raw, _ := vector.AsRaw()
-				decompressed_raw, _ := decompressed.AsRaw()
-				assert.DeepEqual(t, vector_raw, decompressed_raw)
+				assert.DeepEqual(t, vector, decompressed)
 			}
 		}
 	}
