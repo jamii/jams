@@ -158,7 +158,7 @@ fn sizeCompressed(allocator: Allocator, vector: VectorUncompressed) !?VectorComp
 
             const max = std.mem.max(Elem, values);
             inline for (.{ u8, u16, u32 }) |ElemCompressed| {
-                if (max < std.math.maxInt(ElemCompressed)) {
+                if (max < std.math.maxInt(ElemCompressed) and Elem != ElemCompressed) {
                     const values_compressed = try allocator.alloc(ElemCompressed, values.len);
                     for (values, values_compressed) |value, *value_compressed| {
                         value_compressed.* = @intCast(value);

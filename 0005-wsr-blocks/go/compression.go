@@ -57,19 +57,6 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 	}
 }
 
-func (vector VectorUint8) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(8, []uint8(vector))
-}
-func (vector VectorUint16) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(16, []uint16(vector))
-}
-func (vector VectorUint32) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(32, []uint32(vector))
-}
-func (vector VectorUint64) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(64, []uint64(vector))
-}
-
 func (vector VectorUint8) DictCompressed() (VectorDict, bool) {
 	return dictCompressed1([]uint8(vector))
 }
@@ -84,22 +71,6 @@ func (vector VectorUint64) DictCompressed() (VectorDict, bool) {
 }
 func (vector VectorString) DictCompressed() (VectorDict, bool) {
 	return dictCompressed1([]string(vector))
-}
-
-func (vector VectorUint8) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint8(vector))
-}
-func (vector VectorUint16) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint16(vector))
-}
-func (vector VectorUint32) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint32(vector))
-}
-func (vector VectorUint64) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint64(vector))
-}
-func (vector VectorString) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]string(vector))
 }
 
 func dictCompressed1[Value comparable](values []Value) (VectorDict, bool) {
@@ -120,6 +91,19 @@ func dictCompressed1[Value comparable](values []Value) (VectorDict, bool) {
 		uniqueValues: VectorFromValues(unique_values).(Vector),
 	}
 	return result, true
+}
+
+func (vector VectorUint8) SizeCompressed() (VectorSize, bool) {
+	return sizeCompressed1(8, []uint8(vector))
+}
+func (vector VectorUint16) SizeCompressed() (VectorSize, bool) {
+	return sizeCompressed1(16, []uint16(vector))
+}
+func (vector VectorUint32) SizeCompressed() (VectorSize, bool) {
+	return sizeCompressed1(32, []uint32(vector))
+}
+func (vector VectorUint64) SizeCompressed() (VectorSize, bool) {
+	return sizeCompressed1(64, []uint64(vector))
 }
 
 func sizeCompressed1[Value constraints.Integer](originalSizeBits uint8, values []Value) (VectorSize, bool) {
@@ -155,6 +139,22 @@ func sizeCompressed2[From constraints.Integer, To constraints.Integer](from []Fr
 	return to
 }
 
+func (vector VectorUint8) BiasCompressed() (VectorBias, bool) {
+	return biasCompressed1([]uint8(vector))
+}
+func (vector VectorUint16) BiasCompressed() (VectorBias, bool) {
+	return biasCompressed1([]uint16(vector))
+}
+func (vector VectorUint32) BiasCompressed() (VectorBias, bool) {
+	return biasCompressed1([]uint32(vector))
+}
+func (vector VectorUint64) BiasCompressed() (VectorBias, bool) {
+	return biasCompressed1([]uint64(vector))
+}
+func (vector VectorString) BiasCompressed() (VectorBias, bool) {
+	return biasCompressed1([]string(vector))
+}
+
 func biasCompressed1[Value comparable](values []Value) (VectorBias, bool) {
 	if len(values) == 0 {
 		return VectorBias{}, false
@@ -164,19 +164,19 @@ func biasCompressed1[Value comparable](values []Value) (VectorBias, bool) {
 	for _, value := range values {
 		counts[value] += 1
 	}
-	var max_value Value = values[0]
-	var max_count int = 0
+	var common_value Value = values[0]
+	var common_count int = 0
 	for value, count := range counts {
-		if count > max_count {
-			max_value = value
-			max_count = count
+		if count > common_count {
+			common_value = value
+			common_count = count
 		}
 	}
 
 	var presence = roaring.New()
-	var remainder = make([]Value, 0, len(values)-max_count)
+	var remainder = make([]Value, 0, len(values)-common_count)
 	for i, value := range values {
-		if value == max_value {
+		if value == common_value {
 			presence.Add(uint32(i))
 		} else {
 			remainder = append(remainder, value)
@@ -185,7 +185,7 @@ func biasCompressed1[Value comparable](values []Value) (VectorBias, bool) {
 
 	result := VectorBias{
 		count:     len(values),
-		value:     BoxedValueFromValue(max_value),
+		value:     BoxedValueFromValue(common_value),
 		presence:  *presence,
 		remainder: VectorFromValues(remainder).(Vector),
 	}
