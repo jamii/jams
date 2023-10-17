@@ -11,8 +11,7 @@ type Compression = struct {
 type compressionTag = uint64
 
 const (
-	Uncompressed compressionTag = iota
-	Dict
+	Dict compressionTag = iota
 	Size
 	Bias
 )
@@ -27,8 +26,6 @@ func Compressions() []Compression {
 
 func Compressed(vector VectorUncompressed, compression Compression) (VectorCompressed, bool) {
 	switch compression.tag {
-	case Uncompressed:
-		return nil, false
 	case Dict:
 		compressed, ok := vector.DictCompressed()
 		if ok {
