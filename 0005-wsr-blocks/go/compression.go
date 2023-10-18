@@ -27,7 +27,7 @@ func Compressions() []Compression {
 func Compressed(vector VectorUncompressed, compression Compression) (VectorCompressed, bool) {
 	switch compression.tag {
 	case Dict:
-		compressed, ok := vector.DictCompressed()
+		compressed, ok := vector.dictCompressed1()
 		if ok {
 			return VectorCompressed(compressed), true
 		} else {
@@ -36,7 +36,7 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 	case Size:
 		switch vector.(type) {
 		case VectorUncompressedInt:
-			compressed, ok := vector.(VectorUncompressedInt).SizeCompressed()
+			compressed, ok := vector.(VectorUncompressedInt).sizeCompressed1()
 			if ok {
 				return VectorCompressed(compressed), true
 			} else {
@@ -46,7 +46,7 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 			return nil, false
 		}
 	case Bias:
-		compressed, ok := vector.BiasCompressed()
+		compressed, ok := vector.biasCompressed1()
 		if ok {
 			return VectorCompressed(compressed), true
 		} else {
@@ -57,23 +57,23 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 	}
 }
 
-func (vector VectorUint8) DictCompressed() (VectorDict, bool) {
-	return dictCompressed1([]uint8(vector))
+func (vector VectorUint8) dictCompressed1() (VectorDict, bool) {
+	return dictCompressed2([]uint8(vector))
 }
-func (vector VectorUint16) DictCompressed() (VectorDict, bool) {
-	return dictCompressed1([]uint16(vector))
+func (vector VectorUint16) dictCompressed1() (VectorDict, bool) {
+	return dictCompressed2([]uint16(vector))
 }
-func (vector VectorUint32) DictCompressed() (VectorDict, bool) {
-	return dictCompressed1([]uint32(vector))
+func (vector VectorUint32) dictCompressed1() (VectorDict, bool) {
+	return dictCompressed2([]uint32(vector))
 }
-func (vector VectorUint64) DictCompressed() (VectorDict, bool) {
-	return dictCompressed1([]uint64(vector))
+func (vector VectorUint64) dictCompressed1() (VectorDict, bool) {
+	return dictCompressed2([]uint64(vector))
 }
-func (vector VectorString) DictCompressed() (VectorDict, bool) {
-	return dictCompressed1([]string(vector))
+func (vector VectorString) dictCompressed1() (VectorDict, bool) {
+	return dictCompressed2([]string(vector))
 }
 
-func dictCompressed1[Value comparable](values []Value) (VectorDict, bool) {
+func dictCompressed2[Value comparable](values []Value) (VectorDict, bool) {
 	unique_values := make([]Value, 0)
 	dict := make(map[Value]uint64)
 	for _, value := range values {
@@ -93,20 +93,20 @@ func dictCompressed1[Value comparable](values []Value) (VectorDict, bool) {
 	return result, true
 }
 
-func (vector VectorUint8) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(8, []uint8(vector))
+func (vector VectorUint8) sizeCompressed1() (VectorSize, bool) {
+	return sizeCompressed2(8, []uint8(vector))
 }
-func (vector VectorUint16) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(16, []uint16(vector))
+func (vector VectorUint16) sizeCompressed1() (VectorSize, bool) {
+	return sizeCompressed2(16, []uint16(vector))
 }
-func (vector VectorUint32) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(32, []uint32(vector))
+func (vector VectorUint32) sizeCompressed1() (VectorSize, bool) {
+	return sizeCompressed2(32, []uint32(vector))
 }
-func (vector VectorUint64) SizeCompressed() (VectorSize, bool) {
-	return sizeCompressed1(64, []uint64(vector))
+func (vector VectorUint64) sizeCompressed1() (VectorSize, bool) {
+	return sizeCompressed2(64, []uint64(vector))
 }
 
-func sizeCompressed1[Value constraints.Integer](originalSizeBits uint8, values []Value) (VectorSize, bool) {
+func sizeCompressed2[Value constraints.Integer](originalSizeBits uint8, values []Value) (VectorSize, bool) {
 	if len(values) == 0 {
 		return VectorSize{}, false
 	}
@@ -119,11 +119,11 @@ func sizeCompressed1[Value constraints.Integer](originalSizeBits uint8, values [
 	}
 	var values_compressed Vector
 	if uint64(max_value) < (1<<8) && 8 < originalSizeBits {
-		values_compressed = VectorFromValues(sizeCompressed2[Value, uint8](values)).(Vector)
+		values_compressed = VectorFromValues(sizeCompressed3[Value, uint8](values)).(Vector)
 	} else if uint64(max_value) < (1<<16) && 16 < originalSizeBits {
-		values_compressed = VectorFromValues(sizeCompressed2[Value, uint16](values)).(Vector)
+		values_compressed = VectorFromValues(sizeCompressed3[Value, uint16](values)).(Vector)
 	} else if uint64(max_value) < (1<<32) && 32 < originalSizeBits {
-		values_compressed = VectorFromValues(sizeCompressed2[Value, uint32](values)).(Vector)
+		values_compressed = VectorFromValues(sizeCompressed3[Value, uint32](values)).(Vector)
 	} else {
 		return VectorSize{}, false
 	}
@@ -134,7 +134,7 @@ func sizeCompressed1[Value constraints.Integer](originalSizeBits uint8, values [
 	return result, true
 }
 
-func sizeCompressed2[From constraints.Integer, To constraints.Integer](from []From) []To {
+func sizeCompressed3[From constraints.Integer, To constraints.Integer](from []From) []To {
 	var to = make([]To, len(from))
 	for i, value := range from {
 		to[i] = To(value)
@@ -142,23 +142,23 @@ func sizeCompressed2[From constraints.Integer, To constraints.Integer](from []Fr
 	return to
 }
 
-func (vector VectorUint8) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint8(vector))
+func (vector VectorUint8) biasCompressed1() (VectorBias, bool) {
+	return biasCompressed2([]uint8(vector))
 }
-func (vector VectorUint16) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint16(vector))
+func (vector VectorUint16) biasCompressed1() (VectorBias, bool) {
+	return biasCompressed2([]uint16(vector))
 }
-func (vector VectorUint32) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint32(vector))
+func (vector VectorUint32) biasCompressed1() (VectorBias, bool) {
+	return biasCompressed2([]uint32(vector))
 }
-func (vector VectorUint64) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]uint64(vector))
+func (vector VectorUint64) biasCompressed1() (VectorBias, bool) {
+	return biasCompressed2([]uint64(vector))
 }
-func (vector VectorString) BiasCompressed() (VectorBias, bool) {
-	return biasCompressed1([]string(vector))
+func (vector VectorString) biasCompressed1() (VectorBias, bool) {
+	return biasCompressed2([]string(vector))
 }
 
-func biasCompressed1[Value comparable](values []Value) (VectorBias, bool) {
+func biasCompressed2[Value comparable](values []Value) (VectorBias, bool) {
 	if len(values) == 0 {
 		return VectorBias{}, false
 	}

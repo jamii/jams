@@ -7,14 +7,14 @@ import (
 type VectorUncompressedInt interface {
 	is_vector_uncompressed_int()
 
-	SizeCompressed() (VectorSize, bool)
+	sizeCompressed1() (VectorSize, bool)
 }
 
 type VectorUncompressed interface {
 	is_vector_uncompressed()
 
-	DictCompressed() (VectorDict, bool)
-	BiasCompressed() (VectorBias, bool)
+	dictCompressed1() (VectorDict, bool)
+	biasCompressed1() (VectorBias, bool)
 }
 
 type VectorCompressed interface {
