@@ -59,27 +59,23 @@ const Vector = union(enum) {
     compressed: VectorCompressed,
 };
 
-fn valueFrom(value: anytype) Value {
-    inline for (std.meta.fields(Value)) |field| {
-        if (field.type == @TypeOf(value)) {
-            return @unionInit(Value, field.name, value);
+fn tagByType(comptime T: type, payload: anytype) T {
+    comptime var field_name: ?[]const u8 = null;
+    inline for (std.meta.fields(T)) |field| {
+        if (field.type == @TypeOf(payload)) {
+            if (field_name != null)
+                @compileError("Can't make a " ++ @typeName(T) ++ " from " ++ @typeName(@TypeOf(payload)));
+            field_name = field.name;
         }
     }
-    @compileError("Can't make a value from " ++ @typeName(@TypeOf(value)));
-}
-
-fn vectorFromValues(values: anytype) VectorUncompressed {
-    inline for (std.meta.fields(VectorUncompressed)) |field| {
-        if (field.type == @TypeOf(values)) {
-            return @unionInit(VectorUncompressed, field.name, values);
-        }
-    }
-    @compileError("Can't make a vector from " ++ @typeName(@TypeOf(values)));
+    if (field_name == null)
+        @compileError("Can't make a " ++ @typeName(T) ++ " from " ++ @typeName(@TypeOf(payload)));
+    return @unionInit(T, field_name.?, payload);
 }
 
 fn boxedVectorFromValues(allocator: Allocator, values: anytype) !*Vector {
     const vector = try allocator.create(Vector);
-    vector.* = .{ .uncompressed = vectorFromValues(values) };
+    vector.* = .{ .uncompressed = tagByType(VectorUncompressed, values) };
     return vector;
 }
 
@@ -192,7 +188,7 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
 
                     return .{ .bias = .{
                         .count = values.len,
-                        .value = valueFrom(try dupeValue(allocator, common_value)),
+                        .value = tagByType(Value, try dupeValue(allocator, common_value)),
                         .presence = presence,
                         .remainder = try boxedVectorFromValues(allocator, try remainder.toOwnedSlice()),
                     } };
@@ -220,7 +216,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemor
                     for (values, codes) |*value, code| {
                         value.* = try dupeValue(allocator, unique_values[code]);
                     }
-                    return vectorFromValues(values);
+                    return tagByType(VectorUncompressed, values);
                 },
             }
         },
@@ -238,7 +234,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemor
                             for (values, values_compressed) |*value, value_compressed| {
                                 value.* = @as(Elem, value_compressed);
                             }
-                            return vectorFromValues(values);
+                            return tagByType(VectorUncompressed, values);
                         },
                         .string => unreachable,
                     }
@@ -261,7 +257,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemor
                             remainder_ix += 1;
                         }
                     }
-                    return vectorFromValues(values);
+                    return tagByType(VectorUncompressed, values);
                 },
             }
         },
@@ -277,7 +273,7 @@ fn vectorFromLiteral(allocator: Allocator, comptime Elem: type, literal: anytype
         else
             lit;
     }
-    return vectorFromValues(values);
+    return tagByType(VectorUncompressed, values);
 }
 
 test {
