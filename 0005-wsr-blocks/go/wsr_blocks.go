@@ -413,34 +413,22 @@ func (vector VectorBias) Decompressed() VectorUncompressed {
 }
 
 func dictDecompress1(uniqueValues VectorUncompressed, codes VectorUncompressed, to VectorUncompressed) {
+	codes_uint64 := []uint64(codes.(VectorUint64))
 	switch uniqueValues.(type) {
 	case VectorUint8:
-		dictDecompress2([]uint8(uniqueValues.(VectorUint8)), codes, []uint8(to.(VectorUint8)))
+		dictDecompress2([]uint8(uniqueValues.(VectorUint8)), codes_uint64, []uint8(to.(VectorUint8)))
 	case VectorUint16:
-		dictDecompress2([]uint16(uniqueValues.(VectorUint16)), codes, []uint16(to.(VectorUint16)))
+		dictDecompress2([]uint16(uniqueValues.(VectorUint16)), codes_uint64, []uint16(to.(VectorUint16)))
 	case VectorUint32:
-		dictDecompress2([]uint32(uniqueValues.(VectorUint32)), codes, []uint32(to.(VectorUint32)))
+		dictDecompress2([]uint32(uniqueValues.(VectorUint32)), codes_uint64, []uint32(to.(VectorUint32)))
 	case VectorUint64:
-		dictDecompress2([]uint64(uniqueValues.(VectorUint64)), codes, []uint64(to.(VectorUint64)))
+		dictDecompress2([]uint64(uniqueValues.(VectorUint64)), codes_uint64, []uint64(to.(VectorUint64)))
 	case VectorString:
-		dictDecompress2([]string(uniqueValues.(VectorString)), codes, []string(to.(VectorString)))
+		dictDecompress2([]string(uniqueValues.(VectorString)), codes_uint64, []string(to.(VectorString)))
 	}
 }
 
-func dictDecompress2[Value any](uniqueValues []Value, codes interface{}, to []Value) {
-	switch codes.(type) {
-	case VectorUint8:
-		dictDecompress3(uniqueValues, []uint8(codes.(VectorUint8)), to)
-	case VectorUint16:
-		dictDecompress3(uniqueValues, []uint16(codes.(VectorUint16)), to)
-	case VectorUint32:
-		dictDecompress3(uniqueValues, []uint32(codes.(VectorUint32)), to)
-	case VectorUint64:
-		dictDecompress3(uniqueValues, []uint64(codes.(VectorUint64)), to)
-	}
-}
-
-func dictDecompress3[Value any, Code constraints.Integer](uniqueValues []Value, codes []Code, to []Value) {
+func dictDecompress2[Value any, Code constraints.Integer](uniqueValues []Value, codes []Code, to []Value) {
 	for i := range to {
 		to[i] = uniqueValues[codes[i]]
 	}
