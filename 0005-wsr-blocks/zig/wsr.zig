@@ -95,14 +95,6 @@ fn equalValue(a: anytype, b: @TypeOf(a)) bool {
     @compileError("Can't equal " ++ @typeName(@TypeOf(a)));
 }
 
-fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Compression) !?VectorCompressed {
-    switch (compression) {
-        .dict => return dictCompressed(allocator, vector),
-        .size => return sizeCompressed(allocator, vector),
-        .bias => return biasCompressed(allocator, vector),
-    }
-}
-
 fn Dict(comptime kind: Kind, comptime V: type) type {
     const Elem = std.meta.fieldInfo(Value, kind).type;
     return switch (kind) {
@@ -112,112 +104,109 @@ fn Dict(comptime kind: Kind, comptime V: type) type {
     };
 }
 
-fn dictCompressed(allocator: Allocator, vector: VectorUncompressed) !?VectorCompressed {
+fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Compression) !?VectorCompressed {
     switch (vector) {
         inline else => |values, kind| {
             const Elem = std.meta.Elem(@TypeOf(values));
+            switch (compression) {
+                .dict => {
+                    var codes = try std.ArrayList(u64).initCapacity(allocator, values.len);
+                    defer codes.deinit();
 
-            var codes = try std.ArrayList(u64).initCapacity(allocator, values.len);
-            defer codes.deinit();
+                    var unique_values = std.ArrayList(Elem).init(allocator);
+                    defer unique_values.deinit();
 
-            var unique_values = std.ArrayList(Elem).init(allocator);
-            defer unique_values.deinit();
+                    var dict = Dict(kind, u64).init(allocator);
+                    defer dict.deinit();
 
-            var dict = Dict(kind, u64).init(allocator);
-            defer dict.deinit();
+                    for (values) |value| {
+                        const entry = try dict.getOrPut(value);
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = unique_values.items.len;
+                            try unique_values.append(try dupeValue(allocator, value));
+                        }
+                        try codes.append(entry.value_ptr.*);
+                    }
 
-            for (values) |value| {
-                const entry = try dict.getOrPut(value);
-                if (!entry.found_existing) {
-                    entry.value_ptr.* = unique_values.items.len;
-                    try unique_values.append(try dupeValue(allocator, value));
-                }
-                try codes.append(entry.value_ptr.*);
-            }
+                    return .{ .dict = .{
+                        .codes = try boxedVectorFromValues(allocator, try codes.toOwnedSlice()),
+                        .unique_values = try boxedVectorFromValues(allocator, try unique_values.toOwnedSlice()),
+                    } };
+                },
+                .size => {
+                    if (kind == .string) return null;
+                    if (values.len == 0) return null;
 
-            return .{ .dict = .{
-                .codes = try boxedVectorFromValues(allocator, try codes.toOwnedSlice()),
-                .unique_values = try boxedVectorFromValues(allocator, try unique_values.toOwnedSlice()),
-            } };
-        },
-    }
-}
-
-fn sizeCompressed(allocator: Allocator, vector: VectorUncompressed) !?VectorCompressed {
-    switch (vector) {
-        inline .uint8, .uint16, .uint32, .uint64 => |values, kind| {
-            const Elem = std.meta.Elem(@TypeOf(values));
-
-            if (values.len == 0) return null;
-            const max = std.mem.max(Elem, values);
-            inline for (.{ u8, u16, u32 }) |ElemCompressed| {
-                if (@typeInfo(ElemCompressed).Int.bits < @typeInfo(Elem).Int.bits) {
-                    if (max < std.math.maxInt(ElemCompressed)) {
-                        {
-                            const values_compressed = try allocator.alloc(ElemCompressed, values.len);
-                            for (values, values_compressed) |value, *value_compressed| {
-                                value_compressed.* = @intCast(value);
+                    const max = std.mem.max(Elem, values);
+                    inline for (.{ u8, u16, u32 }) |ElemCompressed| {
+                        if (@typeInfo(ElemCompressed).Int.bits < @typeInfo(Elem).Int.bits) {
+                            if (max < std.math.maxInt(ElemCompressed)) {
+                                {
+                                    const values_compressed = try allocator.alloc(ElemCompressed, values.len);
+                                    for (values, values_compressed) |value, *value_compressed| {
+                                        value_compressed.* = @intCast(value);
+                                    }
+                                    return .{ .size = .{
+                                        .original_kind = kind,
+                                        .values = try boxedVectorFromValues(allocator, values_compressed),
+                                    } };
+                                }
                             }
-                            return .{ .size = .{
-                                .original_kind = kind,
-                                .values = try boxedVectorFromValues(allocator, values_compressed),
-                            } };
+                        }
+                    } else return null;
+                },
+                .bias => {
+                    var counts = Dict(kind, usize).init(allocator);
+                    defer counts.deinit();
+
+                    for (values) |value| {
+                        const entry = try counts.getOrPut(value);
+                        if (!entry.found_existing) entry.value_ptr.* = 0;
+                        entry.value_ptr.* += 1;
+                    }
+
+                    if (values.len == 0) return null;
+                    var common_value = values[0];
+                    var common_count: usize = 0;
+                    var iter = counts.iterator();
+                    while (iter.next()) |entry| {
+                        if (entry.value_ptr.* > common_count) {
+                            common_value = if (Elem == []u8) @constCast(entry.key_ptr.*) else entry.key_ptr.*;
+                            common_count = entry.value_ptr.*;
                         }
                     }
-                }
-            } else return null;
+
+                    var presence = try std.bit_set.DynamicBitSet.initEmpty(allocator, values.len);
+                    errdefer presence.deinit();
+
+                    var remainder = try std.ArrayList(Elem).initCapacity(allocator, values.len - common_count);
+                    defer remainder.deinit();
+
+                    for (values, 0..) |value, i| {
+                        if (equalValue(value, common_value)) {
+                            presence.set(i);
+                        } else {
+                            try remainder.append(try dupeValue(allocator, value));
+                        }
+                    }
+
+                    return .{ .bias = .{
+                        .count = values.len,
+                        .value = valueFrom(try dupeValue(allocator, common_value)),
+                        .presence = presence,
+                        .remainder = try boxedVectorFromValues(allocator, try remainder.toOwnedSlice()),
+                    } };
+                },
+            }
         },
-        .string => return null,
     }
 }
 
-fn biasCompressed(allocator: Allocator, vector: VectorUncompressed) !?VectorCompressed {
-    switch (vector) {
-        inline else => |values, kind| {
-            const Elem = std.meta.Elem(@TypeOf(values));
-
-            var counts = Dict(kind, usize).init(allocator);
-            defer counts.deinit();
-
-            for (values) |value| {
-                const entry = try counts.getOrPut(value);
-                if (!entry.found_existing) entry.value_ptr.* = 0;
-                entry.value_ptr.* += 1;
-            }
-
-            if (values.len == 0) return null;
-            var common_value = values[0];
-            var common_count: usize = 0;
-            var iter = counts.iterator();
-            while (iter.next()) |entry| {
-                if (entry.value_ptr.* > common_count) {
-                    common_value = if (Elem == []u8) @constCast(entry.key_ptr.*) else entry.key_ptr.*;
-                    common_count = entry.value_ptr.*;
-                }
-            }
-
-            var presence = try std.bit_set.DynamicBitSet.initEmpty(allocator, values.len);
-            errdefer presence.deinit();
-
-            var remainder = try std.ArrayList(Elem).initCapacity(allocator, values.len - common_count);
-            defer remainder.deinit();
-
-            for (values, 0..) |value, i| {
-                if (equalValue(value, common_value)) {
-                    presence.set(i);
-                } else {
-                    try remainder.append(try dupeValue(allocator, value));
-                }
-            }
-
-            return .{ .bias = .{
-                .count = values.len,
-                .value = valueFrom(try dupeValue(allocator, common_value)),
-                .presence = presence,
-                .remainder = try boxedVectorFromValues(allocator, try remainder.toOwnedSlice()),
-            } };
-        },
-    }
+fn ensureDecompressed(allocator: Allocator, vector: Vector) error{OutOfMemory}!VectorUncompressed {
+    return switch (vector) {
+        .compressed => |vector_compressed| decompressed(allocator, vector_compressed),
+        .uncompressed => |vector_uncompressed| vector_uncompressed,
+    };
 }
 
 fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemory}!VectorUncompressed {
@@ -279,13 +268,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemor
     }
 }
 
-fn ensureDecompressed(allocator: Allocator, vector: Vector) error{OutOfMemory}!VectorUncompressed {
-    return switch (vector) {
-        .compressed => |vector_compressed| decompressed(allocator, vector_compressed),
-        .uncompressed => |vector_uncompressed| vector_uncompressed,
-    };
-}
-
+// Only needed for tests.
 fn vectorFromLiteral(allocator: Allocator, comptime Elem: type, literal: anytype) !VectorUncompressed {
     const values = try allocator.alloc(Elem, literal.len);
     for (values, literal) |*value, lit| {
