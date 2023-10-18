@@ -107,6 +107,9 @@ func (vector VectorUint64) SizeCompressed() (VectorSize, bool) {
 }
 
 func sizeCompressed1[Value constraints.Integer](originalSizeBits uint8, values []Value) (VectorSize, bool) {
+	if len(values) == 0 {
+		return VectorSize{}, false
+	}
 	var max_value Value
 	for _, value := range values {
 		// TODO go 1.21 has a `max` function
