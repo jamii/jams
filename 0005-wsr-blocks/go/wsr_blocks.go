@@ -5,15 +5,15 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-type BoxedValue interface {
-	is_boxed_value()
-}
-
 type BoxedValueUint8 uint8
 type BoxedValueUint16 uint16
 type BoxedValueUint32 uint32
 type BoxedValueUint64 uint64
 type BoxedValueString string
+
+type BoxedValue interface {
+	is_boxed_value()
+}
 
 func (_ BoxedValueUint8) is_boxed_value()  {}
 func (_ BoxedValueUint16) is_boxed_value() {}
@@ -21,11 +21,22 @@ func (_ BoxedValueUint32) is_boxed_value() {}
 func (_ BoxedValueUint64) is_boxed_value() {}
 func (_ BoxedValueString) is_boxed_value() {}
 
+type VectorUint8 []uint8
+type VectorUint16 []uint16
+type VectorUint32 []uint32
+type VectorUint64 []uint64
+type VectorString []string
+
 type VectorUncompressedInt interface {
 	is_vector_uncompressed_int()
 
 	sizeCompressed1() (VectorSize, bool)
 }
+
+func (_ VectorUint8) is_vector_uncompressed_int()  {}
+func (_ VectorUint16) is_vector_uncompressed_int() {}
+func (_ VectorUint32) is_vector_uncompressed_int() {}
+func (_ VectorUint64) is_vector_uncompressed_int() {}
 
 type VectorUncompressed interface {
 	is_vector_uncompressed()
@@ -34,11 +45,21 @@ type VectorUncompressed interface {
 	biasCompressed1() (VectorBias, bool)
 }
 
+func (_ VectorUint8) is_vector_uncompressed()  {}
+func (_ VectorUint16) is_vector_uncompressed() {}
+func (_ VectorUint32) is_vector_uncompressed() {}
+func (_ VectorUint64) is_vector_uncompressed() {}
+func (_ VectorString) is_vector_uncompressed() {}
+
 type VectorCompressed interface {
 	is_vector_compressed()
 
 	Decompressed() VectorUncompressed
 }
+
+func (_ VectorDict) is_vector_compressed() {}
+func (_ VectorSize) is_vector_compressed() {}
+func (_ VectorBias) is_vector_compressed() {}
 
 type Vector interface {
 	is_vector()
@@ -47,11 +68,14 @@ type Vector interface {
 	Count() int
 }
 
-type VectorUint8 []uint8
-type VectorUint16 []uint16
-type VectorUint32 []uint32
-type VectorUint64 []uint64
-type VectorString []string
+func (_ VectorUint8) is_vector()  {}
+func (_ VectorUint16) is_vector() {}
+func (_ VectorUint32) is_vector() {}
+func (_ VectorUint64) is_vector() {}
+func (_ VectorString) is_vector() {}
+func (_ VectorDict) is_vector()   {}
+func (_ VectorSize) is_vector()   {}
+func (_ VectorBias) is_vector()   {}
 
 type VectorDict struct {
 	codes        Vector
@@ -69,30 +93,6 @@ type VectorBias struct {
 	presence  roaring.Bitmap
 	remainder Vector
 }
-
-func (_ VectorUint8) is_vector_uncompressed_int()  {}
-func (_ VectorUint16) is_vector_uncompressed_int() {}
-func (_ VectorUint32) is_vector_uncompressed_int() {}
-func (_ VectorUint64) is_vector_uncompressed_int() {}
-
-func (_ VectorUint8) is_vector_uncompressed()  {}
-func (_ VectorUint16) is_vector_uncompressed() {}
-func (_ VectorUint32) is_vector_uncompressed() {}
-func (_ VectorUint64) is_vector_uncompressed() {}
-func (_ VectorString) is_vector_uncompressed() {}
-
-func (_ VectorDict) is_vector_compressed() {}
-func (_ VectorSize) is_vector_compressed() {}
-func (_ VectorBias) is_vector_compressed() {}
-
-func (_ VectorUint8) is_vector()  {}
-func (_ VectorUint16) is_vector() {}
-func (_ VectorUint32) is_vector() {}
-func (_ VectorUint64) is_vector() {}
-func (_ VectorString) is_vector() {}
-func (_ VectorDict) is_vector()   {}
-func (_ VectorSize) is_vector()   {}
-func (_ VectorBias) is_vector()   {}
 
 type Compression = struct {
 	tag compressionTag
