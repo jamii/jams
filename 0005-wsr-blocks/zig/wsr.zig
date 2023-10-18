@@ -79,12 +79,6 @@ fn boxedVectorFromValues(allocator: Allocator, values: anytype) *Vector {
     return vector;
 }
 
-fn dupeValue(allocator: Allocator, value: anytype) @TypeOf(value) {
-    if (@typeInfo(@TypeOf(value)) == .Int) return value;
-    if (@TypeOf(value) == []const u8) return allocator.dupe(u8, value) catch oom();
-    @compileError("Can't dupe " ++ @typeName(@TypeOf(value)));
-}
-
 fn equalValue(a: anytype, b: @TypeOf(a)) bool {
     if (@typeInfo(@TypeOf(a)) == .Int) return a == b;
     if (@TypeOf(a) == []const u8) return std.mem.eql(u8, a, b);
@@ -115,7 +109,7 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                         const entry = dict.getOrPut(value) catch oom();
                         if (!entry.found_existing) {
                             entry.value_ptr.* = unique_values.items.len;
-                            unique_values.append(dupeValue(allocator, value)) catch oom();
+                            unique_values.append(value) catch oom();
                         }
                         codes.append(entry.value_ptr.*) catch oom();
                     }
@@ -175,13 +169,13 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                         if (equalValue(value, common_value)) {
                             presence.set(i);
                         } else {
-                            remainder.append(dupeValue(allocator, value)) catch oom();
+                            remainder.append(value) catch oom();
                         }
                     }
 
                     return .{ .bias = .{
                         .count = values.len,
-                        .value = tagByType(Value, dupeValue(allocator, common_value)),
+                        .value = tagByType(Value, common_value),
                         .presence = presence,
                         .remainder = boxedVectorFromValues(allocator, remainder.toOwnedSlice() catch oom()),
                     } };
@@ -209,7 +203,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
                     const Elem = std.meta.Elem(@TypeOf(unique_values));
                     const values = allocator.alloc(Elem, codes.len) catch oom();
                     for (values, codes) |*value, code| {
-                        value.* = dupeValue(allocator, unique_values[code]);
+                        value.* = unique_values[code];
                     }
                     return tagByType(VectorUncompressed, values);
                 },
@@ -246,9 +240,9 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
                     var remainder_ix: usize = 0;
                     for (values, 0..) |*value, value_ix| {
                         if (bias.presence.isSet(value_ix)) {
-                            value.* = dupeValue(allocator, bias_value);
+                            value.* = bias_value;
                         } else {
-                            value.* = dupeValue(allocator, remainder[remainder_ix]);
+                            value.* = remainder[remainder_ix];
                             remainder_ix += 1;
                         }
                     }
