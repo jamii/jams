@@ -14,7 +14,7 @@ const Value = union(Kind) {
     uint16: u16,
     uint32: u32,
     uint64: u64,
-    string: []u8,
+    string: []const u8,
 };
 
 const VectorUncompressed = union(Kind) {
@@ -22,7 +22,7 @@ const VectorUncompressed = union(Kind) {
     uint16: []u16,
     uint32: []u32,
     uint64: []u64,
-    string: [][]u8,
+    string: [][]const u8,
 };
 
 const VectorDict = struct {
@@ -81,13 +81,13 @@ fn boxedVectorFromValues(allocator: Allocator, values: anytype) *Vector {
 
 fn dupeValue(allocator: Allocator, value: anytype) @TypeOf(value) {
     if (@typeInfo(@TypeOf(value)) == .Int) return value;
-    if (@TypeOf(value) == []u8) return allocator.dupe(u8, value) catch oom();
+    if (@TypeOf(value) == []const u8) return allocator.dupe(u8, value) catch oom();
     @compileError("Can't dupe " ++ @typeName(@TypeOf(value)));
 }
 
 fn equalValue(a: anytype, b: @TypeOf(a)) bool {
     if (@typeInfo(@TypeOf(a)) == .Int) return a == b;
-    if (@TypeOf(a) == []u8) return std.mem.eql(u8, a, b);
+    if (@TypeOf(a) == []const u8) return std.mem.eql(u8, a, b);
     @compileError("Can't equal " ++ @typeName(@TypeOf(a)));
 }
 
@@ -95,7 +95,6 @@ fn Dict(comptime kind: Kind, comptime V: type) type {
     const Elem = std.meta.fieldInfo(Value, kind).type;
     return switch (kind) {
         .uint8, .uint16, .uint32, .uint64 => std.AutoHashMap(Elem, V),
-        // TODO Make a hashmap that takes []u8 instead of []const u8 to avoid @constCast below.
         .string => std.StringHashMap(V),
     };
 }
@@ -164,7 +163,7 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                     var iter = counts.iterator();
                     while (iter.next()) |entry| {
                         if (entry.value_ptr.* > common_count) {
-                            common_value = if (Elem == []u8) @constCast(entry.key_ptr.*) else entry.key_ptr.*;
+                            common_value = entry.key_ptr.*;
                             common_count = entry.value_ptr.*;
                         }
                     }
@@ -264,18 +263,6 @@ fn oom() noreturn {
     std.debug.panic("OutOfMemory", .{});
 }
 
-// Only needed for tests.
-fn vectorFromLiteral(allocator: Allocator, comptime Elem: type, literal: anytype) !VectorUncompressed {
-    const values = allocator.alloc(Elem, literal.len) catch oom();
-    for (values, literal) |*value, lit| {
-        value.* = if (Elem == []u8)
-            allocator.dupe(u8, lit) catch oom()
-        else
-            lit;
-    }
-    return tagByType(VectorUncompressed, values);
-}
-
 test {
     const testing = std.testing;
 
@@ -285,9 +272,9 @@ test {
     const allocator = arena.allocator();
 
     const vectors = [_]VectorUncompressed{
-        try vectorFromLiteral(allocator, u64, &[_]u64{}),
-        try vectorFromLiteral(allocator, u64, &[_]u64{ 42, 102, 42, 42, 87, 1 << 11 }),
-        try vectorFromLiteral(allocator, []u8, &[_][]const u8{ "foo", "bar", "bar", "quux" }),
+        tagByType(VectorUncompressed, allocator.dupe(u64, &[_]u64{}) catch oom()),
+        tagByType(VectorUncompressed, allocator.dupe(u64, &[_]u64{ 42, 102, 42, 42, 87, 1 << 11 }) catch oom()),
+        tagByType(VectorUncompressed, allocator.dupe([]const u8, &[_][]const u8{ "foo", "bar", "bar", "quux" }) catch oom()),
     };
     for (vectors) |vector| {
         errdefer std.debug.print("vector={}\n", .{vector});
