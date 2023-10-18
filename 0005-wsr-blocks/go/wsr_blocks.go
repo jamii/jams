@@ -400,18 +400,6 @@ func (vector VectorDict) Decompressed() VectorUncompressed {
 	return result
 }
 
-func (vector VectorSize) Decompressed() VectorUncompressed {
-	result := zeroedVector(vector)
-	sizeDecompress1(ensureDecompressed(vector.values), result)
-	return result
-}
-
-func (vector VectorBias) Decompressed() VectorUncompressed {
-	result := zeroedVector(vector)
-	biasDecompress1(vector.value, vector.presence, ensureDecompressed(vector.remainder), result)
-	return result
-}
-
 func dictDecompress1(uniqueValues VectorUncompressed, codes VectorUncompressed, to VectorUncompressed) {
 	codes_uint64 := []uint64(codes.(VectorUint64))
 	switch uniqueValues.(type) {
@@ -432,6 +420,12 @@ func dictDecompress2[Value any, Code constraints.Integer](uniqueValues []Value, 
 	for i := range to {
 		to[i] = uniqueValues[codes[i]]
 	}
+}
+
+func (vector VectorSize) Decompressed() VectorUncompressed {
+	result := zeroedVector(vector)
+	sizeDecompress1(ensureDecompressed(vector.values), result)
+	return result
 }
 
 func sizeDecompress1(from interface{}, to interface{}) {
@@ -464,6 +458,12 @@ func sizeDecompress3[From constraints.Integer, To constraints.Integer](from []Fr
 	for i := range from {
 		to[i] = To(from[i])
 	}
+}
+
+func (vector VectorBias) Decompressed() VectorUncompressed {
+	result := zeroedVector(vector)
+	biasDecompress1(vector.value, vector.presence, ensureDecompressed(vector.remainder), result)
+	return result
 }
 
 func biasDecompress1(value interface{}, presence roaring.Bitmap, remainder interface{}, to interface{}) {
