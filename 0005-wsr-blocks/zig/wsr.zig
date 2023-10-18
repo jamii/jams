@@ -198,6 +198,7 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
     }
 }
 
+// Assumes arena allocation.
 fn ensureDecompressed(allocator: Allocator, vector: Vector) error{OutOfMemory}!VectorUncompressed {
     return switch (vector) {
         .compressed => |vector_compressed| decompressed(allocator, vector_compressed),
@@ -205,6 +206,7 @@ fn ensureDecompressed(allocator: Allocator, vector: Vector) error{OutOfMemory}!V
     };
 }
 
+// Assumes arena allocation.
 fn decompressed(allocator: Allocator, vector: VectorCompressed) error{OutOfMemory}!VectorUncompressed {
     switch (vector) {
         .dict => |dict| {
