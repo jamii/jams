@@ -59,23 +59,9 @@ const Vector = union(enum) {
     compressed: VectorCompressed,
 };
 
-fn tagByType(comptime T: type, payload: anytype) T {
-    comptime var field_name: ?[]const u8 = null;
-    inline for (std.meta.fields(T)) |field| {
-        if (field.type == @TypeOf(payload)) {
-            if (field_name != null)
-                @compileError("Can't make a " ++ @typeName(T) ++ " from " ++ @typeName(@TypeOf(payload)));
-            field_name = field.name;
-        }
-    }
-    if (field_name == null)
-        @compileError("Can't make a " ++ @typeName(T) ++ " from " ++ @typeName(@TypeOf(payload)));
-    return @unionInit(T, field_name.?, payload);
-}
-
-fn boxedVectorFromValues(allocator: Allocator, values: anytype) *Vector {
+fn boxedVector(allocator: Allocator, comptime kind: Kind, values: anytype) *Vector {
     const vector = allocator.create(Vector) catch oom();
-    vector.* = .{ .uncompressed = tagByType(VectorUncompressed, values) };
+    vector.* = .{ .uncompressed = @unionInit(VectorUncompressed, @tagName(kind), values) };
     return vector;
 }
 
@@ -96,7 +82,7 @@ fn Dict(comptime kind: Kind, comptime V: type) type {
 fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Compression) ?VectorCompressed {
     switch (vector) {
         inline else => |values, kind| {
-            const Elem = std.meta.Elem(@TypeOf(values));
+            const Elem = std.meta.fieldInfo(Value, kind).type;
             switch (compression) {
                 .dict => {
                     var codes = std.ArrayList(u64).initCapacity(allocator, values.len) catch oom();
@@ -115,8 +101,8 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                     }
 
                     return .{ .dict = .{
-                        .codes = boxedVectorFromValues(allocator, codes.toOwnedSlice() catch oom()),
-                        .unique_values = boxedVectorFromValues(allocator, unique_values.toOwnedSlice() catch oom()),
+                        .codes = boxedVector(allocator, .uint64, codes.toOwnedSlice() catch oom()),
+                        .unique_values = boxedVector(allocator, kind, unique_values.toOwnedSlice() catch oom()),
                     } };
                 },
                 .size => {
@@ -124,7 +110,8 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                     if (values.len == 0) return null;
 
                     const max = std.mem.max(Elem, values);
-                    inline for (.{ u8, u16, u32 }) |ElemCompressed| {
+                    inline for (.{ Kind.uint8, Kind.uint16, Kind.uint32 }) |kind_compressed| {
+                        const ElemCompressed = std.meta.fieldInfo(Value, kind_compressed).type;
                         if (@typeInfo(ElemCompressed).Int.bits < @typeInfo(Elem).Int.bits) {
                             if (max < std.math.maxInt(ElemCompressed)) {
                                 {
@@ -134,7 +121,7 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
                                     }
                                     return .{ .size = .{
                                         .original_kind = kind,
-                                        .values = boxedVectorFromValues(allocator, values_compressed),
+                                        .values = boxedVector(allocator, kind_compressed, values_compressed),
                                     } };
                                 }
                             }
@@ -175,9 +162,9 @@ fn compressed(allocator: Allocator, vector: VectorUncompressed, compression: Com
 
                     return .{ .bias = .{
                         .count = values.len,
-                        .value = tagByType(Value, common_value),
+                        .value = @unionInit(Value, @tagName(kind), common_value),
                         .presence = presence,
-                        .remainder = boxedVectorFromValues(allocator, remainder.toOwnedSlice() catch oom()),
+                        .remainder = boxedVector(allocator, kind, remainder.toOwnedSlice() catch oom()),
                     } };
                 },
             }
@@ -199,13 +186,13 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
         .dict => |dict| {
             const codes = ensureDecompressed(allocator, dict.codes.*).uint64;
             switch (ensureDecompressed(allocator, dict.unique_values.*)) {
-                inline else => |unique_values| {
-                    const Elem = std.meta.Elem(@TypeOf(unique_values));
+                inline else => |unique_values, kind| {
+                    const Elem = std.meta.fieldInfo(Value, kind).type;
                     const values = allocator.alloc(Elem, codes.len) catch oom();
                     for (values, codes) |*value, code| {
                         value.* = unique_values[code];
                     }
-                    return tagByType(VectorUncompressed, values);
+                    return @unionInit(VectorUncompressed, @tagName(kind), values);
                 },
             }
         },
@@ -219,7 +206,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
                             for (values, values_compressed) |*value, value_compressed| {
                                 value.* = @intCast(value_compressed);
                             }
-                            return tagByType(VectorUncompressed, values);
+                            return @unionInit(VectorUncompressed, @tagName(kind), values);
                         },
                         .string => unreachable,
                     }
@@ -230,7 +217,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
         .bias => |bias| {
             switch (ensureDecompressed(allocator, bias.remainder.*)) {
                 inline else => |remainder, kind| {
-                    const Elem = std.meta.Elem(@TypeOf(remainder));
+                    const Elem = std.meta.fieldInfo(Value, kind).type;
                     const bias_value = @field(bias.value, @tagName(kind));
                     var values = allocator.alloc(Elem, bias.count) catch oom();
                     var remainder_ix: usize = 0;
@@ -242,7 +229,7 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
                             remainder_ix += 1;
                         }
                     }
-                    return tagByType(VectorUncompressed, values);
+                    return @unionInit(VectorUncompressed, @tagName(kind), values);
                 },
             }
         },
@@ -262,9 +249,9 @@ test {
     const allocator = arena.allocator();
 
     const vectors = [_]VectorUncompressed{
-        tagByType(VectorUncompressed, allocator.dupe(u64, &[_]u64{}) catch oom()),
-        tagByType(VectorUncompressed, allocator.dupe(u64, &[_]u64{ 42, 102, 42, 42, 87, 1 << 11 }) catch oom()),
-        tagByType(VectorUncompressed, allocator.dupe([]const u8, &[_][]const u8{ "foo", "bar", "bar", "quux" }) catch oom()),
+        .{ .uint64 = allocator.dupe(u64, &[_]u64{}) catch oom() },
+        .{ .uint64 = allocator.dupe(u64, &[_]u64{ 42, 102, 42, 42, 87, 1 << 11 }) catch oom() },
+        .{ .string = allocator.dupe([]const u8, &[_][]const u8{ "foo", "bar", "bar", "quux" }) catch oom() },
     };
     for (vectors) |vector| {
         errdefer std.debug.print("vector={}\n", .{vector});
