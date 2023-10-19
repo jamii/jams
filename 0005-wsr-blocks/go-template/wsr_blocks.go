@@ -8,10 +8,6 @@ type BoxedValue interface {
 	is_boxed_value()
 }
 
-type VectorUncompressedInt interface {
-	is_vector_uncompressed_int()
-}
-
 type VectorUncompressed interface {
 	is_vector_uncompressed()
 }

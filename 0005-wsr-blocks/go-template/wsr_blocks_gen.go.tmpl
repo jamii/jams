@@ -10,9 +10,6 @@ import (
 type BoxedValue{{ .Name}} {{.ValueType}}
 func (_ BoxedValue{{.Name}}) is_boxed_value() {}
 type Vector{{.Name}} []{{.ValueType}}
-{{if .IsInt -}}
-func (_ Vector{{.Name}}) is_vector_uncompressed_int()  {}
-{{- end}}
 func (_ Vector{{.Name}}) is_vector_uncompressed()  {}
 func (_ Vector{{.Name}}) is_vector()  {}
 {{end}}
