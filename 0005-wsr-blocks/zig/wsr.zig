@@ -215,13 +215,9 @@ fn decompressed(allocator: Allocator, vector: VectorCompressed) VectorUncompress
                     switch (ensureDecompressed(allocator, size.values.*)) {
                         inline .uint8, .uint16, .uint32, .uint64 => |values_compressed| {
                             const Elem = std.meta.fieldInfo(Value, kind).type;
-                            const ElemCompressed = std.meta.Elem(@TypeOf(values_compressed));
-                            if (@typeInfo(ElemCompressed).Int.bits >= @typeInfo(Elem).Int.bits) {
-                                unreachable;
-                            }
                             const values = allocator.alloc(Elem, values_compressed.len) catch oom();
                             for (values, values_compressed) |*value, value_compressed| {
-                                value.* = @as(Elem, value_compressed);
+                                value.* = @intCast(value_compressed);
                             }
                             return tagByType(VectorUncompressed, values);
                         },
