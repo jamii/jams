@@ -155,3 +155,92 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
         panic("Unreachable")
     }
 }
+
+func Decompressed(vector VectorCompressed) VectorUncompressed {
+    switch vector.(type) {
+        case VectorDict:
+        {
+            vector := vector.(VectorDict)
+            codes := []uint64(ensureDecompressed(vector.codes).(VectorUint64))
+            uniqueValues := ensureDecompressed(vector.uniqueValues)
+            switch uniqueValues.(type) {
+                {{range .Kinds}}
+                case Vector{{.Name}}:
+                {
+                    uniqueValues := []{{.ValueType}}(uniqueValues.(Vector{{.Name}}))
+                    
+                    values := make([]{{.ValueType}}, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return Vector{{.Name}}(values)
+                }
+                {{end}}
+                default:
+                panic("Unreachable")
+            }
+        }
+        case VectorSize:
+        {
+            vector := vector.(VectorSize)
+            switch (vector.originalSizeBits) {
+                {{range $original := .Kinds}}
+                {{if .IsInt}}
+                case {{.SizeBits}}:
+                {
+                    values_compressed := ensureDecompressed(vector.values)
+                    switch values_compressed.(type) {
+                        {{range $compressed := $data.Kinds}}
+                        {{if .IsInt}}
+                        case Vector{{$compressed.Name}}:
+                        {
+                            values_compressed := []{{$compressed.ValueType}}(values_compressed.(Vector{{$compressed.Name}}))
+                            values := make([]{{$original.ValueType}}, len(values_compressed))
+                            for i := range values {
+                                values[i] = {{$original.ValueType}}(values_compressed[i])
+                            }
+                            return Vector{{$original.Name}}(values)
+                        }
+                        {{end}}
+                        {{end}}
+                        default:
+                        panic("Unreachable")
+                    }
+                }
+                {{end}}
+                {{end}}
+                default:
+                panic("Unreachable")
+            }
+        }
+        case VectorBias:
+        {
+            vector := vector.(VectorBias)
+            remainder := ensureDecompressed(vector.remainder)
+            switch remainder.(type) {
+                {{range .Kinds}}
+                case Vector{{.Name}}:
+                {
+                    remainder := []{{.ValueType}}(remainder.(Vector{{.Name}}))
+                    value := {{.ValueType}}(vector.value.(BoxedValue{{.Name}}))
+                    values := make([]{{.ValueType}}, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return Vector{{.Name}}(values)
+                }
+                {{end}}
+                default:
+                panic("Unreachable")
+            }
+        }
+        default:
+        panic("Unreachable")
+    }
+}

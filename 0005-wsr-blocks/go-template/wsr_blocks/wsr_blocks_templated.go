@@ -641,3 +641,430 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
         panic("Unreachable")
     }
 }
+
+func Decompressed(vector VectorCompressed) VectorUncompressed {
+    switch vector.(type) {
+        case VectorDict:
+        {
+            vector := vector.(VectorDict)
+            codes := []uint64(ensureDecompressed(vector.codes).(VectorUint64))
+            uniqueValues := ensureDecompressed(vector.uniqueValues)
+            switch uniqueValues.(type) {
+                
+                case VectorUint8:
+                {
+                    uniqueValues := []uint8(uniqueValues.(VectorUint8))
+                    
+                    values := make([]uint8, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return VectorUint8(values)
+                }
+                
+                case VectorUint16:
+                {
+                    uniqueValues := []uint16(uniqueValues.(VectorUint16))
+                    
+                    values := make([]uint16, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return VectorUint16(values)
+                }
+                
+                case VectorUint32:
+                {
+                    uniqueValues := []uint32(uniqueValues.(VectorUint32))
+                    
+                    values := make([]uint32, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return VectorUint32(values)
+                }
+                
+                case VectorUint64:
+                {
+                    uniqueValues := []uint64(uniqueValues.(VectorUint64))
+                    
+                    values := make([]uint64, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return VectorUint64(values)
+                }
+                
+                case VectorString:
+                {
+                    uniqueValues := []string(uniqueValues.(VectorString))
+                    
+                    values := make([]string, len(codes))
+                    for i := range values {
+                        values[i] = uniqueValues[codes[i]]
+                    }
+                    return VectorString(values)
+                }
+                
+                default:
+                panic("Unreachable")
+            }
+        }
+        case VectorSize:
+        {
+            vector := vector.(VectorSize)
+            switch (vector.originalSizeBits) {
+                
+                
+                case 8:
+                {
+                    values_compressed := ensureDecompressed(vector.values)
+                    switch values_compressed.(type) {
+                        
+                        
+                        case VectorUint8:
+                        {
+                            values_compressed := []uint8(values_compressed.(VectorUint8))
+                            values := make([]uint8, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint8(values_compressed[i])
+                            }
+                            return VectorUint8(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint16:
+                        {
+                            values_compressed := []uint16(values_compressed.(VectorUint16))
+                            values := make([]uint8, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint8(values_compressed[i])
+                            }
+                            return VectorUint8(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint32:
+                        {
+                            values_compressed := []uint32(values_compressed.(VectorUint32))
+                            values := make([]uint8, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint8(values_compressed[i])
+                            }
+                            return VectorUint8(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint64:
+                        {
+                            values_compressed := []uint64(values_compressed.(VectorUint64))
+                            values := make([]uint8, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint8(values_compressed[i])
+                            }
+                            return VectorUint8(values)
+                        }
+                        
+                        
+                        
+                        
+                        default:
+                        panic("Unreachable")
+                    }
+                }
+                
+                
+                
+                case 16:
+                {
+                    values_compressed := ensureDecompressed(vector.values)
+                    switch values_compressed.(type) {
+                        
+                        
+                        case VectorUint8:
+                        {
+                            values_compressed := []uint8(values_compressed.(VectorUint8))
+                            values := make([]uint16, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint16(values_compressed[i])
+                            }
+                            return VectorUint16(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint16:
+                        {
+                            values_compressed := []uint16(values_compressed.(VectorUint16))
+                            values := make([]uint16, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint16(values_compressed[i])
+                            }
+                            return VectorUint16(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint32:
+                        {
+                            values_compressed := []uint32(values_compressed.(VectorUint32))
+                            values := make([]uint16, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint16(values_compressed[i])
+                            }
+                            return VectorUint16(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint64:
+                        {
+                            values_compressed := []uint64(values_compressed.(VectorUint64))
+                            values := make([]uint16, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint16(values_compressed[i])
+                            }
+                            return VectorUint16(values)
+                        }
+                        
+                        
+                        
+                        
+                        default:
+                        panic("Unreachable")
+                    }
+                }
+                
+                
+                
+                case 32:
+                {
+                    values_compressed := ensureDecompressed(vector.values)
+                    switch values_compressed.(type) {
+                        
+                        
+                        case VectorUint8:
+                        {
+                            values_compressed := []uint8(values_compressed.(VectorUint8))
+                            values := make([]uint32, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint32(values_compressed[i])
+                            }
+                            return VectorUint32(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint16:
+                        {
+                            values_compressed := []uint16(values_compressed.(VectorUint16))
+                            values := make([]uint32, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint32(values_compressed[i])
+                            }
+                            return VectorUint32(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint32:
+                        {
+                            values_compressed := []uint32(values_compressed.(VectorUint32))
+                            values := make([]uint32, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint32(values_compressed[i])
+                            }
+                            return VectorUint32(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint64:
+                        {
+                            values_compressed := []uint64(values_compressed.(VectorUint64))
+                            values := make([]uint32, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint32(values_compressed[i])
+                            }
+                            return VectorUint32(values)
+                        }
+                        
+                        
+                        
+                        
+                        default:
+                        panic("Unreachable")
+                    }
+                }
+                
+                
+                
+                case 64:
+                {
+                    values_compressed := ensureDecompressed(vector.values)
+                    switch values_compressed.(type) {
+                        
+                        
+                        case VectorUint8:
+                        {
+                            values_compressed := []uint8(values_compressed.(VectorUint8))
+                            values := make([]uint64, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint64(values_compressed[i])
+                            }
+                            return VectorUint64(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint16:
+                        {
+                            values_compressed := []uint16(values_compressed.(VectorUint16))
+                            values := make([]uint64, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint64(values_compressed[i])
+                            }
+                            return VectorUint64(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint32:
+                        {
+                            values_compressed := []uint32(values_compressed.(VectorUint32))
+                            values := make([]uint64, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint64(values_compressed[i])
+                            }
+                            return VectorUint64(values)
+                        }
+                        
+                        
+                        
+                        case VectorUint64:
+                        {
+                            values_compressed := []uint64(values_compressed.(VectorUint64))
+                            values := make([]uint64, len(values_compressed))
+                            for i := range values {
+                                values[i] = uint64(values_compressed[i])
+                            }
+                            return VectorUint64(values)
+                        }
+                        
+                        
+                        
+                        
+                        default:
+                        panic("Unreachable")
+                    }
+                }
+                
+                
+                
+                
+                default:
+                panic("Unreachable")
+            }
+        }
+        case VectorBias:
+        {
+            vector := vector.(VectorBias)
+            remainder := ensureDecompressed(vector.remainder)
+            switch remainder.(type) {
+                
+                case VectorUint8:
+                {
+                    remainder := []uint8(remainder.(VectorUint8))
+                    value := uint8(vector.value.(BoxedValueUint8))
+                    values := make([]uint8, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return VectorUint8(values)
+                }
+                
+                case VectorUint16:
+                {
+                    remainder := []uint16(remainder.(VectorUint16))
+                    value := uint16(vector.value.(BoxedValueUint16))
+                    values := make([]uint16, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return VectorUint16(values)
+                }
+                
+                case VectorUint32:
+                {
+                    remainder := []uint32(remainder.(VectorUint32))
+                    value := uint32(vector.value.(BoxedValueUint32))
+                    values := make([]uint32, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return VectorUint32(values)
+                }
+                
+                case VectorUint64:
+                {
+                    remainder := []uint64(remainder.(VectorUint64))
+                    value := uint64(vector.value.(BoxedValueUint64))
+                    values := make([]uint64, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return VectorUint64(values)
+                }
+                
+                case VectorString:
+                {
+                    remainder := []string(remainder.(VectorString))
+                    value := string(vector.value.(BoxedValueString))
+                    values := make([]string, vector.count) 
+                    var remainder_index int = 0
+                    for i := range values {
+                        if vector.presence.ContainsInt(i) {
+                            values[i] = value
+                        } else {
+                            values[i] = remainder[remainder_index]
+                            remainder_index++
+                        }
+                    }
+                    return VectorString(values)
+                }
+                
+                default:
+                panic("Unreachable")
+            }
+        }
+        default:
+        panic("Unreachable")
+    }
+}
