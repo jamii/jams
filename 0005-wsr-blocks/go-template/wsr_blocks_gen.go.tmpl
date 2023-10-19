@@ -26,8 +26,6 @@ func Compressions() []Compression {
     return []Compression{
         {{range .Compressions}}
         Compression{tag: {{.Name}}},
-        Compression{tag: {{.Name}}},
-        Compression{tag: {{.Name}}},
         {{end}}
     }
 }

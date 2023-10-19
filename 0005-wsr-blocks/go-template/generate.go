@@ -1,7 +1,8 @@
+//go:build ignore
+
 package main
 
 import (
-	_ "embed"
 	"os"
 	"text/template"
 )
@@ -21,9 +22,6 @@ type Data struct {
 	Kinds        []Kind
 	Compressions []Compression
 }
-
-//go:embed wsr_blocks.go.tmpl
-var template_source string
 
 func main() {
 	data := Data{
@@ -72,11 +70,19 @@ func main() {
 		},
 	}
 
-	template, err := template.New("wsr_blocks").Parse(template_source)
+	path := "wsr_blocks_gen.go.tmpl"
+	template, err := template.New(path).ParseFiles(path)
 	if err != nil {
 		panic(err)
 	}
-	err = template.Execute(os.Stdout, data)
+
+	file, err := os.Create("wsr_blocks_gen.go")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	err = template.Execute(file, data)
 	if err != nil {
 		panic(err)
 	}

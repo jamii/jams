@@ -22,9 +22,6 @@ type VectorCompressed interface {
 
 type Vector interface {
 	is_vector()
-	zeroedVectorWithCount(count int) VectorUncompressed
-
-	Count() int
 }
 
 type VectorDict struct {
