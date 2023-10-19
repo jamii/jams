@@ -1,0 +1,157 @@
+package wsr_blocks
+
+import (
+    "github.com/RoaringBitmap/roaring"
+)
+
+{{$data := .}}
+
+{{range .Kinds}}
+type BoxedValue{{ .Name}} {{.ValueType}}
+func (_ BoxedValue{{.Name}}) is_boxed_value() {}
+type Vector{{.Name}} []{{.ValueType}}
+{{if .IsInt -}}
+func (_ Vector{{.Name}}) is_vector_uncompressed_int()  {}
+{{- end}}
+func (_ Vector{{.Name}}) is_vector_uncompressed()  {}
+func (_ Vector{{.Name}}) is_vector()  {}
+{{end}}
+
+{{range .Compressions}}
+func (_ Vector{{.Name}}) is_vector_compressed() {}
+func (_ Vector{{.Name}}) is_vector()  {}
+{{end}}
+
+func Compressions() []Compression {
+    return []Compression{
+        {{range .Compressions}}
+        Compression{tag: {{.Name}}},
+        Compression{tag: {{.Name}}},
+        Compression{tag: {{.Name}}},
+        {{end}}
+    }
+}
+
+func Compressed(vector VectorUncompressed, compression Compression) (VectorCompressed, bool) {
+    switch vector.(type) {
+        {{range .Kinds}}
+        case Vector{{.Name}}:
+        {
+            values := []{{.ValueType}}(vector.(Vector{{.Name}}))
+            switch compression.tag {
+                case Dict:
+                {
+                    codes := make([]uint64, len(values))
+                    unique_values := make([]{{.ValueType}}, 0)
+                    
+                    dict := make(map[{{.ValueType}}]uint64)
+                    
+                    for i, value := range values {
+                        var code uint64
+                        code, ok := dict[value]
+                        if !ok {
+                            code = uint64(len(unique_values))
+                            dict[value] = code
+                            unique_values = append(unique_values, value)
+                        }
+                        codes[i] = code
+                    }
+                    
+                    result := VectorDict{
+                        codes:        VectorUint64(codes),
+                        uniqueValues: Vector{{.Name}}(unique_values),
+                    }
+                    return VectorCompressed(result), true
+                }
+                case Size:
+                {
+                    {{if .IsInt}}
+                    {
+                        const originalSizeBits uint8 = {{.SizeBits}}
+                        
+                        if len(values) == 0 {
+                            return nil, false
+                        }
+                        
+                        var max_value {{.ValueType}}
+                        for _, value := range values {
+                            // TODO go 1.21 has a `max` function
+                            if value > max_value {
+                                max_value = value
+                            }
+                        }
+                        
+                        {{range $data.Kinds}}
+                        {
+                            {{if .IsInt}}
+                            {{if .SizeBits | lt 64}}
+                            const compressedSizeBits uint8 = {{.SizeBits}}
+                            if compressedSizeBits < originalSizeBits && uint64(max_value) < (1<<compressedSizeBits) {
+                                var values_compressed = make([]{{.ValueType}}, len(values))
+                                for i, value := range values {
+                                    values_compressed[i] = {{.ValueType}}(value)
+                                }
+                                result := VectorSize{
+                                    originalSizeBits: originalSizeBits,
+                                    values:           Vector{{.Name}}(values_compressed),
+                                }
+                                return result, true
+                            }
+                            {{end}}
+                            {{end}}
+                        }
+                        {{end}}
+                        return nil, false
+                    }
+                    {{else}}
+                    {
+                        return nil, false
+                    }
+                    {{end}}
+                }
+                case Bias:
+                {
+                    if len(values) == 0 {
+                        return nil, false
+                    }
+                    
+                    var counts = make(map[{{.ValueType}}]int)
+                    for _, value := range values {
+                        counts[value] += 1
+                    }
+                    var common_value {{.ValueType}} = values[0]
+                    var common_count int = 0
+                    for value, count := range counts {
+                        if count > common_count {
+                            common_value = value
+                            common_count = count
+                        }
+                    }
+                    
+                    var presence = roaring.New()
+                    var remainder = make([]{{.ValueType}}, 0, len(values)-common_count)
+                    for i, value := range values {
+                        if value == common_value {
+                            presence.Add(uint32(i))
+                        } else {
+                            remainder = append(remainder, value)
+                        }
+                    }
+                    
+                    result := VectorBias{
+                        count:     len(values),
+                        value:     BoxedValue{{.Name}}(common_value),
+                        presence:  *presence,
+                        remainder: Vector{{.Name}}(remainder),
+                    }
+                    return result, true
+                }
+                default:
+                panic("Unreachable")
+            }
+        }
+        {{end}}
+        default:
+        panic("Unreachable")
+    }
+}
