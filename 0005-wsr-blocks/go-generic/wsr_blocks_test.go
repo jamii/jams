@@ -5,6 +5,7 @@ import (
 	"testing"
 	"wsr_blocks"
 
+	"golang.org/x/exp/constraints"
 	"gotest.tools/assert"
 )
 
@@ -56,6 +57,33 @@ func VectorMax2[Elem Compare[Elem]](elems []Elem) Elem {
 	return elemMax
 }
 
+type Vector[Elem any] interface {
+	Count() int
+	Get(i int) Elem
+}
+
+type VectorInt []ValueInt
+
+func (vector VectorInt) Count() int {
+	return len(vector)
+}
+
+func (vector VectorInt) Get(i int) ValueInt {
+	return vector[i]
+}
+
+func VectorMax3[Elem constraints.Ordered](vector Vector[Elem]) Elem {
+	var elemMax = vector.Get(0)
+	count := vector.Count()
+	for i := 0; i < count; i++ {
+		elem := vector.Get(i)
+		if elemMax < elem {
+			elemMax = elem
+		}
+	}
+	return elemMax
+}
+
 func DoBenchmark(b *testing.B, f func([]ValueInt) ValueInt) {
 	rand := rand.New(rand.NewSource(42))
 	nums := make([]ValueInt, 1<<16)
@@ -74,4 +102,10 @@ func BenchmarkVectorMax(b *testing.B) {
 
 func BenchmarkVectorMax2(b *testing.B) {
 	DoBenchmark(b, VectorMax2[ValueInt])
+}
+
+func BenchmarkVectorMax3(b *testing.B) {
+	DoBenchmark(b, func(elems []ValueInt) ValueInt {
+		return VectorMax3[ValueInt](VectorInt(elems))
+	})
 }
