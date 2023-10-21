@@ -28,20 +28,19 @@ func Compressions() []Compression {
 }
 
 func Compressed(vector VectorUncompressed, compression Compression) (VectorCompressed, bool) {
-    switch vector.(type) {
+    switch vector := vector.(type) {
         {{range .Kinds}}
         case Vector{{.Name}}:
         {
-            values := []{{.ValueType}}(vector.(Vector{{.Name}}))
             switch compression.tag {
                 case Dict:
                 {
-                    codes := make([]uint64, len(values))
+                    codes := make([]uint64, len(vector))
                     unique_values := make([]{{.ValueType}}, 0)
                     
                     dict := make(map[{{.ValueType}}]uint64)
                     
-                    for i, value := range values {
+                    for i, value := range vector {
                         var code uint64
                         code, ok := dict[value]
                         if !ok {
@@ -64,12 +63,12 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
                     {
                         const originalSizeBits uint8 = {{.SizeBits}}
                         
-                        if len(values) == 0 {
+                        if len(vector) == 0 {
                             return nil, false
                         }
                         
                         var max_value {{.ValueType}}
-                        for _, value := range values {
+                        for _, value := range vector {
                             // TODO go 1.21 has a `max` function
                             if value > max_value {
                                 max_value = value
@@ -82,9 +81,9 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
                             {{if .SizeBits | lt 64}}
                             const compressedSizeBits uint8 = {{.SizeBits}}
                             if compressedSizeBits < originalSizeBits && uint64(max_value) < (1<<compressedSizeBits) {
-                                var values_compressed = make([]{{.ValueType}}, len(values))
-                                for i, value := range values {
-                                    values_compressed[i] = {{.ValueType}}(value)
+                                var values = make([]{{.ValueType}}, len(vector))
+                                for i, value := range vector {
+                                    values[i] = {{.ValueType}}(value)
                                 }
                                 result := VectorSize{
                                     originalSizeBits: originalSizeBits,
@@ -106,15 +105,15 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
                 }
                 case Bias:
                 {
-                    if len(values) == 0 {
+                    if len(vector) == 0 {
                         return nil, false
                     }
                     
                     var counts = make(map[{{.ValueType}}]int)
-                    for _, value := range values {
+                    for _, value := range vector {
                         counts[value] += 1
                     }
-                    var common_value {{.ValueType}} = values[0]
+                    var common_value {{.ValueType}} = vector[0]
                     var common_count int = 0
                     for value, count := range counts {
                         if count > common_count {
@@ -124,8 +123,8 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
                     }
                     
                     var presence = roaring.New()
-                    var remainder = make([]{{.ValueType}}, 0, len(values)-common_count)
-                    for i, value := range values {
+                    var remainder = make([]{{.ValueType}}, 0, len(vector)-common_count)
+                    for i, value := range vector {
                         if value == common_value {
                             presence.Add(uint32(i))
                         } else {
@@ -134,7 +133,7 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
                     }
                     
                     result := VectorBias{
-                        count:     len(values),
+                        count:     len(vector),
                         value:     BoxedValue{{.Name}}(common_value),
                         presence:  *presence,
                         remainder: Vector{{.Name}}(remainder),
@@ -152,18 +151,14 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 }
 
 func Decompressed(vector VectorCompressed) VectorUncompressed {
-    switch vector.(type) {
+    switch vector := vector.(type) {
         case VectorDict:
         {
-            vector := vector.(VectorDict)
             codes := []uint64(ensureDecompressed(vector.codes).(VectorUint64))
-            uniqueValues := ensureDecompressed(vector.uniqueValues)
-            switch uniqueValues.(type) {
+            switch uniqueValues := ensureDecompressed(vector.uniqueValues).(type) {
                 {{range .Kinds}}
                 case Vector{{.Name}}:
                 {
-                    uniqueValues := []{{.ValueType}}(uniqueValues.(Vector{{.Name}}))
-                    
                     values := make([]{{.ValueType}}, len(codes))
                     for i := range values {
                         values[i] = uniqueValues[codes[i]]
@@ -177,19 +172,16 @@ func Decompressed(vector VectorCompressed) VectorUncompressed {
         }
         case VectorSize:
         {
-            vector := vector.(VectorSize)
             switch (vector.originalSizeBits) {
                 {{range $original := .Kinds}}
                 {{if .IsInt}}
                 case {{.SizeBits}}:
                 {
-                    values_compressed := ensureDecompressed(vector.values)
-                    switch values_compressed.(type) {
+                    switch values_compressed := ensureDecompressed(vector.values).(type) {
                         {{range $compressed := $data.Kinds}}
                         {{if .IsInt}}
                         case Vector{{$compressed.Name}}:
                         {
-                            values_compressed := []{{$compressed.ValueType}}(values_compressed.(Vector{{$compressed.Name}}))
                             values := make([]{{$original.ValueType}}, len(values_compressed))
                             for i := range values {
                                 values[i] = {{$original.ValueType}}(values_compressed[i])
@@ -210,13 +202,10 @@ func Decompressed(vector VectorCompressed) VectorUncompressed {
         }
         case VectorBias:
         {
-            vector := vector.(VectorBias)
-            remainder := ensureDecompressed(vector.remainder)
-            switch remainder.(type) {
+            switch remainder := ensureDecompressed(vector.remainder).(type) {
                 {{range .Kinds}}
                 case Vector{{.Name}}:
                 {
-                    remainder := []{{.ValueType}}(remainder.(Vector{{.Name}}))
                     value := {{.ValueType}}(vector.value.(BoxedValue{{.Name}}))
                     values := make([]{{.ValueType}}, vector.count) 
                     var remainder_index int = 0

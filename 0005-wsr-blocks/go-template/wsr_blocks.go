@@ -49,11 +49,11 @@ const (
 )
 
 func ensureDecompressed(vector Vector) VectorUncompressed {
-	switch vector.(type) {
+	switch vector := vector.(type) {
 	case VectorUncompressed:
-		return vector.(VectorUncompressed)
+		return vector
 	case VectorCompressed:
-		return Decompressed(vector.(VectorCompressed))
+		return Decompressed(vector)
 	default:
 		panic("Unreachable")
 	}

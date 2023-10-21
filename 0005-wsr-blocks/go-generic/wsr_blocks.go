@@ -114,34 +114,34 @@ func Compressions() []Compression {
 }
 
 func BoxedValueFromValue(value interface{}) BoxedValue {
-	switch value.(type) {
+	switch value := value.(type) {
 	case uint8:
-		return BoxedValueUint8(value.(uint8))
+		return BoxedValueUint8(value)
 	case uint16:
-		return BoxedValueUint16(value.(uint16))
+		return BoxedValueUint16(value)
 	case uint32:
-		return BoxedValueUint32(value.(uint32))
+		return BoxedValueUint32(value)
 	case uint64:
-		return BoxedValueUint64(value.(uint64))
+		return BoxedValueUint64(value)
 	case string:
-		return BoxedValueString(value.(string))
+		return BoxedValueString(value)
 	default:
 		panic("Unreachable")
 	}
 }
 
 func VectorFromValues(values interface{}) VectorUncompressed {
-	switch values.(type) {
+	switch values := values.(type) {
 	case []uint8:
-		return VectorUint8(values.([]uint8))
+		return VectorUint8(values)
 	case []uint16:
-		return VectorUint16(values.([]uint16))
+		return VectorUint16(values)
 	case []uint32:
-		return VectorUint32(values.([]uint32))
+		return VectorUint32(values)
 	case []uint64:
-		return VectorUint64(values.([]uint64))
+		return VectorUint64(values)
 	case []string:
-		return VectorString(values.([]string))
+		return VectorString(values)
 	default:
 		panic("Unsupported value type")
 	}
@@ -222,9 +222,9 @@ func Compressed(vector VectorUncompressed, compression Compression) (VectorCompr
 			return nil, false
 		}
 	case Size:
-		switch vector.(type) {
+		switch vector := vector.(type) {
 		case VectorUncompressedInt:
-			compressed, ok := vector.(VectorUncompressedInt).sizeCompressed1()
+			compressed, ok := vector.sizeCompressed1()
 			if ok {
 				return VectorCompressed(compressed), true
 			} else {
@@ -384,11 +384,11 @@ func biasCompressed2[Value comparable](values []Value) (VectorBias, bool) {
 }
 
 func ensureDecompressed(vector Vector) VectorUncompressed {
-	switch vector.(type) {
+	switch vector := vector.(type) {
 	case VectorUncompressed:
-		return vector.(VectorUncompressed)
+		return vector
 	case VectorCompressed:
-		return vector.(VectorCompressed).Decompressed()
+		return vector.Decompressed()
 	default:
 		panic("Unreachable")
 	}
@@ -402,17 +402,17 @@ func (vector VectorDict) Decompressed() VectorUncompressed {
 
 func dictDecompress1(uniqueValues VectorUncompressed, codes VectorUncompressed, to VectorUncompressed) {
 	codes_uint64 := []uint64(codes.(VectorUint64))
-	switch uniqueValues.(type) {
+	switch uniqueValues := uniqueValues.(type) {
 	case VectorUint8:
-		dictDecompress2([]uint8(uniqueValues.(VectorUint8)), codes_uint64, []uint8(to.(VectorUint8)))
+		dictDecompress2([]uint8(uniqueValues), codes_uint64, []uint8(to.(VectorUint8)))
 	case VectorUint16:
-		dictDecompress2([]uint16(uniqueValues.(VectorUint16)), codes_uint64, []uint16(to.(VectorUint16)))
+		dictDecompress2([]uint16(uniqueValues), codes_uint64, []uint16(to.(VectorUint16)))
 	case VectorUint32:
-		dictDecompress2([]uint32(uniqueValues.(VectorUint32)), codes_uint64, []uint32(to.(VectorUint32)))
+		dictDecompress2([]uint32(uniqueValues), codes_uint64, []uint32(to.(VectorUint32)))
 	case VectorUint64:
-		dictDecompress2([]uint64(uniqueValues.(VectorUint64)), codes_uint64, []uint64(to.(VectorUint64)))
+		dictDecompress2([]uint64(uniqueValues), codes_uint64, []uint64(to.(VectorUint64)))
 	case VectorString:
-		dictDecompress2([]string(uniqueValues.(VectorString)), codes_uint64, []string(to.(VectorString)))
+		dictDecompress2([]string(uniqueValues), codes_uint64, []string(to.(VectorString)))
 	}
 }
 
@@ -429,28 +429,28 @@ func (vector VectorSize) Decompressed() VectorUncompressed {
 }
 
 func sizeDecompress1(from interface{}, to interface{}) {
-	switch from.(type) {
+	switch from := from.(type) {
 	case VectorUint8:
-		sizeDecompress2([]uint8(from.(VectorUint8)), to)
+		sizeDecompress2([]uint8(from), to)
 	case VectorUint16:
-		sizeDecompress2([]uint16(from.(VectorUint16)), to)
+		sizeDecompress2([]uint16(from), to)
 	case VectorUint32:
-		sizeDecompress2([]uint32(from.(VectorUint32)), to)
+		sizeDecompress2([]uint32(from), to)
 	case VectorUint64:
-		sizeDecompress2([]uint64(from.(VectorUint64)), to)
+		sizeDecompress2([]uint64(from), to)
 	}
 }
 
 func sizeDecompress2[From constraints.Integer](from []From, to interface{}) {
-	switch to.(type) {
+	switch to := to.(type) {
 	case VectorUint8:
-		sizeDecompress3(from, []uint8(to.(VectorUint8)))
+		sizeDecompress3(from, []uint8(to))
 	case VectorUint16:
-		sizeDecompress3(from, []uint16(to.(VectorUint16)))
+		sizeDecompress3(from, []uint16(to))
 	case VectorUint32:
-		sizeDecompress3(from, []uint32(to.(VectorUint32)))
+		sizeDecompress3(from, []uint32(to))
 	case VectorUint64:
-		sizeDecompress3(from, []uint64(to.(VectorUint64)))
+		sizeDecompress3(from, []uint64(to))
 	}
 }
 
@@ -467,17 +467,17 @@ func (vector VectorBias) Decompressed() VectorUncompressed {
 }
 
 func biasDecompress1(value interface{}, presence roaring.Bitmap, remainder interface{}, to interface{}) {
-	switch remainder.(type) {
+	switch remainder := remainder.(type) {
 	case VectorUint8:
-		biasDecompress2(uint8(value.(BoxedValueUint8)), presence, []uint8(remainder.(VectorUint8)), []uint8(to.(VectorUint8)))
+		biasDecompress2(uint8(value.(BoxedValueUint8)), presence, []uint8(remainder), []uint8(to.(VectorUint8)))
 	case VectorUint16:
-		biasDecompress2(uint16(value.(BoxedValueUint16)), presence, []uint16(remainder.(VectorUint16)), []uint16(to.(VectorUint16)))
+		biasDecompress2(uint16(value.(BoxedValueUint16)), presence, []uint16(remainder), []uint16(to.(VectorUint16)))
 	case VectorUint32:
-		biasDecompress2(uint32(value.(BoxedValueUint32)), presence, []uint32(remainder.(VectorUint32)), []uint32(to.(VectorUint32)))
+		biasDecompress2(uint32(value.(BoxedValueUint32)), presence, []uint32(remainder), []uint32(to.(VectorUint32)))
 	case VectorUint64:
-		biasDecompress2(uint64(value.(BoxedValueUint64)), presence, []uint64(remainder.(VectorUint64)), []uint64(to.(VectorUint64)))
+		biasDecompress2(uint64(value.(BoxedValueUint64)), presence, []uint64(remainder), []uint64(to.(VectorUint64)))
 	case VectorString:
-		biasDecompress2(string(value.(BoxedValueString)), presence, []string(remainder.(VectorString)), []string(to.(VectorString)))
+		biasDecompress2(string(value.(BoxedValueString)), presence, []string(remainder), []string(to.(VectorString)))
 	}
 }
 
