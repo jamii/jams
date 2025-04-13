@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
-const AutoHashMap = std.AutoHashMap;
+const DynamicBitSet = std.DynamicBitSet;
 const allocator = std.heap.c_allocator;
 
 fn oom() noreturn {
@@ -86,8 +86,7 @@ fn create_schedule(spreadsheet: Spreadsheet, driver_cells: *DriverCells) Schedul
     var schedule = ArrayList(DriverCellIndex).initCapacity(allocator, schedule_len) catch oom();
     // Always returned
 
-    var scheduled = AutoHashMap(DriverCellIndex, void).init(allocator);
-    scheduled.ensureTotalCapacity(@intCast(schedule_len)) catch oom();
+    var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
     defer scheduled.deinit();
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
@@ -104,12 +103,13 @@ fn visit_cell(
     spreadsheet: Spreadsheet,
     driver_cells: *DriverCells,
     schedule: *ArrayList(DriverCellIndex),
-    scheduled: *AutoHashMap(DriverCellIndex, void),
+    scheduled: *DynamicBitSet,
     driver_index: DriverIndex,
     cell_index: CellIndex,
 ) void {
-    if (!scheduled.contains(.{ .driver_index = driver_index, .cell_index = cell_index })) {
-        scheduled.putAssumeCapacity(.{ .driver_index = driver_index, .cell_index = cell_index }, {});
+    const scheduled_index = (driver_index * spreadsheet.driver_cell_count) + cell_index;
+    if (!scheduled.isSet(scheduled_index)) {
+        scheduled.set(scheduled_index);
         visit_dependencies(spreadsheet, driver_cells, schedule, scheduled, spreadsheet.driver_formulas[driver_index], cell_index);
         schedule.appendAssumeCapacity(.{ .driver_index = driver_index, .cell_index = cell_index });
     }
@@ -119,7 +119,7 @@ fn visit_dependencies(
     spreadsheet: Spreadsheet,
     driver_cells: *DriverCells,
     schedule: *ArrayList(DriverCellIndex),
-    scheduled: *AutoHashMap(DriverCellIndex, void),
+    scheduled: *DynamicBitSet,
     formula: DriverFormula,
     this_cell_index: CellIndex,
 ) void {
