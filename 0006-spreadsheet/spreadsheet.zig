@@ -11,7 +11,7 @@ fn oom() noreturn {
 const Spreadsheet = struct {
     // Assume that every driver has the same number of cells.
     driver_cell_count: u32,
-    driver_formulas: []DriverFormula,
+    driver_formulas: []const DriverFormula,
     // TODO Add source data.
 };
 
@@ -57,7 +57,7 @@ const Scratchpad = struct {
     }
 };
 
-const DriverFormula = []DriverFormulaExpr;
+const DriverFormula = []const DriverFormulaExpr;
 const DriverFormulaExpr = union(enum) {
     constant: f64,
     cell: struct {
@@ -69,7 +69,7 @@ const DriverFormulaExpr = union(enum) {
     // TODO Add aggregates and filters over source data.
 };
 
-const CellIndexFormula = []CellIndexFormulaExpr;
+const CellIndexFormula = []const CellIndexFormulaExpr;
 const CellIndexFormulaExpr = union(enum) {
     this,
     constant: i32,
@@ -299,4 +299,5 @@ pub fn main() void {
 
     std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
     std.debug.print("{} {}\n", .{ schedule[0], schedule[schedule.len - 1] });
+    std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 1] });
 }
