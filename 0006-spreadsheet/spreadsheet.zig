@@ -17,13 +17,17 @@ const Spreadsheet = struct {
 
 const DriverIndex = u32;
 const CellIndex = u32;
-const DriverCellIndex = struct {
-    driver_index: DriverIndex,
-    cell_index: CellIndex,
-};
+const FlatIndex = u32;
 
-inline fn to_flat_index(driver_cell_count: u32, driver_index: DriverIndex, cell_index: CellIndex) u32 {
+inline fn to_flat_index(driver_cell_count: u32, driver_index: DriverIndex, cell_index: CellIndex) FlatIndex {
     return (driver_index * driver_cell_count) + cell_index;
+}
+
+inline fn from_flat_index(driver_cell_count: u32, flat_index: FlatIndex) struct { DriverIndex, CellIndex } {
+    return .{
+        @divTrunc(flat_index, driver_cell_count),
+        flat_index % driver_cell_count,
+    };
 }
 
 const Scratchpad = struct {
@@ -72,12 +76,12 @@ const CellIndexFormulaExpr = union(enum) {
     add, // Pop two results off stack.
 };
 
-const Schedule = []DriverCellIndex;
+const Schedule = []FlatIndex;
 
 fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
     const schedule_len = spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len;
 
-    var schedule = ArrayList(DriverCellIndex).initCapacity(allocator, schedule_len) catch oom();
+    var schedule = ArrayList(FlatIndex).initCapacity(allocator, schedule_len) catch oom();
     defer schedule.deinit();
 
     var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
@@ -96,23 +100,23 @@ fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
 fn visit_cell(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
-    schedule: *ArrayList(DriverCellIndex),
+    schedule: *ArrayList(FlatIndex),
     scheduled: *DynamicBitSet,
     driver_index: DriverIndex,
     cell_index: CellIndex,
 ) void {
-    const scheduled_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
-    if (!scheduled.isSet(scheduled_index)) {
-        scheduled.set(scheduled_index);
+    const flat_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
+    if (!scheduled.isSet(flat_index)) {
+        scheduled.set(flat_index);
         visit_dependencies(spreadsheet, scratchpad, schedule, scheduled, spreadsheet.driver_formulas[driver_index], cell_index);
-        schedule.appendAssumeCapacity(.{ .driver_index = driver_index, .cell_index = cell_index });
+        schedule.appendAssumeCapacity(flat_index);
     }
 }
 
 fn visit_dependencies(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
-    schedule: *ArrayList(DriverCellIndex),
+    schedule: *ArrayList(FlatIndex),
     scheduled: *DynamicBitSet,
     formula: DriverFormula,
     this_cell_index: CellIndex,
@@ -144,11 +148,11 @@ fn eval_spreadsheet(
     scratchpad: *Scratchpad,
     schedule: Schedule,
 ) void {
-    const driver_cell_count = spreadsheet.driver_cell_count;
-    for (schedule) |item| {
-        const formula = spreadsheet.driver_formulas[item.driver_index];
-        const value = eval_driver(spreadsheet, scratchpad, formula, item.cell_index);
-        scratchpad.cells[to_flat_index(driver_cell_count, item.driver_index, item.cell_index)] = value;
+    for (schedule) |flat_index| {
+        const driver_index, const cell_index = from_flat_index(spreadsheet.driver_cell_count, flat_index);
+        const formula = spreadsheet.driver_formulas[driver_index];
+        const value = eval_driver(spreadsheet, scratchpad, formula, cell_index);
+        scratchpad.cells[flat_index] = value;
     }
 }
 
