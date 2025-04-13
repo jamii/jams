@@ -25,11 +25,17 @@ const DriverCellIndex = struct {
 const DriverCells = struct {
     driver_cell_count: u32,
     cells: []f64,
+    stack: ArrayList(f64),
 
-    fn init(driver_count: u32, driver_cell_count: u32) DriverCells {
+    fn init(spreadsheet: Spreadsheet) DriverCells {
+        var stack_size_max: usize = 0;
+        for (spreadsheet.driver_formulas) |driver_formula| {
+            stack_size_max = @max(stack_size_max, driver_formula.len);
+        }
         return .{
-            .driver_cell_count = driver_cell_count,
-            .cells = allocator.alloc(f64, driver_count * driver_cell_count) catch oom(),
+            .driver_cell_count = spreadsheet.driver_cell_count,
+            .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
+            .stack = ArrayList(f64).initCapacity(allocator, stack_size_max) catch oom(),
         };
     }
 
@@ -42,14 +48,14 @@ const DriverCells = struct {
     }
 };
 
-// TODO Pack into rpn.
-const DriverFormula = union(enum) {
+const DriverFormula = []DriverFormulaExpr;
+const DriverFormulaExpr = union(enum) {
     constant: f64,
     cell: struct {
         driver_index: DriverIndex,
         cell_index_formula: *CellIndexFormula,
     },
-    add: [2]*DriverFormula,
+    add, // Pop two results off stack.
     // TODO Add aggregates over drivers.
     // TODO Add aggregates and filters over source data.
 };
@@ -104,19 +110,17 @@ fn visit_dependencies(
     formula: DriverFormula,
     this_cell_index: CellIndex,
 ) void {
-    switch (formula) {
-        .constant => {},
-        .cell => |cell| {
-            if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, cell.cell_index_formula.*, this_cell_index))) |cell_index| {
-                visit_cell(spreadsheet, schedule, scheduled, cell.driver_index, cell_index);
-            } else {
-                // No dependency - gets filled in as zero.
-            }
-        },
-        .add => |add| {
-            visit_dependencies(spreadsheet, schedule, scheduled, add[0].*, this_cell_index);
-            visit_dependencies(spreadsheet, schedule, scheduled, add[1].*, this_cell_index);
-        },
+    for (formula) |expr| {
+        switch (expr) {
+            .constant, .add => {},
+            .cell => |cell| {
+                if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, cell.cell_index_formula.*, this_cell_index))) |cell_index| {
+                    visit_cell(spreadsheet, schedule, scheduled, cell.driver_index, cell_index);
+                } else {
+                    // No dependency - gets filled in as zero.
+                }
+            },
+        }
     }
 }
 
@@ -129,12 +133,12 @@ fn in_bounds(spreadsheet: Spreadsheet, cell_index: i32) ?CellIndex {
 }
 
 fn eval_spreadsheet(spreadsheet: Spreadsheet, schedule: Schedule) DriverCells {
-    const driver_cells = DriverCells.init(@intCast(spreadsheet.driver_formulas.len), spreadsheet.driver_cell_count);
+    var driver_cells = DriverCells.init(spreadsheet);
     // Always returned
 
     for (schedule) |item| {
         const formula = spreadsheet.driver_formulas[item.driver_index];
-        const value = eval_driver(spreadsheet, driver_cells, formula, item.cell_index);
+        const value = eval_driver(spreadsheet, &driver_cells, formula, item.cell_index);
         driver_cells.set(item.driver_index, item.cell_index, value);
     }
 
@@ -143,28 +147,32 @@ fn eval_spreadsheet(spreadsheet: Spreadsheet, schedule: Schedule) DriverCells {
 
 fn eval_driver(
     spreadsheet: Spreadsheet,
-    driver_cells: DriverCells,
+    driver_cells: *DriverCells,
     formula: DriverFormula,
     this_cell_index: CellIndex,
 ) f64 {
-    switch (formula) {
-        .constant => |constant| {
-            return constant;
-        },
-        .cell => |cell| {
-            if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, cell.cell_index_formula.*, this_cell_index))) |cell_index| {
-                return driver_cells.get(cell.driver_index, cell_index);
-            } else {
-                // TODO How are out-of-bounds months handled?
-                return 0;
-            }
-        },
-        .add => |add| {
-            const value0 = eval_driver(spreadsheet, driver_cells, add[0].*, this_cell_index);
-            const value1 = eval_driver(spreadsheet, driver_cells, add[1].*, this_cell_index);
-            return value0 + value1;
-        },
+    assert(driver_cells.stack.items.len == 0);
+    for (formula) |expr| {
+        switch (expr) {
+            .constant => |constant| {
+                driver_cells.stack.appendAssumeCapacity(constant);
+            },
+            .cell => |cell| {
+                if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, cell.cell_index_formula.*, this_cell_index))) |cell_index| {
+                    driver_cells.stack.appendAssumeCapacity(driver_cells.get(cell.driver_index, cell_index));
+                } else {
+                    // TODO How are out-of-bounds cell indexes handled?
+                    driver_cells.stack.appendAssumeCapacity(0);
+                }
+            },
+            .add => {
+                const value1 = driver_cells.stack.pop().?;
+                const value0 = driver_cells.stack.pop().?;
+                driver_cells.stack.appendAssumeCapacity(value0 + value1);
+            },
+        }
     }
+    return driver_cells.stack.pop().?;
 }
 
 fn eval_cell_index(
@@ -195,7 +203,11 @@ fn generate_spreadsheet(random: std.Random) Spreadsheet {
     // Always returned.
 
     for (driver_formulas, 0..) |*driver_formula, driver_index| {
-        driver_formula.* = generate_driver_formula(random, @intCast(driver_index), driver_cell_count);
+        var output = ArrayList(DriverFormulaExpr).init(allocator);
+        defer output.deinit();
+
+        generate_driver_formula(random, @intCast(driver_index), driver_cell_count, &output);
+        driver_formula.* = output.toOwnedSlice() catch oom();
     }
 
     return .{
@@ -208,10 +220,11 @@ fn generate_driver_formula(
     random: std.Random,
     driver_index_max: DriverIndex,
     driver_cell_count: u32,
-) DriverFormula {
-    switch (random.enumValue(std.meta.Tag(DriverFormula))) {
+    output: *ArrayList(DriverFormulaExpr),
+) void {
+    switch (random.enumValue(std.meta.Tag(DriverFormulaExpr))) {
         .constant => {
-            return .{ .constant = random.float(f64) };
+            output.append(.{ .constant = random.float(f64) }) catch oom();
         },
         .cell => {
             // TODO Allow generating cyclic formula and just exclude them in the schedule.
@@ -221,18 +234,12 @@ fn generate_driver_formula(
             // Always returned
 
             cell_index_formula.* = generate_cell_index_formula(random, driver_cell_count);
-            return .{ .cell = .{ .driver_index = driver_index, .cell_index_formula = cell_index_formula } };
+            output.append(.{ .cell = .{ .driver_index = driver_index, .cell_index_formula = cell_index_formula } }) catch oom();
         },
         .add => {
-            const add0 = allocator.create(DriverFormula) catch oom();
-            // Always returned
-
-            const add1 = allocator.create(DriverFormula) catch oom();
-            // Always returned
-
-            add0.* = generate_driver_formula(random, driver_index_max, driver_cell_count);
-            add1.* = generate_driver_formula(random, driver_index_max, driver_cell_count);
-            return .{ .add = .{ add0, add1 } };
+            generate_driver_formula(random, driver_index_max, driver_cell_count, output);
+            generate_driver_formula(random, driver_index_max, driver_cell_count, output);
+            output.append(.add) catch oom();
         },
     }
 }
@@ -270,20 +277,24 @@ pub fn main() void {
     // Leaked.
 
     const before_create_schedule = std.time.nanoTimestamp();
+
     const schedule = create_schedule(spreadsheet);
     // Leaked.
+
     std.debug.print("create_schedule: {d:.2} seconds per {} drivers\n", .{
         @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
         spreadsheet.driver_formulas.len,
     });
 
     const before_eval_spreadsheet = std.time.nanoTimestamp();
+
     const driver_cells = eval_spreadsheet(spreadsheet, schedule);
     // Leaked.
+
     std.debug.print("eval_spreadsheet: {d:.2} seconds per {} drivers\n", .{
         @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
         spreadsheet.driver_formulas.len,
     });
 
-    std.debug.print("{}\n", .{driver_cells.get(0, 0)});
+    std.debug.print("{any} {}\n", .{ spreadsheet.driver_formulas[0], driver_cells.get(0, 0) });
 }
