@@ -22,8 +22,11 @@ const DriverCellIndex = struct {
     cell_index: CellIndex,
 };
 
+inline fn to_flat_index(driver_cell_count: u32, driver_index: DriverIndex, cell_index: CellIndex) u32 {
+    return (driver_index * driver_cell_count) + cell_index;
+}
+
 const DriverCells = struct {
-    driver_cell_count: u32,
     cells: []f64,
     driver_stack: ArrayList(f64),
     cell_index_stack: ArrayList(i32),
@@ -43,19 +46,10 @@ const DriverCells = struct {
             }
         }
         return .{
-            .driver_cell_count = spreadsheet.driver_cell_count,
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = ArrayList(f64).initCapacity(allocator, driver_stack_size_max) catch oom(),
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, cell_index_stack_size_max) catch oom(),
         };
-    }
-
-    fn get(self: DriverCells, driver_index: DriverIndex, cell_index: CellIndex) f64 {
-        return self.cells[(driver_index * self.driver_cell_count) + cell_index];
-    }
-
-    fn set(self: DriverCells, driver_index: DriverIndex, cell_index: CellIndex, value: f64) void {
-        self.cells[(driver_index * self.driver_cell_count) + cell_index] = value;
     }
 };
 
@@ -107,7 +101,7 @@ fn visit_cell(
     driver_index: DriverIndex,
     cell_index: CellIndex,
 ) void {
-    const scheduled_index = (driver_index * spreadsheet.driver_cell_count) + cell_index;
+    const scheduled_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
     if (!scheduled.isSet(scheduled_index)) {
         scheduled.set(scheduled_index);
         visit_dependencies(spreadsheet, driver_cells, schedule, scheduled, spreadsheet.driver_formulas[driver_index], cell_index);
@@ -150,10 +144,11 @@ fn eval_spreadsheet(
     driver_cells: *DriverCells,
     schedule: Schedule,
 ) void {
+    const driver_cell_count = spreadsheet.driver_cell_count;
     for (schedule) |item| {
         const formula = spreadsheet.driver_formulas[item.driver_index];
         const value = eval_driver(spreadsheet, driver_cells, formula, item.cell_index);
-        driver_cells.set(item.driver_index, item.cell_index, value);
+        driver_cells.cells[to_flat_index(driver_cell_count, item.driver_index, item.cell_index)] = value;
     }
 }
 
@@ -165,6 +160,7 @@ fn eval_driver(
 ) f64 {
     const stack = &driver_cells.driver_stack;
     assert(stack.items.len == 0);
+    const driver_cell_count = spreadsheet.driver_cell_count;
     for (formula) |expr| {
         switch (expr) {
             .constant => |constant| {
@@ -172,7 +168,7 @@ fn eval_driver(
             },
             .cell => |cell| {
                 if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, driver_cells, cell.cell_index_formula, this_cell_index))) |cell_index| {
-                    stack.appendAssumeCapacity(driver_cells.get(cell.driver_index, cell_index));
+                    stack.appendAssumeCapacity(driver_cells.cells[to_flat_index(driver_cell_count, cell.driver_index, cell_index)]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
                     stack.appendAssumeCapacity(0);
@@ -312,6 +308,6 @@ pub fn main() void {
         spreadsheet.driver_formulas.len,
     });
 
-    std.debug.print("{any} {}\n", .{ spreadsheet.driver_formulas[0], driver_cells.get(0, 0) });
+    std.debug.print("{any} {}\n", .{ spreadsheet.driver_formulas[0], driver_cells.cells[0] });
     std.debug.print("{any}\n", .{schedule[0..40]});
 }
