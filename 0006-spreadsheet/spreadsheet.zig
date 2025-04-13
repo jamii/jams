@@ -22,6 +22,27 @@ const DriverCellIndex = struct {
     cell_index: CellIndex,
 };
 
+const DriverCells = struct {
+    driver_cell_count: u32,
+    cells: []f64,
+
+    fn init(driver_count: u32, driver_cell_count: u32) DriverCells {
+        return .{
+            .driver_cell_count = driver_cell_count,
+            .cells = allocator.alloc(f64, driver_count * driver_cell_count) catch oom(),
+        };
+    }
+
+    fn get(self: DriverCells, driver_index: DriverIndex, cell_index: CellIndex) f64 {
+        return self.cells[(driver_index * self.driver_cell_count) + cell_index];
+    }
+
+    fn set(self: DriverCells, driver_index: DriverIndex, cell_index: CellIndex, value: f64) void {
+        self.cells[(driver_index * self.driver_cell_count) + cell_index] = value;
+    }
+};
+
+// TODO Pack into rpn.
 const DriverFormula = union(enum) {
     constant: f64,
     cell: struct {
@@ -33,6 +54,7 @@ const DriverFormula = union(enum) {
     // TODO Add aggregates and filters over source data.
 };
 
+// TODO Pack into rpn.
 const CellIndexFormula = union(enum) {
     this,
     constant: i32,
@@ -106,32 +128,32 @@ fn in_bounds(spreadsheet: Spreadsheet, cell_index: i32) ?CellIndex {
     }
 }
 
-fn eval_spreadsheet(spreadsheet: Spreadsheet, schedule: Schedule) [][]f64 {
-    const driver_cells = allocator.alloc([]f64, spreadsheet.driver_formulas.len) catch oom();
+fn eval_spreadsheet(spreadsheet: Spreadsheet, schedule: Schedule) DriverCells {
+    const driver_cells = DriverCells.init(@intCast(spreadsheet.driver_formulas.len), spreadsheet.driver_cell_count);
     // Always returned
-
-    for (driver_cells) |*driver_cell| {
-        driver_cell.* = allocator.alloc(f64, spreadsheet.driver_cell_count) catch oom();
-        // Always returned
-    }
 
     for (schedule) |item| {
         const formula = spreadsheet.driver_formulas[item.driver_index];
         const value = eval_driver(spreadsheet, driver_cells, formula, item.cell_index);
-        driver_cells[item.driver_index][item.cell_index] = value;
+        driver_cells.set(item.driver_index, item.cell_index, value);
     }
 
     return driver_cells;
 }
 
-fn eval_driver(spreadsheet: Spreadsheet, driver_cells: [][]f64, formula: DriverFormula, this_cell_index: CellIndex) f64 {
+fn eval_driver(
+    spreadsheet: Spreadsheet,
+    driver_cells: DriverCells,
+    formula: DriverFormula,
+    this_cell_index: CellIndex,
+) f64 {
     switch (formula) {
         .constant => |constant| {
             return constant;
         },
         .cell => |cell| {
             if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, cell.cell_index_formula.*, this_cell_index))) |cell_index| {
-                return driver_cells[cell.driver_index][cell_index];
+                return driver_cells.get(cell.driver_index, cell_index);
             } else {
                 // TODO How are out-of-bounds months handled?
                 return 0;
@@ -145,7 +167,11 @@ fn eval_driver(spreadsheet: Spreadsheet, driver_cells: [][]f64, formula: DriverF
     }
 }
 
-fn eval_cell_index(spreadsheet: Spreadsheet, formula: CellIndexFormula, this_cell_index: CellIndex) i32 {
+fn eval_cell_index(
+    spreadsheet: Spreadsheet,
+    formula: CellIndexFormula,
+    this_cell_index: CellIndex,
+) i32 {
     switch (formula) {
         .this => {
             return @intCast(this_cell_index);
@@ -178,7 +204,11 @@ fn generate_spreadsheet(random: std.Random) Spreadsheet {
     };
 }
 
-fn generate_driver_formula(random: std.Random, driver_index_max: DriverIndex, driver_cell_count: u32) DriverFormula {
+fn generate_driver_formula(
+    random: std.Random,
+    driver_index_max: DriverIndex,
+    driver_cell_count: u32,
+) DriverFormula {
     switch (random.enumValue(std.meta.Tag(DriverFormula))) {
         .constant => {
             return .{ .constant = random.float(f64) };
@@ -255,5 +285,5 @@ pub fn main() void {
         spreadsheet.driver_formulas.len,
     });
 
-    std.debug.print("{}\n", .{driver_cells[0][0]});
+    std.debug.print("{}\n", .{driver_cells.get(0, 0)});
 }
