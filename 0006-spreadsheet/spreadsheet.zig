@@ -89,7 +89,8 @@ fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
         for (0..spreadsheet.driver_cell_count) |cell_index| {
-            visit_cell(spreadsheet, scratchpad, &schedule, &scheduled, @intCast(driver_index), @intCast(cell_index));
+            if (!scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, @intCast(driver_index), @intCast(cell_index))))
+                visit_cell(spreadsheet, scratchpad, &schedule, &scheduled, @intCast(driver_index), @intCast(cell_index));
         }
     }
 
@@ -106,22 +107,21 @@ fn visit_cell(
     cell_index: CellIndex,
 ) void {
     const flat_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
-    if (!scheduled.isSet(flat_index)) {
-        scheduled.set(flat_index);
-        for (spreadsheet.driver_formulas[driver_index]) |expr| {
-            switch (expr) {
-                .constant, .add => {},
-                .cell => |cell| {
-                    if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
+    scheduled.set(flat_index);
+    for (spreadsheet.driver_formulas[driver_index]) |expr| {
+        switch (expr) {
+            .constant, .add => {},
+            .cell => |cell| {
+                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
+                    if (!scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, cell.driver_index, evalled_cell_index)))
                         visit_cell(spreadsheet, scratchpad, schedule, scheduled, cell.driver_index, evalled_cell_index);
-                    } else {
-                        // TODO How are out-of-bounds cell indexes handled?
-                    }
-                },
-            }
+                } else {
+                    // TODO How are out-of-bounds cell indexes handled?
+                }
+            },
         }
-        schedule.appendAssumeCapacity(flat_index);
     }
+    schedule.appendAssumeCapacity(flat_index);
 }
 
 fn eval_spreadsheet(
