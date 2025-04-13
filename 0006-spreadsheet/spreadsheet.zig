@@ -297,6 +297,6 @@ pub fn main() void {
         spreadsheet.driver_formulas.len,
     });
 
-    std.debug.print("{any} {}\n", .{ spreadsheet.driver_formulas[0], scratchpad.cells[0] });
-    std.debug.print("{any}\n", .{schedule[0..40]});
+    std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
+    std.debug.print("{} {}\n", .{ schedule[0], schedule[schedule.len - 1] });
 }
