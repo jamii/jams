@@ -226,7 +226,7 @@ fn generate_spreadsheet(random: std.Random) Spreadsheet {
         var output = ArrayList(DriverFormulaExpr).init(allocator);
         defer output.deinit();
 
-        generate_driver_formula(random, @intCast(driver_index), driver_cell_count, &output);
+        generate_driver_formula(random, @intCast(driver_index), &output);
         driver_formula.* = output.toOwnedSlice() catch oom();
     }
 
@@ -239,7 +239,6 @@ fn generate_spreadsheet(random: std.Random) Spreadsheet {
 fn generate_driver_formula(
     random: std.Random,
     driver_index_max: DriverIndex,
-    driver_cell_count: u32,
     output: *ArrayList(DriverFormulaExpr),
 ) void {
     switch (random.enumValue(std.meta.Tag(DriverFormulaExpr))) {
@@ -253,15 +252,15 @@ fn generate_driver_formula(
             var cell_index_formula = ArrayList(CellIndexFormulaExpr).init(allocator);
             defer cell_index_formula.deinit();
 
-            generate_cell_index_formula(random, driver_cell_count, &cell_index_formula);
+            generate_cell_index_formula(random, &cell_index_formula);
             output.append(.{ .cell = .{
                 .driver_index = driver_index,
                 .cell_index_formula = cell_index_formula.toOwnedSlice() catch oom(),
             } }) catch oom();
         },
         .add => {
-            generate_driver_formula(random, driver_index_max, driver_cell_count, output);
-            generate_driver_formula(random, driver_index_max, driver_cell_count, output);
+            generate_driver_formula(random, driver_index_max, output);
+            generate_driver_formula(random, driver_index_max, output);
             output.append(.add) catch oom();
         },
     }
@@ -269,7 +268,6 @@ fn generate_driver_formula(
 
 fn generate_cell_index_formula(
     random: std.Random,
-    driver_cell_count: u32,
     output: *ArrayList(CellIndexFormulaExpr),
 ) void {
     switch (random.enumValue(std.meta.Tag(CellIndexFormulaExpr))) {
@@ -277,14 +275,11 @@ fn generate_cell_index_formula(
             output.append(.this) catch oom();
         },
         .constant => {
-            // It's ok to go out of bounds but we want reasonable odds of being in bounds too,
-            // so don't use a totally random int.
-            const bound: i32 = @intCast(driver_cell_count);
-            output.append(.{ .constant = random.intRangeLessThan(i32, -bound, bound) }) catch oom();
+            output.append(.{ .constant = random.intRangeLessThan(i32, -3, 3) }) catch oom();
         },
         .add => {
-            generate_cell_index_formula(random, driver_cell_count, output);
-            generate_cell_index_formula(random, driver_cell_count, output);
+            generate_cell_index_formula(random, output);
+            generate_cell_index_formula(random, output);
             output.append(.add) catch oom();
         },
     }
@@ -305,17 +300,18 @@ pub fn main() void {
     const schedule = create_schedule(spreadsheet, &driver_cells);
     // Leaked.
 
-    std.debug.print("create_schedule: {d:.2} seconds per {} drivers\n", .{
+    std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
         @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
         spreadsheet.driver_formulas.len,
     });
 
     const before_eval_spreadsheet = std.time.nanoTimestamp();
     eval_spreadsheet(spreadsheet, &driver_cells, schedule);
-    std.debug.print("eval_spreadsheet: {d:.2} seconds per {} drivers\n", .{
+    std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
         @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
         spreadsheet.driver_formulas.len,
     });
 
     std.debug.print("{any} {}\n", .{ spreadsheet.driver_formulas[0], driver_cells.get(0, 0) });
+    std.debug.print("{any}\n", .{schedule[0..40]});
 }
