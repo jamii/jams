@@ -84,7 +84,7 @@ fn create_schedule(spreadsheet: Spreadsheet, driver_cells: *DriverCells) Schedul
     const schedule_len = spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len;
 
     var schedule = ArrayList(DriverCellIndex).initCapacity(allocator, schedule_len) catch oom();
-    // Always returned
+    defer schedule.deinit();
 
     var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
     defer scheduled.deinit();
@@ -96,7 +96,7 @@ fn create_schedule(spreadsheet: Spreadsheet, driver_cells: *DriverCells) Schedul
     }
 
     assert(schedule.items.len == schedule_len);
-    return schedule.items;
+    return schedule.toOwnedSlice() catch oom();
 }
 
 fn visit_cell(
