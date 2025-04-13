@@ -108,38 +108,19 @@ fn visit_cell(
     const flat_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
     if (!scheduled.isSet(flat_index)) {
         scheduled.set(flat_index);
-        visit_dependencies(spreadsheet, scratchpad, schedule, scheduled, spreadsheet.driver_formulas[driver_index], cell_index);
-        schedule.appendAssumeCapacity(flat_index);
-    }
-}
-
-fn visit_dependencies(
-    spreadsheet: Spreadsheet,
-    scratchpad: *Scratchpad,
-    schedule: *ArrayList(FlatIndex),
-    scheduled: *DynamicBitSet,
-    formula: DriverFormula,
-    this_cell_index: CellIndex,
-) void {
-    for (formula) |expr| {
-        switch (expr) {
-            .constant, .add => {},
-            .cell => |cell| {
-                if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, this_cell_index))) |cell_index| {
-                    visit_cell(spreadsheet, scratchpad, schedule, scheduled, cell.driver_index, cell_index);
-                } else {
-                    // No dependency - just returns zero.
-                }
-            },
+        for (spreadsheet.driver_formulas[driver_index]) |expr| {
+            switch (expr) {
+                .constant, .add => {},
+                .cell => |cell| {
+                    if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
+                        visit_cell(spreadsheet, scratchpad, schedule, scheduled, cell.driver_index, evalled_cell_index);
+                    } else {
+                        // TODO How are out-of-bounds cell indexes handled?
+                    }
+                },
+            }
         }
-    }
-}
-
-fn in_bounds(spreadsheet: Spreadsheet, cell_index: i32) ?CellIndex {
-    if (cell_index < 0 or @as(u32, @intCast(cell_index)) >= spreadsheet.driver_cell_count) {
-        return null;
-    } else {
-        return @intCast(cell_index);
+        schedule.appendAssumeCapacity(flat_index);
     }
 }
 
@@ -171,7 +152,7 @@ fn eval_driver(
                 stack.appendAssumeCapacity(constant);
             },
             .cell => |cell| {
-                if (in_bounds(spreadsheet, eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, this_cell_index))) |cell_index| {
+                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, this_cell_index)) |cell_index| {
                     stack.appendAssumeCapacity(scratchpad.cells[to_flat_index(driver_cell_count, cell.driver_index, cell_index)]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
@@ -193,8 +174,7 @@ fn eval_cell_index(
     scratchpad: *Scratchpad,
     formula: CellIndexFormula,
     this_cell_index: CellIndex,
-) i32 {
-    _ = spreadsheet;
+) ?CellIndex {
     const stack = &scratchpad.cell_index_stack;
     assert(stack.items.len == 0);
     for (formula) |expr| {
@@ -212,7 +192,12 @@ fn eval_cell_index(
             },
         }
     }
-    return stack.pop().?;
+    const result = stack.pop().?;
+    if (result >= 0 and @as(u32, @intCast(result)) < spreadsheet.driver_cell_count) {
+        return @intCast(result);
+    } else {
+        return null;
+    }
 }
 
 fn generate_spreadsheet(random: std.Random) Spreadsheet {
