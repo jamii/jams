@@ -57,19 +57,34 @@ pub const CellIndexFormulaExpr = union(enum) {
     }
 };
 
-fn generate_spreadsheet(random: std.Random) Spreadsheet {
+const Order = enum {
+    linear,
+    shuffled,
+};
+
+fn generate_spreadsheet(random: std.Random, order: Order) Spreadsheet {
     const driver_count: u32 = 1000000;
     const driver_cell_count: u32 = 20;
+
+    const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
+    defer allocator.free(schedule);
+
+    for (schedule, 0..) |*p, i| p.* = @intCast(i);
+    if (order == .shuffled) {
+        // We want to generate an acylic spreadsheet, but still require non-trivial scheduling.
+        // So generate a random schedule and only allow drivers to refer to other drivers eariler in the schedule.
+        random.shuffle(DriverIndex, schedule);
+    }
 
     const driver_formulas = allocator.alloc(DriverFormula, driver_count) catch oom();
     // Always returned.
 
-    for (driver_formulas, 0..) |*driver_formula, driver_index| {
+    for (schedule) |driver_index| {
         var output = ArrayList(DriverFormulaExpr).init(allocator);
         defer output.deinit();
 
-        generate_driver_formula(random, @intCast(driver_index), &output);
-        driver_formula.* = output.toOwnedSlice() catch oom();
+        generate_driver_formula(random, schedule[0..driver_index], &output);
+        driver_formulas[driver_index] = output.toOwnedSlice() catch oom();
     }
 
     return .{
@@ -80,7 +95,7 @@ fn generate_spreadsheet(random: std.Random) Spreadsheet {
 
 fn generate_driver_formula(
     random: std.Random,
-    driver_index_max: DriverIndex,
+    schedule: []const DriverIndex,
     output: *ArrayList(DriverFormulaExpr),
 ) void {
     switch (random.enumValue(std.meta.Tag(DriverFormulaExpr))) {
@@ -88,11 +103,10 @@ fn generate_driver_formula(
             output.append(.{ .constant = random.float(f64) }) catch oom();
         },
         .cell => {
-            if (driver_index_max == 0) {
+            if (schedule.len == 0) {
                 output.append(.{ .constant = random.float(f64) }) catch oom();
             } else {
-                // TODO Allow generating cyclic formula and just exclude them in the schedule.
-                const driver_index = random.uintAtMost(DriverIndex, driver_index_max - 1);
+                const driver_index = schedule[random.uintLessThan(usize, schedule.len)];
 
                 var cell_index_formula = ArrayList(CellIndexFormulaExpr).init(allocator);
                 defer cell_index_formula.deinit();
@@ -105,8 +119,8 @@ fn generate_driver_formula(
             }
         },
         .add => {
-            generate_driver_formula(random, driver_index_max, output);
-            generate_driver_formula(random, driver_index_max, output);
+            generate_driver_formula(random, schedule, output);
+            generate_driver_formula(random, schedule, output);
             output.append(.add) catch oom();
         },
     }
@@ -132,40 +146,44 @@ fn generate_cell_index_formula(
 }
 
 pub fn main() void {
-    var rng = std.Random.DefaultPrng.init(42);
-    const random = rng.random();
+    for ([2]Order{ .linear, .shuffled }) |order| {
+        var rng = std.Random.DefaultPrng.init(42);
+        const random = rng.random();
 
-    const spreadsheet = generate_spreadsheet(random);
-    // Leaked.
-
-    inline for (.{
-        @import("./scalar.zig"),
-        @import("./vector.zig"),
-    }) |engine| {
-        std.debug.print("{}\n", .{engine});
-
-        var scratchpad = engine.Scratchpad.init(spreadsheet);
+        const spreadsheet = generate_spreadsheet(random, order);
         // Leaked.
 
-        const before_create_schedule = std.time.nanoTimestamp();
+        inline for (.{
+            @import("./scalar.zig"),
+            @import("./vector.zig"),
+        }) |engine| {
+            std.debug.print("{} {}\n", .{ order, engine });
 
-        const schedule = engine.create_schedule(spreadsheet, &scratchpad);
-        // Leaked.
+            var scratchpad = engine.Scratchpad.init(spreadsheet);
+            // Leaked.
 
-        std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
-            @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
-            spreadsheet.driver_formulas.len,
-        });
+            const before_create_schedule = std.time.nanoTimestamp();
 
-        const before_eval_spreadsheet = std.time.nanoTimestamp();
-        engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
-        std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
-            @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
-            spreadsheet.driver_formulas.len,
-        });
+            const schedule = engine.create_schedule(spreadsheet, &scratchpad);
+            // Leaked.
 
-        std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
-        std.debug.print("{} {}\n", .{ schedule[0], schedule[schedule.len - 1] });
-        std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 1] });
+            std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
+                @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
+                spreadsheet.driver_formulas.len,
+            });
+
+            const before_eval_spreadsheet = std.time.nanoTimestamp();
+            engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
+            std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
+                @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
+                spreadsheet.driver_formulas.len,
+            });
+
+            //std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
+            //std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
+            //std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
+
+            std.debug.print("\n---\n\n", .{});
+        }
     }
 }
