@@ -167,14 +167,14 @@ pub fn main() void {
             const schedule = engine.create_schedule(spreadsheet, &scratchpad);
             // Leaked.
 
-            std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
+            std.debug.print("create_schedule: {d:.3} seconds for {} drivers\n", .{
                 @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
                 spreadsheet.driver_formulas.len,
             });
 
             const before_eval_spreadsheet = std.time.nanoTimestamp();
             engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
-            std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
+            std.debug.print("eval_spreadsheet: {d:.3} seconds for {} drivers\n", .{
                 @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
                 spreadsheet.driver_formulas.len,
             });
