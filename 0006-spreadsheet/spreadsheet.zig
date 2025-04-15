@@ -179,9 +179,9 @@ pub fn main() void {
                 spreadsheet.driver_formulas.len,
             });
 
-            //std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
-            //std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
-            //std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
+            std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
+            std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
+            std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
 
             std.debug.print("\n---\n\n", .{});
         }
