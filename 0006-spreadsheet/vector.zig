@@ -48,6 +48,9 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
     var schedule = ArrayList(DriverIndex).initCapacity(allocator, schedule_len) catch oom();
     defer schedule.deinit();
 
+    var scheduling = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
+    defer scheduling.deinit();
+
     var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
     defer scheduled.deinit();
 
@@ -60,7 +63,7 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
         if (!scheduled.isSet(driver_index)) {
-            scheduled.set(driver_index);
+            scheduling.set(driver_index);
             var next: StackItem = .{ .driver_index = @intCast(driver_index), .formula_index = 0 };
             next: while (true) {
                 const formula = spreadsheet.driver_formulas[next.driver_index];
@@ -69,14 +72,19 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
                         .constant, .add => {},
                         .cell => |cell| {
                             if (!scheduled.isSet(cell.driver_index)) {
+                                if (scheduling.isSet(cell.driver_index)) {
+                                    std.debug.panic("Loop!", .{});
+                                }
                                 stack.appendAssumeCapacity(.{ .driver_index = next.driver_index, .formula_index = formula_index_new + 1 });
-                                scheduled.set(cell.driver_index);
+                                scheduling.set(cell.driver_index);
                                 next = .{ .driver_index = cell.driver_index, .formula_index = 0 };
                                 continue :next;
                             }
                         },
                     }
                 }
+                scheduling.unset(next.driver_index);
+                scheduled.set(next.driver_index);
                 schedule.appendAssumeCapacity(next.driver_index);
                 next = stack.pop() orelse break :next;
             }

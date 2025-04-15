@@ -79,11 +79,11 @@ fn generate_spreadsheet(random: std.Random, order: Order) Spreadsheet {
     const driver_formulas = allocator.alloc(DriverFormula, driver_count) catch oom();
     // Always returned.
 
-    for (schedule) |driver_index| {
+    for (schedule, 0..) |driver_index, schedule_index| {
         var output = ArrayList(DriverFormulaExpr).init(allocator);
         defer output.deinit();
 
-        generate_driver_formula(random, schedule[0..driver_index], &output);
+        generate_driver_formula(random, schedule[0..schedule_index], &output);
         driver_formulas[driver_index] = output.toOwnedSlice() catch oom();
     }
 
