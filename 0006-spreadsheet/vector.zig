@@ -13,6 +13,7 @@ const CellIndexFormula = @import("./spreadsheet.zig").CellIndexFormula;
 
 pub const Scratchpad = struct {
     cells: []f64,
+    scheduled: DynamicBitSet,
     driver_stack: []f64,
     cell_index_stack: []i32,
 
@@ -32,6 +33,7 @@ pub const Scratchpad = struct {
         }
         return .{
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
+            .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = allocator.alloc(f64, driver_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
             .cell_index_stack = allocator.alloc(i32, cell_index_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
         };
@@ -46,15 +48,11 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
     var schedule = ArrayList(DriverIndex).initCapacity(allocator, schedule_len) catch oom();
     defer schedule.deinit();
 
-    var scheduling = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
-    defer scheduling.deinit();
-
-    var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
-    defer scheduled.deinit();
+    scratchpad.scheduled.unmanaged.unsetAll();
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
-        if (!scheduled.isSet(driver_index))
-            visit_driver(spreadsheet, scratchpad, &schedule, &scheduled, @intCast(driver_index));
+        if (!scratchpad.scheduled.isSet(driver_index))
+            visit_driver(spreadsheet, scratchpad, &schedule, @intCast(driver_index));
     }
 
     assert(schedule.items.len == schedule_len);
@@ -65,19 +63,18 @@ fn visit_driver(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
     schedule: *ArrayList(DriverIndex),
-    scheduled: *DynamicBitSet,
     driver_index: DriverIndex,
 ) void {
     for (spreadsheet.driver_formulas[driver_index]) |expr| {
         switch (expr) {
             .constant, .add => {},
             .cell => |cell| {
-                if (!scheduled.isSet(cell.driver_index))
-                    visit_driver(spreadsheet, scratchpad, schedule, scheduled, cell.driver_index);
+                if (!scratchpad.scheduled.isSet(cell.driver_index))
+                    visit_driver(spreadsheet, scratchpad, schedule, cell.driver_index);
             },
         }
     }
-    scheduled.set(driver_index);
+    scratchpad.scheduled.set(driver_index);
     schedule.appendAssumeCapacity(driver_index);
 }
 
