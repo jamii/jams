@@ -41,8 +41,6 @@ pub const Scratchpad = struct {
 pub const Schedule = []DriverIndex;
 
 pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
-    _ = scratchpad;
-
     const schedule_len = spreadsheet.driver_formulas.len;
 
     var schedule = ArrayList(DriverIndex).initCapacity(allocator, schedule_len) catch oom();
@@ -54,45 +52,33 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
     var scheduled = DynamicBitSet.initEmpty(allocator, schedule_len) catch oom();
     defer scheduled.deinit();
 
-    const StackItem = struct {
-        driver_index: DriverIndex,
-        formula_index: usize,
-    };
-    var stack = ArrayList(StackItem).initCapacity(allocator, schedule_len) catch oom();
-    defer stack.deinit();
-
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
-        if (!scheduled.isSet(driver_index)) {
-            scheduling.set(driver_index);
-            var next: StackItem = .{ .driver_index = @intCast(driver_index), .formula_index = 0 };
-            next: while (true) {
-                const formula = spreadsheet.driver_formulas[next.driver_index];
-                for (formula[next.formula_index..], next.formula_index..) |expr, formula_index_new| {
-                    switch (expr) {
-                        .constant, .add => {},
-                        .cell => |cell| {
-                            if (!scheduled.isSet(cell.driver_index)) {
-                                if (scheduling.isSet(cell.driver_index)) {
-                                    std.debug.panic("Loop!", .{});
-                                }
-                                stack.appendAssumeCapacity(.{ .driver_index = next.driver_index, .formula_index = formula_index_new + 1 });
-                                scheduling.set(cell.driver_index);
-                                next = .{ .driver_index = cell.driver_index, .formula_index = 0 };
-                                continue :next;
-                            }
-                        },
-                    }
-                }
-                scheduling.unset(next.driver_index);
-                scheduled.set(next.driver_index);
-                schedule.appendAssumeCapacity(next.driver_index);
-                next = stack.pop() orelse break :next;
-            }
-        }
+        if (!scheduled.isSet(driver_index))
+            visit_driver(spreadsheet, scratchpad, &schedule, &scheduled, @intCast(driver_index));
     }
 
     assert(schedule.items.len == schedule_len);
     return schedule.toOwnedSlice() catch oom();
+}
+
+fn visit_driver(
+    spreadsheet: Spreadsheet,
+    scratchpad: *Scratchpad,
+    schedule: *ArrayList(DriverIndex),
+    scheduled: *DynamicBitSet,
+    driver_index: DriverIndex,
+) void {
+    for (spreadsheet.driver_formulas[driver_index]) |expr| {
+        switch (expr) {
+            .constant, .add => {},
+            .cell => |cell| {
+                if (!scheduled.isSet(cell.driver_index))
+                    visit_driver(spreadsheet, scratchpad, schedule, scheduled, cell.driver_index);
+            },
+        }
+    }
+    scheduled.set(driver_index);
+    schedule.appendAssumeCapacity(driver_index);
 }
 
 pub fn eval_spreadsheet(
