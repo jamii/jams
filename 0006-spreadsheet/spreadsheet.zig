@@ -155,6 +155,7 @@ pub fn main() void {
 
         inline for (.{
             @import("./scalar.zig"),
+            @import("./scalar_fused.zig"),
             @import("./vector.zig"),
         }) |engine| {
             std.debug.print("{} {}\n", .{ order, engine });
@@ -180,7 +181,7 @@ pub fn main() void {
             });
 
             std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
-            std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
+            //std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
             std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
 
             std.debug.print("\n---\n\n", .{});
