@@ -33,20 +33,22 @@ pub const Scratchpad = struct {
     pub fn init(spreadsheet: Spreadsheet) Scratchpad {
         var driver_stack_size_max: usize = 0;
         var cell_index_stack_size_max: usize = 0;
-        for (spreadsheet.driver_formulas) |driver_formula| {
-            driver_stack_size_max = @max(driver_stack_size_max, driver_formula.len);
+        for (spreadsheet.driver_formula_ranges) |driver_formula_range| {
+            const driver_formula = spreadsheet.driver_formula_exprs[driver_formula_range..];
+            driver_stack_size_max = @max(driver_stack_size_max, driver_formula.len); // TODO way too big
             for (driver_formula) |expr| {
                 switch (expr) {
                     .constant, .add => {},
                     .cell => |cell| {
-                        cell_index_stack_size_max = @max(cell_index_stack_size_max, cell.cell_index_formula.len);
+                        cell_index_stack_size_max = @max(cell_index_stack_size_max, spreadsheet.cell_index_formula_exprs[cell.cell_index_formula_range..].len); // TODO way too big
                     },
+                    .end => break,
                 }
             }
         }
         return .{
-            .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
-            .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
+            .cells = allocator.alloc(f64, spreadsheet.driver_formula_ranges.len * spreadsheet.driver_cell_count) catch oom(),
+            .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formula_ranges.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = ArrayList(f64).initCapacity(allocator, driver_stack_size_max) catch oom(),
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, cell_index_stack_size_max) catch oom(),
         };
@@ -56,14 +58,14 @@ pub const Scratchpad = struct {
 pub const Schedule = []FlatIndex;
 
 pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
-    const schedule_len = spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len;
+    const schedule_len = spreadsheet.driver_cell_count * spreadsheet.driver_formula_ranges.len;
 
     var schedule = ArrayList(FlatIndex).initCapacity(allocator, schedule_len) catch oom();
     defer schedule.deinit();
 
     scratchpad.scheduled.unmanaged.unsetAll();
 
-    for (0..spreadsheet.driver_formulas.len) |driver_index| {
+    for (0..spreadsheet.driver_formula_ranges.len) |driver_index| {
         for (0..spreadsheet.driver_cell_count) |cell_index| {
             if (!scratchpad.scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, @intCast(driver_index), @intCast(cell_index))))
                 visit_cell(spreadsheet, scratchpad, &schedule, @intCast(driver_index), @intCast(cell_index));
@@ -82,17 +84,21 @@ fn visit_cell(
     cell_index: CellIndex,
 ) void {
     const flat_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
-    for (spreadsheet.driver_formulas[driver_index]) |expr| {
+    const driver_formula_range = spreadsheet.driver_formula_ranges[driver_index];
+    const driver_formula = spreadsheet.driver_formula_exprs[driver_formula_range..];
+    for (driver_formula) |expr| {
         switch (expr) {
             .constant, .add => {},
             .cell => |cell| {
-                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
+                const cell_index_formula = spreadsheet.cell_index_formula_exprs[cell.cell_index_formula_range..];
+                if (eval_cell_index(spreadsheet, scratchpad, cell_index_formula, cell_index)) |evalled_cell_index| {
                     if (!scratchpad.scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, cell.driver_index, evalled_cell_index)))
                         visit_cell(spreadsheet, scratchpad, schedule, cell.driver_index, evalled_cell_index);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
                 }
             },
+            .end => break,
         }
     }
     scratchpad.scheduled.set(flat_index);
@@ -106,8 +112,9 @@ pub fn eval_spreadsheet(
 ) void {
     for (schedule) |flat_index| {
         const driver_index, const cell_index = from_flat_index(spreadsheet.driver_cell_count, flat_index);
-        const formula = spreadsheet.driver_formulas[driver_index];
-        const value = eval_driver(spreadsheet, scratchpad, formula, cell_index);
+        const driver_formula_range = spreadsheet.driver_formula_ranges[driver_index];
+        const driver_formula = spreadsheet.driver_formula_exprs[driver_formula_range..];
+        const value = eval_driver(spreadsheet, scratchpad, driver_formula, cell_index);
         scratchpad.cells[flat_index] = value;
     }
 }
@@ -127,7 +134,8 @@ fn eval_driver(
                 stack.appendAssumeCapacity(constant);
             },
             .cell => |cell| {
-                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, this_cell_index)) |cell_index| {
+                const cell_index_formula = spreadsheet.cell_index_formula_exprs[cell.cell_index_formula_range..];
+                if (eval_cell_index(spreadsheet, scratchpad, cell_index_formula, this_cell_index)) |cell_index| {
                     stack.appendAssumeCapacity(scratchpad.cells[to_flat_index(driver_cell_count, cell.driver_index, cell_index)]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
@@ -139,6 +147,7 @@ fn eval_driver(
                 const value0 = stack.pop().?;
                 stack.appendAssumeCapacity(value0 + value1);
             },
+            .end => break,
         }
     }
     return stack.pop().?;
@@ -165,6 +174,7 @@ fn eval_cell_index(
                 const value0 = stack.pop().?;
                 stack.appendAssumeCapacity(value0 + value1);
             },
+            .end => break,
         }
     }
     const result = stack.pop().?;
