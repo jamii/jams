@@ -77,7 +77,12 @@ const Order = enum {
     shuffled,
 };
 
-fn generate_spreadsheet(random: std.Random, order: Order, driver_count: u32) Spreadsheet {
+const Recursion = enum {
+    non_recursive,
+    recursive,
+};
+
+fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, driver_count: u32) Spreadsheet {
     const driver_cell_count: u32 = 20;
 
     const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
@@ -97,7 +102,11 @@ fn generate_spreadsheet(random: std.Random, order: Order, driver_count: u32) Spr
         var output = ArrayList(DriverFormulaExpr).init(allocator);
         defer output.deinit();
 
-        generate_driver_formula(random, schedule[0..schedule_index], &output);
+        const upstream = switch (recursion) {
+            .non_recursive => schedule[0..schedule_index],
+            .recursive => schedule[0 .. schedule_index + 1],
+        };
+        generate_driver_formula(random, upstream, driver_index, &output);
         driver_formulas[driver_index] = output.toOwnedSlice() catch oom();
     }
 
@@ -110,6 +119,7 @@ fn generate_spreadsheet(random: std.Random, order: Order, driver_count: u32) Spr
 fn generate_driver_formula(
     random: std.Random,
     schedule: []const DriverIndex,
+    driver_index: DriverIndex,
     output: *ArrayList(DriverFormulaExpr),
 ) void {
     switch (random.enumValue(std.meta.Tag(DriverFormulaExpr))) {
@@ -120,21 +130,28 @@ fn generate_driver_formula(
             if (schedule.len == 0) {
                 output.append(.{ .constant = random.float(f64) }) catch oom();
             } else {
-                const driver_index = schedule[random.uintLessThan(usize, schedule.len)];
+                const cell_driver_index = schedule[random.uintLessThan(usize, schedule.len)];
 
                 var cell_index_formula = ArrayList(CellIndexFormulaExpr).init(allocator);
                 defer cell_index_formula.deinit();
 
-                generate_cell_index_formula(random, &cell_index_formula);
+                if (cell_driver_index == driver_index) {
+                    // Ensure that recursive formula don't form cycles
+                    cell_index_formula.append(.this) catch oom();
+                    cell_index_formula.append(.{ .constant = random.intRangeLessThan(i32, -3, 0) }) catch oom();
+                    cell_index_formula.append(.add) catch oom();
+                } else {
+                    generate_cell_index_formula(random, &cell_index_formula);
+                }
                 output.append(.{ .cell = .{
-                    .driver_index = driver_index,
+                    .driver_index = cell_driver_index,
                     .cell_index_formula = cell_index_formula.toOwnedSlice() catch oom(),
                 } }) catch oom();
             }
         },
         .add => {
-            generate_driver_formula(random, schedule, output);
-            generate_driver_formula(random, schedule, output);
+            generate_driver_formula(random, schedule, driver_index, output);
+            generate_driver_formula(random, schedule, driver_index, output);
             output.append(.add) catch oom();
         },
     }
@@ -173,40 +190,46 @@ const recursive_engines = .{
 
 pub fn main() void {
     for ([2]Order{ .linear, .shuffled }) |order| {
-        var rng = std.Random.DefaultPrng.init(42);
-        const random = rng.random();
+        inline for ([2]Recursion{ .non_recursive, .recursive }) |recursion| {
+            var rng = std.Random.DefaultPrng.init(42);
+            const random = rng.random();
 
-        const spreadsheet = generate_spreadsheet(random, order, 1_000_000);
-        defer spreadsheet.deinit();
+            const spreadsheet = generate_spreadsheet(random, order, recursion, 1_000_000);
+            defer spreadsheet.deinit();
 
-        inline for (engines) |engine| {
-            std.debug.print("{} {}\n", .{ order, engine });
+            const test_engines = switch (recursion) {
+                .non_recursive => engines,
+                .recursive => recursive_engines,
+            };
+            inline for (test_engines) |engine| {
+                std.debug.print("{} {} {}\n", .{ order, recursion, engine });
 
-            var scratchpad = engine.Scratchpad.init(spreadsheet);
-            defer scratchpad.deinit();
+                var scratchpad = engine.Scratchpad.init(spreadsheet);
+                defer scratchpad.deinit();
 
-            const before_create_schedule = std.time.nanoTimestamp();
+                const before_create_schedule = std.time.nanoTimestamp();
 
-            const schedule = engine.create_schedule(spreadsheet, &scratchpad);
-            defer if (@TypeOf(schedule) != void) allocator.free(schedule);
+                const schedule = engine.create_schedule(spreadsheet, &scratchpad);
+                defer if (@TypeOf(schedule) != void) allocator.free(schedule);
 
-            std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
-                @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
-                spreadsheet.driver_formulas.len,
-            });
+                std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
+                    @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
+                    spreadsheet.driver_formulas.len,
+                });
 
-            const before_eval_spreadsheet = std.time.nanoTimestamp();
-            engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
-            std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
-                @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
-                spreadsheet.driver_formulas.len,
-            });
+                const before_eval_spreadsheet = std.time.nanoTimestamp();
+                engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
+                std.debug.print("eval_spreadsheet: {d:.2} seconds for {} drivers\n", .{
+                    @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_eval_spreadsheet)) / 1e9,
+                    spreadsheet.driver_formulas.len,
+                });
 
-            std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
-            //std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
-            std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
+                std.debug.print("{} {}\n", .{ scratchpad.cells[0], scratchpad.cells[scratchpad.cells.len - 1] });
+                //std.debug.print("{any} {any}\n", .{ schedule[0..10], schedule[schedule.len - 10] });
+                std.debug.print("{any}\n{any}\n", .{ spreadsheet.driver_formulas[0..10], spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 10] });
 
-            std.debug.print("\n---\n\n", .{});
+                std.debug.print("\n---\n\n", .{});
+            }
         }
     }
 }
@@ -234,14 +257,20 @@ fn test_eval_all_equal(test_engines: anytype, spreadsheet: Spreadsheet) !void {
 }
 
 test "all engines produce the same results" {
-    for (0..1000) |seed| {
-        var rng = std.Random.DefaultPrng.init(seed);
-        const random = rng.random();
+    inline for ([2]Recursion{ .non_recursive, .recursive }) |recursion| {
+        for (0..1000) |seed| {
+            var rng = std.Random.DefaultPrng.init(seed);
+            const random = rng.random();
 
-        const spreadsheet = generate_spreadsheet(random, .shuffled, 100);
-        defer spreadsheet.deinit();
+            const spreadsheet = generate_spreadsheet(random, .shuffled, recursion, 100);
+            defer spreadsheet.deinit();
 
-        try test_eval_all_equal(engines, spreadsheet);
+            const test_engines = switch (recursion) {
+                .non_recursive => engines,
+                .recursive => recursive_engines,
+            };
+            try test_eval_all_equal(test_engines, spreadsheet);
+        }
     }
 }
 
