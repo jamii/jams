@@ -165,6 +165,12 @@ const engines = .{
     @import("./vector.zig"),
 };
 
+const recursive_engines = .{
+    @import("./scalar.zig"),
+    @import("./scalar_fused.zig"),
+    // @import("./vector.zig"), // can't handle recursion without mixed scheduling
+};
+
 pub fn main() void {
     for ([2]Order{ .linear, .shuffled }) |order| {
         var rng = std.Random.DefaultPrng.init(42);
@@ -205,6 +211,28 @@ pub fn main() void {
     }
 }
 
+fn test_eval_all_equal(test_engines: anytype, spreadsheet: Spreadsheet) !void {
+    assert(engines.len != 0);
+
+    var expected: []f64 = undefined;
+    defer allocator.free(expected);
+
+    inline for (test_engines, 0..) |engine, i| {
+        var scratchpad = engine.Scratchpad.init(spreadsheet);
+        defer scratchpad.deinit();
+
+        const schedule = engine.create_schedule(spreadsheet, &scratchpad);
+        defer if (@TypeOf(schedule) != void) allocator.free(schedule);
+
+        engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
+        if (i == 0) {
+            expected = allocator.dupe(f64, scratchpad.cells) catch oom();
+        } else {
+            try std.testing.expectEqualSlices(f64, expected, scratchpad.cells);
+        }
+    }
+}
+
 test "all engines produce the same results" {
     for (0..1000) |seed| {
         var rng = std.Random.DefaultPrng.init(seed);
@@ -213,21 +241,105 @@ test "all engines produce the same results" {
         const spreadsheet = generate_spreadsheet(random, .shuffled, 100);
         defer spreadsheet.deinit();
 
-        var results: [engines.len][]f64 = undefined;
-        defer for (results) |result| allocator.free(result);
-
-        inline for (engines, &results) |engine, *result| {
-            var scratchpad = engine.Scratchpad.init(spreadsheet);
-            defer scratchpad.deinit();
-
-            const schedule = engine.create_schedule(spreadsheet, &scratchpad);
-            defer if (@TypeOf(schedule) != void) allocator.free(schedule);
-
-            engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
-            result.* = allocator.dupe(f64, scratchpad.cells) catch oom();
-        }
-
-        try std.testing.expectEqualSlices(f64, results[0], results[1]);
-        try std.testing.expectEqualSlices(f64, results[0], results[2]);
+        try test_eval_all_equal(engines, spreadsheet);
     }
+}
+
+fn test_eval_constant(test_engines: anytype, spreadsheet: Spreadsheet, expected: []const f64) !void {
+    inline for (test_engines) |engine| {
+        var scratchpad = engine.Scratchpad.init(spreadsheet);
+        defer scratchpad.deinit();
+
+        const schedule = engine.create_schedule(spreadsheet, &scratchpad);
+        defer if (@TypeOf(schedule) != void) allocator.free(schedule);
+
+        engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
+        try std.testing.expectEqualSlices(f64, expected, scratchpad.cells);
+    }
+}
+
+test "empty spreadsheet" {
+    const spreadsheet = Spreadsheet{
+        .driver_cell_count = 5,
+        .driver_formulas = &[_]DriverFormula{},
+    };
+    try test_eval_constant(engines, spreadsheet, &.{});
+}
+
+test "simple spreadsheet" {
+    const spreadsheet = Spreadsheet{
+        .driver_cell_count = 5,
+        .driver_formulas = &[_]DriverFormula{
+            &[_]DriverFormulaExpr{
+                .{ .constant = 42 },
+            },
+            &[_]DriverFormulaExpr{
+                .{ .cell = .{
+                    .driver_index = 2,
+                    .cell_index_formula = &[_]CellIndexFormulaExpr{
+                        .this,
+                        .{ .constant = 2 },
+                        .add,
+                    },
+                } },
+            },
+            &[_]DriverFormulaExpr{
+                .{ .constant = 1 },
+                .{ .constant = 2 },
+                .add,
+            },
+        },
+    };
+    try test_eval_constant(engines, spreadsheet, &.{
+        42, 42, 42, 42, 42,
+        3,  3,  3,  0,  0,
+        3,  3,  3,  3,  3,
+    });
+}
+
+test "recursive spreadsheet" {
+    const spreadsheet = Spreadsheet{
+        .driver_cell_count = 5,
+        .driver_formulas = &[_]DriverFormula{
+            &[_]DriverFormulaExpr{
+                .{ .cell = .{
+                    .driver_index = 0,
+                    .cell_index_formula = &[_]CellIndexFormulaExpr{
+                        .this,
+                        .{ .constant = 1 },
+                        .add,
+                    },
+                } },
+                .{ .constant = 1 },
+                .add,
+            },
+            &[_]DriverFormulaExpr{
+                .{ .cell = .{
+                    .driver_index = 2,
+                    .cell_index_formula = &[_]CellIndexFormulaExpr{
+                        .this,
+                        .{ .constant = 1 },
+                        .add,
+                    },
+                } },
+                .{ .constant = 1 },
+                .add,
+            },
+            &[_]DriverFormulaExpr{
+                .{ .cell = .{
+                    .driver_index = 1,
+                    .cell_index_formula = &[_]CellIndexFormulaExpr{
+                        .this,
+                    },
+                } },
+                .{ .constant = 1 },
+                .add,
+            },
+        },
+    };
+    try test_eval_constant(recursive_engines, spreadsheet, &.{
+        5,  4, 3, 2, 1,
+        9,  7, 5, 3, 1,
+        10, 8, 6, 4, 2,
+    });
 }
