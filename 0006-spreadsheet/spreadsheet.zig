@@ -13,6 +13,21 @@ pub const Spreadsheet = struct {
     driver_cell_count: u32,
     driver_formulas: []const DriverFormula,
     // TODO Add source data.
+
+    pub fn deinit(spreadsheet: Spreadsheet) void {
+        for (spreadsheet.driver_formulas) |driver_formula| {
+            for (driver_formula) |expr| {
+                switch (expr) {
+                    .constant, .add => {},
+                    .cell => |cell| {
+                        allocator.free(cell.cell_index_formula);
+                    },
+                }
+            }
+            allocator.free(driver_formula);
+        }
+        allocator.free(spreadsheet.driver_formulas);
+    }
 };
 
 pub const DriverIndex = u32;
@@ -62,8 +77,7 @@ const Order = enum {
     shuffled,
 };
 
-fn generate_spreadsheet(random: std.Random, order: Order) Spreadsheet {
-    const driver_count: u32 = 1000000;
+fn generate_spreadsheet(random: std.Random, order: Order, driver_count: u32) Spreadsheet {
     const driver_cell_count: u32 = 20;
 
     const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
@@ -145,28 +159,30 @@ fn generate_cell_index_formula(
     }
 }
 
+const engines = .{
+    @import("./scalar.zig"),
+    @import("./scalar_fused.zig"),
+    @import("./vector.zig"),
+};
+
 pub fn main() void {
     for ([2]Order{ .linear, .shuffled }) |order| {
         var rng = std.Random.DefaultPrng.init(42);
         const random = rng.random();
 
-        const spreadsheet = generate_spreadsheet(random, order);
-        // Leaked.
+        const spreadsheet = generate_spreadsheet(random, order, 1_000_000);
+        defer spreadsheet.deinit();
 
-        inline for (.{
-            @import("./scalar.zig"),
-            @import("./scalar_fused.zig"),
-            @import("./vector.zig"),
-        }) |engine| {
+        inline for (engines) |engine| {
             std.debug.print("{} {}\n", .{ order, engine });
 
             var scratchpad = engine.Scratchpad.init(spreadsheet);
-            // Leaked.
+            defer scratchpad.deinit();
 
             const before_create_schedule = std.time.nanoTimestamp();
 
             const schedule = engine.create_schedule(spreadsheet, &scratchpad);
-            // Leaked.
+            defer if (@TypeOf(schedule) != void) allocator.free(schedule);
 
             std.debug.print("create_schedule: {d:.2} seconds for {} drivers\n", .{
                 @as(f64, @floatFromInt(std.time.nanoTimestamp() - before_create_schedule)) / 1e9,
@@ -186,5 +202,32 @@ pub fn main() void {
 
             std.debug.print("\n---\n\n", .{});
         }
+    }
+}
+
+test "all engines produce the same results" {
+    for (0..1000) |seed| {
+        var rng = std.Random.DefaultPrng.init(seed);
+        const random = rng.random();
+
+        const spreadsheet = generate_spreadsheet(random, .shuffled, 100);
+        defer spreadsheet.deinit();
+
+        var results: [engines.len][]f64 = undefined;
+        defer for (results) |result| allocator.free(result);
+
+        inline for (engines, &results) |engine, *result| {
+            var scratchpad = engine.Scratchpad.init(spreadsheet);
+            defer scratchpad.deinit();
+
+            const schedule = engine.create_schedule(spreadsheet, &scratchpad);
+            defer if (@TypeOf(schedule) != void) allocator.free(schedule);
+
+            engine.eval_spreadsheet(spreadsheet, &scratchpad, schedule);
+            result.* = allocator.dupe(f64, scratchpad.cells) catch oom();
+        }
+
+        try std.testing.expectEqualSlices(f64, results[0], results[1]);
+        try std.testing.expectEqualSlices(f64, results[0], results[2]);
     }
 }

@@ -51,6 +51,13 @@ pub const Scratchpad = struct {
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, spreadsheet.driver_formulas.len * cell_index_stack_size_max) catch oom(),
         };
     }
+
+    pub fn deinit(scratchpad: *Scratchpad) void {
+        allocator.free(scratchpad.cells);
+        scratchpad.evalled.deinit();
+        scratchpad.driver_stack.deinit();
+        scratchpad.cell_index_stack.deinit();
+    }
 };
 
 pub const Schedule = void;

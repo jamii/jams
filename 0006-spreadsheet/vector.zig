@@ -38,6 +38,13 @@ pub const Scratchpad = struct {
             .cell_index_stack = allocator.alloc(i32, cell_index_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
         };
     }
+
+    pub fn deinit(scratchpad: *Scratchpad) void {
+        allocator.free(scratchpad.cells);
+        scratchpad.scheduled.deinit();
+        allocator.free(scratchpad.driver_stack);
+        allocator.free(scratchpad.cell_index_stack);
+    }
 };
 
 pub const Schedule = []DriverIndex;
