@@ -37,7 +37,7 @@ pub const Scratchpad = struct {
             driver_stack_size_max = @max(driver_stack_size_max, driver_formula.len);
             for (driver_formula) |expr| {
                 switch (expr) {
-                    .constant, .add => {},
+                    .constant, .add, .sum_column => {},
                     .cell => |cell| {
                         cell_index_stack_size_max = @max(cell_index_stack_size_max, cell.cell_index_formula.len);
                     },
@@ -109,6 +109,18 @@ fn eval_cell(
                 const value1 = stack.pop().?;
                 const value0 = stack.pop().?;
                 stack.appendAssumeCapacity(value0 + value1);
+            },
+            .sum_column => |sum_column| {
+                var sum: f64 = 0;
+                switch (spreadsheet.tables[sum_column.table_index][sum_column.column_index]) {
+                    .vectors => |vectors| {
+                        const row_count = @divExact(vectors.len, driver_cell_count);
+                        const vector = vectors[cell_index * row_count ..][0..row_count];
+                        for (vector) |float| sum += float;
+                    },
+                    .dimension_string => {},
+                }
+                stack.appendAssumeCapacity(sum);
             },
         }
     }

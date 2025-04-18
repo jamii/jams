@@ -12,13 +12,14 @@ pub const Spreadsheet = struct {
     // Assume that every driver has the same number of cells.
     driver_cell_count: u32,
     driver_formulas: []const DriverFormula,
+    tables: []const Table,
     // TODO Add source data.
 
     pub fn deinit(spreadsheet: Spreadsheet) void {
         for (spreadsheet.driver_formulas) |driver_formula| {
             for (driver_formula) |expr| {
                 switch (expr) {
-                    .constant, .add => {},
+                    .constant, .add, .sum_column => {},
                     .cell => |cell| {
                         allocator.free(cell.cell_index_formula);
                     },
@@ -32,6 +33,8 @@ pub const Spreadsheet = struct {
 
 pub const DriverIndex = u32;
 pub const CellIndex = u32;
+pub const TableIndex = u32;
+pub const ColumnIndex = u32;
 
 pub const DriverFormula = []const DriverFormulaExpr;
 pub const DriverFormulaExpr = union(enum) {
@@ -42,7 +45,10 @@ pub const DriverFormulaExpr = union(enum) {
     },
     add, // Pop two results off stack.
     // TODO Add aggregates over drivers.
-    // TODO Add aggregates and filters over source data.
+    sum_column: struct {
+        table_index: TableIndex,
+        column_index: ColumnIndex,
+    },
 
     pub fn format(self: DriverFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -72,6 +78,17 @@ pub const CellIndexFormulaExpr = union(enum) {
     }
 };
 
+pub const Table = []Column;
+
+pub const Column = union(enum) {
+    // A string dimension.
+    // Stored sorted by row.
+    dimension_string: []const []const u8,
+    // A timeseries value.
+    // Stored sorted by cell, then row.
+    vectors: []const f64,
+};
+
 const Order = enum {
     linear,
     shuffled,
@@ -83,7 +100,33 @@ const Recursion = enum {
 };
 
 fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, driver_count: u32) Spreadsheet {
+    const table_count = 10;
     const driver_cell_count: u32 = 20;
+
+    const tables = allocator.alloc(Table, table_count) catch oom();
+    for (tables) |*table| {
+        const column_count = 1 + random.uintLessThan(usize, 9);
+        const row_count = random.uintLessThan(usize, 100);
+        table.* = allocator.alloc(Column, column_count) catch oom();
+        for (table.*) |*column| {
+            switch (random.enumValue(std.meta.Tag(Column))) {
+                .dimension_string => {
+                    const strings = allocator.alloc([]const u8, row_count) catch oom();
+                    for (strings) |*string| {
+                        const bytes = allocator.alloc(u8, random.uintLessThan(usize, 64)) catch oom();
+                        random.bytes(bytes);
+                        string.* = bytes;
+                    }
+                    column.* = .{ .dimension_string = strings };
+                },
+                .vectors => {
+                    const floats = allocator.alloc(f64, row_count * driver_cell_count) catch oom();
+                    for (floats) |*float| float.* = random.float(f64);
+                    column.* = .{ .vectors = floats };
+                },
+            }
+        }
+    }
 
     const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
     defer allocator.free(schedule);
@@ -106,13 +149,14 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
             .non_recursive => schedule[0..schedule_index],
             .recursive => schedule[0 .. schedule_index + 1],
         };
-        generate_driver_formula(random, upstream, driver_index, &output);
+        generate_driver_formula(random, upstream, driver_index, tables, &output);
         driver_formulas[driver_index] = output.toOwnedSlice() catch oom();
     }
 
     return .{
         .driver_cell_count = driver_cell_count,
         .driver_formulas = driver_formulas,
+        .tables = tables,
     };
 }
 
@@ -120,6 +164,7 @@ fn generate_driver_formula(
     random: std.Random,
     schedule: []const DriverIndex,
     driver_index: DriverIndex,
+    tables: []const Table,
     output: *ArrayList(DriverFormulaExpr),
 ) void {
     switch (random.enumValue(std.meta.Tag(DriverFormulaExpr))) {
@@ -150,9 +195,18 @@ fn generate_driver_formula(
             }
         },
         .add => {
-            generate_driver_formula(random, schedule, driver_index, output);
-            generate_driver_formula(random, schedule, driver_index, output);
+            generate_driver_formula(random, schedule, driver_index, tables, output);
+            generate_driver_formula(random, schedule, driver_index, tables, output);
             output.append(.add) catch oom();
+        },
+        .sum_column => {
+            const table_index = random.uintLessThan(TableIndex, @intCast(tables.len));
+            // Rather than be careful about picking a vectors column, we'll just say that sum over a dimensions column returns zero.
+            const column_index = random.uintLessThan(ColumnIndex, @intCast(tables[table_index].len));
+            output.append(.{ .sum_column = .{
+                .table_index = table_index,
+                .column_index = column_index,
+            } }) catch oom();
         },
     }
 }
@@ -287,6 +341,7 @@ test "empty spreadsheet" {
     const spreadsheet = Spreadsheet{
         .driver_cell_count = 5,
         .driver_formulas = &[_]DriverFormula{},
+        .tables = &.{},
     };
     try test_eval_constant(engines, spreadsheet, &.{});
 }
@@ -314,6 +369,7 @@ test "simple spreadsheet" {
                 .add,
             },
         },
+        .tables = &.{},
     };
     try test_eval_constant(engines, spreadsheet, &.{
         42, 42, 42, 42, 42,
@@ -361,6 +417,7 @@ test "recursive spreadsheet" {
                 .add,
             },
         },
+        .tables = &.{},
     };
     try test_eval_constant(recursive_engines, spreadsheet, &.{
         5,  4, 3, 2, 1,

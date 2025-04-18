@@ -24,7 +24,7 @@ pub const Scratchpad = struct {
             driver_stack_size_max = @max(driver_stack_size_max, driver_formula.len);
             for (driver_formula) |expr| {
                 switch (expr) {
-                    .constant, .add => {},
+                    .constant, .add, .sum_column => {},
                     .cell => |cell| {
                         cell_index_stack_size_max = @max(cell_index_stack_size_max, cell.cell_index_formula.len);
                     },
@@ -74,7 +74,7 @@ fn visit_driver(
 ) void {
     for (spreadsheet.driver_formulas[driver_index]) |expr| {
         switch (expr) {
-            .constant, .add => {},
+            .constant, .add, .sum_column => {},
             .cell => |cell| {
                 if (!scratchpad.scheduled.isSet(cell.driver_index))
                     visit_driver(spreadsheet, scratchpad, schedule, cell.driver_index);
@@ -136,6 +136,21 @@ fn eval_driver(
                 const outputs = stack[stack_index * driver_cell_count ..][0..driver_cell_count];
                 stack_index += 1;
                 for (inputs, outputs) |input, *output| output.* += input;
+            },
+            .sum_column => |sum_column| {
+                const outputs = stack[stack_index * driver_cell_count ..][0..driver_cell_count];
+                for (outputs) |*output| output.* = 0;
+                switch (spreadsheet.tables[sum_column.table_index][sum_column.column_index]) {
+                    .dimension_string => {},
+                    .vectors => |vectors| {
+                        const row_count = @divExact(vectors.len, driver_cell_count);
+                        for (0..driver_cell_count) |cell_index| {
+                            const vector = vectors[cell_index * row_count ..][0..row_count];
+                            for (vector) |float| outputs[cell_index] += float;
+                        }
+                    },
+                }
+                stack_index += 1;
             },
         }
     }
