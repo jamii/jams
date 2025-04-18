@@ -10,6 +10,7 @@ const DriverIndex = @import("./spreadsheet.zig").DriverIndex;
 const CellIndex = @import("./spreadsheet.zig").CellIndex;
 const DriverFormula = @import("./spreadsheet.zig").DriverFormula;
 const CellIndexFormula = @import("./spreadsheet.zig").CellIndexFormula;
+const eval_filters = @import("./spreadsheet.zig").eval_filters;
 
 pub const FlatIndex = u32;
 
@@ -123,7 +124,7 @@ fn eval_driver(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
     formula: DriverFormula,
-    this_cell_index: CellIndex,
+    cell_index: CellIndex,
 ) f64 {
     const stack = &scratchpad.driver_stack;
     assert(stack.items.len == 0);
@@ -134,8 +135,8 @@ fn eval_driver(
                 stack.appendAssumeCapacity(constant);
             },
             .cell => |cell| {
-                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, this_cell_index)) |cell_index| {
-                    stack.appendAssumeCapacity(scratchpad.cells[to_flat_index(driver_cell_count, cell.driver_index, cell_index)]);
+                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |expr_cell_index| {
+                    stack.appendAssumeCapacity(scratchpad.cells[to_flat_index(driver_cell_count, cell.driver_index, expr_cell_index)]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
                     stack.appendAssumeCapacity(0);
@@ -147,12 +148,16 @@ fn eval_driver(
                 stack.appendAssumeCapacity(value0 + value1);
             },
             .sum_column => |sum_column| {
+                const table = &spreadsheet.tables[sum_column.table_index];
+                eval_filters(sum_column.filters, table);
                 var sum: f64 = 0;
-                switch (spreadsheet.tables[sum_column.table_index][sum_column.column_index]) {
+                switch (table.columns[sum_column.column_index]) {
                     .vectors => |vectors| {
-                        const row_count = @divExact(vectors.len, driver_cell_count);
-                        const vector = vectors[this_cell_index * row_count ..][0..row_count];
-                        for (vector) |float| sum += float;
+                        const vector = vectors[cell_index * table.row_count ..][0..table.row_count];
+                        // TODO This would benefit from simd, or at least inlining the isSet math.
+                        for (vector, 0..) |float, row_index| {
+                            if (table.bitset.isSet(row_index)) sum += float;
+                        }
                     },
                     .dimension_string => {},
                 }

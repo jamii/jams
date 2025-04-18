@@ -10,6 +10,7 @@ const DriverIndex = @import("./spreadsheet.zig").DriverIndex;
 const CellIndex = @import("./spreadsheet.zig").CellIndex;
 const DriverFormula = @import("./spreadsheet.zig").DriverFormula;
 const CellIndexFormula = @import("./spreadsheet.zig").CellIndexFormula;
+const eval_filters = @import("./spreadsheet.zig").eval_filters;
 
 pub const Scratchpad = struct {
     cells: []f64,
@@ -140,13 +141,16 @@ fn eval_driver(
             .sum_column => |sum_column| {
                 const outputs = stack[stack_index * driver_cell_count ..][0..driver_cell_count];
                 for (outputs) |*output| output.* = 0;
-                switch (spreadsheet.tables[sum_column.table_index][sum_column.column_index]) {
+                const table = &spreadsheet.tables[sum_column.table_index];
+                eval_filters(sum_column.filters, table);
+                switch (table.columns[sum_column.column_index]) {
                     .dimension_string => {},
                     .vectors => |vectors| {
-                        const row_count = @divExact(vectors.len, driver_cell_count);
                         for (0..driver_cell_count) |cell_index| {
-                            const vector = vectors[cell_index * row_count ..][0..row_count];
-                            for (vector) |float| outputs[cell_index] += float;
+                            const vector = vectors[cell_index * table.row_count ..][0..table.row_count];
+                            for (vector, 0..) |float, row_index| {
+                                if (table.bitset.isSet(row_index)) outputs[cell_index] += float;
+                            }
                         }
                     },
                 }

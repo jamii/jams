@@ -12,22 +12,46 @@ pub const Spreadsheet = struct {
     // Assume that every driver has the same number of cells.
     driver_cell_count: u32,
     driver_formulas: []const DriverFormula,
-    tables: []const Table,
-    // TODO Add source data.
+    tables: []Table,
 
     pub fn deinit(spreadsheet: Spreadsheet) void {
         for (spreadsheet.driver_formulas) |driver_formula| {
             for (driver_formula) |expr| {
                 switch (expr) {
-                    .constant, .add, .sum_column => {},
+                    .constant, .add => {},
                     .cell => |cell| {
                         allocator.free(cell.cell_index_formula);
+                    },
+                    .sum_column => |sum_column| {
+                        for (sum_column.filters) |filter| {
+                            switch (filter) {
+                                .less_than => |less_than| allocator.free(less_than.string),
+                            }
+                        }
+                        allocator.free(sum_column.filters);
                     },
                 }
             }
             allocator.free(driver_formula);
         }
         allocator.free(spreadsheet.driver_formulas);
+
+        for (spreadsheet.tables) |*table| {
+            table.bitset.deinit();
+            for (table.columns) |column| {
+                switch (column) {
+                    .dimension_string => |strings| {
+                        for (strings) |string| allocator.free(string);
+                        allocator.free(strings);
+                    },
+                    .vectors => |vectors| {
+                        allocator.free(vectors);
+                    },
+                }
+            }
+            allocator.free(table.columns);
+        }
+        allocator.free(spreadsheet.tables);
     }
 };
 
@@ -48,6 +72,7 @@ pub const DriverFormulaExpr = union(enum) {
     sum_column: struct {
         table_index: TableIndex,
         column_index: ColumnIndex,
+        filters: []const Filter,
     },
 
     pub fn format(self: DriverFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -78,7 +103,11 @@ pub const CellIndexFormulaExpr = union(enum) {
     }
 };
 
-pub const Table = []Column;
+pub const Table = struct {
+    row_count: usize,
+    bitset: DynamicBitSet,
+    columns: []Column,
+};
 
 pub const Column = union(enum) {
     // A string dimension.
@@ -88,6 +117,37 @@ pub const Column = union(enum) {
     // Stored sorted by cell, then row.
     vectors: []const f64,
 };
+
+pub const Filter = union(enum) {
+    less_than: struct {
+        column_index: ColumnIndex,
+        string: []const u8,
+    },
+};
+
+pub fn eval_filters(
+    filters: []const Filter,
+    table: *Table,
+) void {
+    table.bitset.unmanaged.setAll();
+    for (filters) |filter| {
+        switch (filter) {
+            .less_than => |less_than| {
+                switch (table.columns[less_than.column_index]) {
+                    .dimension_string => |strings| {
+                        for (strings, 0..) |string, row_index| {
+                            // TODO This might benefit from inlining the unset math.
+                            if (std.mem.order(u8, string, less_than.string) != .lt) table.bitset.unset(row_index);
+                        }
+                    },
+                    .vectors => {
+                        // Just return true.
+                    },
+                }
+            },
+        }
+    }
+}
 
 const Order = enum {
     linear,
@@ -107,8 +167,8 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
     for (tables) |*table| {
         const column_count = 1 + random.uintLessThan(usize, 9);
         const row_count = random.uintLessThan(usize, 100);
-        table.* = allocator.alloc(Column, column_count) catch oom();
-        for (table.*) |*column| {
+        const columns = allocator.alloc(Column, column_count) catch oom();
+        for (columns) |*column| {
             switch (random.enumValue(std.meta.Tag(Column))) {
                 .dimension_string => {
                     const strings = allocator.alloc([]const u8, row_count) catch oom();
@@ -126,6 +186,11 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
                 },
             }
         }
+        table.* = .{
+            .row_count = row_count,
+            .bitset = DynamicBitSet.initFull(allocator, row_count) catch oom(),
+            .columns = columns,
+        };
     }
 
     const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
@@ -201,11 +266,25 @@ fn generate_driver_formula(
         },
         .sum_column => {
             const table_index = random.uintLessThan(TableIndex, @intCast(tables.len));
+            const column_count = tables[table_index].columns.len;
             // Rather than be careful about picking a vectors column, we'll just say that sum over a dimensions column returns zero.
-            const column_index = random.uintLessThan(ColumnIndex, @intCast(tables[table_index].len));
+            const column_index = random.uintLessThan(ColumnIndex, @intCast(column_count));
+            const filters = allocator.alloc(Filter, random.uintLessThan(usize, 3)) catch oom();
+            for (filters) |*filter| {
+                const bytes = allocator.alloc(u8, random.uintLessThan(usize, 64)) catch oom();
+                random.bytes(bytes);
+                filter.* = .{
+                    .less_than = .{
+                        // Rather than be careful about picking a dimension_string column, we'll just say that filters over other columns always return true.
+                        .column_index = random.uintLessThan(ColumnIndex, @intCast(column_count)),
+                        .string = bytes,
+                    },
+                };
+            }
             output.append(.{ .sum_column = .{
                 .table_index = table_index,
                 .column_index = column_index,
+                .filters = filters,
             } }) catch oom();
         },
     }
