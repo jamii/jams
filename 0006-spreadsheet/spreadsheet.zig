@@ -40,9 +40,9 @@ pub const Spreadsheet = struct {
             table.bitset.deinit();
             for (table.columns) |column| {
                 switch (column) {
-                    .dimension_string => |strings| {
-                        for (strings) |string| allocator.free(string);
-                        allocator.free(strings);
+                    .dimension_string => |dim| {
+                        allocator.free(dim.starts);
+                        allocator.free(dim.bytes);
                     },
                     .vectors => |vectors| {
                         allocator.free(vectors);
@@ -82,6 +82,13 @@ pub const DriverFormulaExpr = union(enum) {
             .constant => |constant| try writer.print("{}", .{constant}),
             .cell => |cell| try writer.print("driver{}{any}", .{ cell.driver_index, cell.cell_index_formula }),
             .add => try writer.print("+", .{}),
+            .sum_column => |sum_column| {
+                try writer.print("table{}", .{sum_column.table_index});
+                for (sum_column.filters) |filter| {
+                    try writer.print(".filter({})", .{filter});
+                }
+                try writer.print(".sum(column{})", .{sum_column.column_index});
+            },
         }
     }
 };
@@ -112,7 +119,11 @@ pub const Table = struct {
 pub const Column = union(enum) {
     // A string dimension.
     // Stored sorted by row.
-    dimension_string: []const []const u8,
+    dimension_string: struct {
+        // The value for row i is stored at bytes[starts[i]..starts[i+1]]
+        bytes: []const u8,
+        starts: []const u32,
+    },
     // A timeseries value.
     // Stored sorted by cell, then row.
     vectors: []const f64,
@@ -123,6 +134,14 @@ pub const Filter = union(enum) {
         column_index: ColumnIndex,
         string: []const u8,
     },
+
+    pub fn format(self: Filter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .less_than => |less_than| try writer.print("column{} < \"{}\"", .{ less_than.column_index, std.zig.fmtEscapes(less_than.string) }),
+        }
+    }
 };
 
 pub fn eval_filters(
@@ -134,10 +153,10 @@ pub fn eval_filters(
         switch (filter) {
             .less_than => |less_than| {
                 switch (table.columns[less_than.column_index]) {
-                    .dimension_string => |strings| {
-                        for (strings, 0..) |string, row_index| {
+                    .dimension_string => |dim| {
+                        for (dim.starts[0 .. dim.starts.len - 1], dim.starts[1..], 0..) |lo, hi, row_index| {
                             // TODO This might benefit from inlining the unset math.
-                            if (std.mem.order(u8, string, less_than.string) != .lt) table.bitset.unset(row_index);
+                            if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt) table.bitset.unset(row_index);
                         }
                     },
                     .vectors => {
@@ -171,13 +190,18 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
         for (columns) |*column| {
             switch (random.enumValue(std.meta.Tag(Column))) {
                 .dimension_string => {
-                    const strings = allocator.alloc([]const u8, row_count) catch oom();
-                    for (strings) |*string| {
-                        const bytes = allocator.alloc(u8, random.uintLessThan(usize, 64)) catch oom();
-                        random.bytes(bytes);
-                        string.* = bytes;
+                    const starts = allocator.alloc(u32, row_count + 1) catch oom();
+                    var byte_count: u32 = 0;
+                    for (starts) |*start| {
+                        start.* = byte_count;
+                        byte_count += random.uintLessThan(u32, 64);
                     }
-                    column.* = .{ .dimension_string = strings };
+                    const bytes = allocator.alloc(u8, byte_count) catch oom();
+                    random.bytes(bytes);
+                    column.* = .{ .dimension_string = .{
+                        .starts = starts,
+                        .bytes = bytes,
+                    } };
                 },
                 .vectors => {
                     const floats = allocator.alloc(f64, row_count * driver_cell_count) catch oom();
@@ -329,6 +353,11 @@ pub fn main() void {
 
             const spreadsheet = generate_spreadsheet(random, order, recursion, 1_000_000);
             defer spreadsheet.deinit();
+
+            std.debug.print("driver{} = {any}\n", .{
+                spreadsheet.driver_formulas.len - 1,
+                spreadsheet.driver_formulas[spreadsheet.driver_formulas.len - 1],
+            });
 
             const test_engines = switch (recursion) {
                 .non_recursive => engines,
