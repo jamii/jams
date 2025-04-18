@@ -75,10 +75,10 @@ pub const DriverFormulaExpr = union(enum) {
         filters: []const Filter,
     },
 
-    pub fn format(self: DriverFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(expr: DriverFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        switch (self) {
+        switch (expr) {
             .constant => |constant| try writer.print("{}", .{constant}),
             .cell => |cell| try writer.print("driver{}{any}", .{ cell.driver_index, cell.cell_index_formula }),
             .add => try writer.print("+", .{}),
@@ -99,10 +99,10 @@ pub const CellIndexFormulaExpr = union(enum) {
     constant: i32,
     add, // Pop two results off stack.
 
-    pub fn format(self: CellIndexFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(expr: CellIndexFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        switch (self) {
+        switch (expr) {
             .this => try writer.print("this", .{}),
             .constant => |constant| try writer.print("{}", .{constant}),
             .add => try writer.print("+", .{}),
@@ -134,10 +134,10 @@ pub const Filter = union(enum) {
         string: []const u8,
     },
 
-    pub fn format(self: Filter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(filter: Filter, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
-        switch (self) {
+        switch (filter) {
             .less_than => |less_than| try writer.print("column{} < \"{}\"", .{ less_than.column_index, std.zig.fmtEscapes(less_than.string) }),
         }
     }
