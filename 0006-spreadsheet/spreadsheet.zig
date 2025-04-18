@@ -118,14 +118,13 @@ pub const Table = struct {
 
 pub const Column = union(enum) {
     // A string dimension.
-    // Stored sorted by row.
+    // The value for row r is stored at bytes[starts[r]..starts[r+1]]
     dimension_string: struct {
-        // The value for row i is stored at bytes[starts[i]..starts[i+1]]
         bytes: []const u8,
         starts: []const u32,
     },
     // A timeseries value.
-    // Stored sorted by cell, then row.
+    // The value for row r and cell c is stored at vectors[(row_count * c) + r]
     vectors: []const f64,
 };
 
