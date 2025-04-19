@@ -154,7 +154,6 @@ pub fn eval_filters(
                 switch (table.columns[less_than.column_index]) {
                     .dimension_string => |dim| {
                         for (dim.starts[0 .. dim.starts.len - 1], dim.starts[1..], 0..) |lo, hi, row_index| {
-                            // TODO This might benefit from inlining the unset math.
                             if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt) table.bitset.unset(row_index);
                         }
                     },
