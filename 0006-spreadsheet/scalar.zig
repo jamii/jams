@@ -27,6 +27,7 @@ inline fn from_flat_index(driver_cell_count: u32, flat_index: FlatIndex) struct 
 
 pub const Scratchpad = struct {
     cells: []f64,
+    scheduling: DynamicBitSet,
     scheduled: DynamicBitSet,
     driver_stack: ArrayList(f64),
     cell_index_stack: ArrayList(i32),
@@ -47,6 +48,7 @@ pub const Scratchpad = struct {
         }
         return .{
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
+            .scheduling = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = ArrayList(f64).initCapacity(allocator, driver_stack_size_max) catch oom(),
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, cell_index_stack_size_max) catch oom(),
@@ -55,6 +57,7 @@ pub const Scratchpad = struct {
 
     pub fn deinit(scratchpad: *Scratchpad) void {
         allocator.free(scratchpad.cells);
+        scratchpad.scheduling.deinit();
         scratchpad.scheduled.deinit();
         scratchpad.driver_stack.deinit();
         scratchpad.cell_index_stack.deinit();
@@ -69,6 +72,7 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
     var schedule = ArrayList(FlatIndex).initCapacity(allocator, schedule_len) catch oom();
     defer schedule.deinit();
 
+    scratchpad.scheduling.unmanaged.unsetAll();
     scratchpad.scheduled.unmanaged.unsetAll();
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
@@ -90,19 +94,25 @@ fn visit_cell(
     cell_index: CellIndex,
 ) void {
     const flat_index = to_flat_index(spreadsheet.driver_cell_count, driver_index, cell_index);
+    scratchpad.scheduling.set(flat_index);
     for (spreadsheet.driver_formulas[driver_index]) |expr| {
         switch (expr) {
             .constant, .add, .sum_column => {},
             .cell => |cell| {
                 if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
-                    if (!scratchpad.scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, cell.driver_index, evalled_cell_index)))
+                    const expr_flat_index = to_flat_index(spreadsheet.driver_cell_count, cell.driver_index, evalled_cell_index);
+                    if (!scratchpad.scheduled.isSet(expr_flat_index)) {
+                        if (scratchpad.scheduling.isSet(expr_flat_index))
+                            std.debug.panic("Cycle detected!", .{});
                         visit_cell(spreadsheet, scratchpad, schedule, cell.driver_index, evalled_cell_index);
+                    }
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
                 }
             },
         }
     }
+    scratchpad.scheduling.unset(flat_index);
     scratchpad.scheduled.set(flat_index);
     schedule.appendAssumeCapacity(flat_index);
 }

@@ -27,7 +27,8 @@ inline fn from_flat_index(driver_cell_count: u32, flat_index: FlatIndex) struct 
 
 pub const Scratchpad = struct {
     cells: []f64,
-    evalled: DynamicBitSet,
+    scheduling: DynamicBitSet,
+    scheduled: DynamicBitSet,
     driver_stack: ArrayList(f64),
     cell_index_stack: ArrayList(i32),
 
@@ -47,7 +48,8 @@ pub const Scratchpad = struct {
         }
         return .{
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
-            .evalled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len) catch oom(),
+            .scheduling = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len) catch oom(),
+            .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len) catch oom(),
             .driver_stack = ArrayList(f64).initCapacity(allocator, spreadsheet.driver_formulas.len * driver_stack_size_max) catch oom(),
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, spreadsheet.driver_formulas.len * cell_index_stack_size_max) catch oom(),
         };
@@ -55,7 +57,8 @@ pub const Scratchpad = struct {
 
     pub fn deinit(scratchpad: *Scratchpad) void {
         allocator.free(scratchpad.cells);
-        scratchpad.evalled.deinit();
+        scratchpad.scheduling.deinit();
+        scratchpad.scheduled.deinit();
         scratchpad.driver_stack.deinit();
         scratchpad.cell_index_stack.deinit();
     }
@@ -71,11 +74,12 @@ pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedu
 pub fn eval_spreadsheet(spreadsheet: Spreadsheet, scratchpad: *Scratchpad, schedule: Schedule) void {
     _ = schedule;
 
-    scratchpad.evalled.unmanaged.unsetAll();
+    scratchpad.scheduling.unmanaged.unsetAll();
+    scratchpad.scheduled.unmanaged.unsetAll();
 
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
         for (0..spreadsheet.driver_cell_count) |cell_index| {
-            if (!scratchpad.evalled.isSet(to_flat_index(spreadsheet.driver_cell_count, @intCast(driver_index), @intCast(cell_index))))
+            if (!scratchpad.scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, @intCast(driver_index), @intCast(cell_index))))
                 eval_cell(spreadsheet, scratchpad, @intCast(driver_index), @intCast(cell_index));
         }
     }
@@ -89,6 +93,8 @@ fn eval_cell(
 ) void {
     const stack = &scratchpad.driver_stack;
     const driver_cell_count = spreadsheet.driver_cell_count;
+    const flat_index = to_flat_index(driver_cell_count, driver_index, cell_index);
+    scratchpad.scheduling.set(flat_index);
     for (spreadsheet.driver_formulas[driver_index]) |expr| {
         switch (expr) {
             .constant => |constant| {
@@ -98,8 +104,11 @@ fn eval_cell(
                 const expr_cell_index = eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index);
                 if (expr_cell_index >= 0 and @as(u32, @intCast(expr_cell_index)) < driver_cell_count) {
                     const expr_flat_index = to_flat_index(driver_cell_count, cell.driver_index, @intCast(expr_cell_index));
-                    if (!scratchpad.evalled.isSet(expr_flat_index))
+                    if (!scratchpad.scheduled.isSet(expr_flat_index)) {
+                        if (scratchpad.scheduling.isSet(expr_flat_index))
+                            std.debug.panic("Cycle detected!", .{});
                         eval_cell(spreadsheet, scratchpad, cell.driver_index, @intCast(expr_cell_index));
+                    }
                     stack.appendAssumeCapacity(scratchpad.cells[expr_flat_index]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
@@ -128,8 +137,8 @@ fn eval_cell(
             },
         }
     }
-    const flat_index = to_flat_index(driver_cell_count, driver_index, cell_index);
-    scratchpad.evalled.set(flat_index);
+    scratchpad.scheduling.unset(flat_index);
+    scratchpad.scheduled.set(flat_index);
     scratchpad.cells[flat_index] = stack.pop().?;
 }
 
