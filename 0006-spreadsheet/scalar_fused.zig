@@ -80,12 +80,12 @@ pub fn eval_spreadsheet(spreadsheet: Spreadsheet, scratchpad: *Scratchpad, sched
     for (0..spreadsheet.driver_formulas.len) |driver_index| {
         for (0..spreadsheet.driver_cell_count) |cell_index| {
             if (!scratchpad.scheduled.isSet(to_flat_index(spreadsheet.driver_cell_count, @intCast(driver_index), @intCast(cell_index))))
-                eval_cell(spreadsheet, scratchpad, @intCast(driver_index), @intCast(cell_index));
+                eval_driver(spreadsheet, scratchpad, @intCast(driver_index), @intCast(cell_index));
         }
     }
 }
 
-fn eval_cell(
+fn eval_driver(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
     driver_index: DriverIndex,
@@ -107,7 +107,7 @@ fn eval_cell(
                     if (!scratchpad.scheduled.isSet(expr_flat_index)) {
                         if (scratchpad.scheduling.isSet(expr_flat_index))
                             std.debug.panic("Cycle detected!", .{});
-                        eval_cell(spreadsheet, scratchpad, cell.driver_index, @intCast(expr_cell_index));
+                        eval_driver(spreadsheet, scratchpad, cell.driver_index, @intCast(expr_cell_index));
                     }
                     stack.appendAssumeCapacity(scratchpad.cells[expr_flat_index]);
                 } else {

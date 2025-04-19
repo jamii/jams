@@ -124,8 +124,7 @@ pub fn eval_spreadsheet(
 ) void {
     for (schedule) |flat_index| {
         const driver_index, const cell_index = from_flat_index(spreadsheet.driver_cell_count, flat_index);
-        const formula = spreadsheet.driver_formulas[driver_index];
-        const value = eval_driver(spreadsheet, scratchpad, formula, cell_index);
+        const value = eval_driver(spreadsheet, scratchpad, driver_index, cell_index);
         scratchpad.cells[flat_index] = value;
     }
 }
@@ -133,13 +132,13 @@ pub fn eval_spreadsheet(
 fn eval_driver(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
-    formula: DriverFormula,
+    driver_index: DriverIndex,
     cell_index: CellIndex,
 ) f64 {
     const stack = &scratchpad.driver_stack;
     assert(stack.items.len == 0);
     const driver_cell_count = spreadsheet.driver_cell_count;
-    for (formula) |expr| {
+    for (spreadsheet.driver_formulas[driver_index]) |expr| {
         switch (expr) {
             .constant => |constant| {
                 stack.appendAssumeCapacity(constant);
