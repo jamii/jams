@@ -1,3 +1,6 @@
+//! Like ./scalar.zig, but we evaluate an entire driver at once rather than cell by cell.
+//! This can't handle recursive formulas without substantially complicating the scheduling.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
@@ -12,12 +15,23 @@ const DriverFormula = @import("./spreadsheet.zig").DriverFormula;
 const CellIndexFormula = @import("./spreadsheet.zig").CellIndexFormula;
 const eval_filters = @import("./spreadsheet.zig").eval_filters;
 
+// Temporary storage for evaluating a spreadsheet.
 pub const Scratchpad = struct {
     cells: []f64,
+
+    // A driver index is in `scheduling` when it is in the process of being scheduled, but its dependencies haven't been scheduled yet.
     scheduling: DynamicBitSet,
+
+    // A driver index is in `scheduled` when it has been added to the schedule.
     scheduled: DynamicBitSet,
+
+    // Stack for `DriverFormula`s
     driver_stack: []f64,
+
+    // Stack for `CellIndexFormula`s.
     cell_index_stack: []i32,
+
+    // Bitset used for `eval_filters`.
     row_bitset: DynamicBitSet,
 
     pub fn init(spreadsheet: Spreadsheet) Scratchpad {
@@ -42,6 +56,7 @@ pub const Scratchpad = struct {
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduling = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
+            // Both stacks have to be large enough to evaluate an entire timeseries, rather than just one cell.
             .driver_stack = allocator.alloc(f64, driver_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
             .cell_index_stack = allocator.alloc(i32, cell_index_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
             .row_bitset = DynamicBitSet.initEmpty(allocator, max_row_count) catch oom(),
@@ -60,6 +75,7 @@ pub const Scratchpad = struct {
 
 pub const Schedule = []DriverIndex;
 
+// Figure out what order to evaluate drivers in.
 pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
     const schedule_len = spreadsheet.driver_formulas.len;
 
@@ -102,6 +118,7 @@ fn visit_driver(
     schedule.appendAssumeCapacity(driver_index);
 }
 
+// Evaluate `spreadsheet` in `schedule` order, storing the results in `scratchpad.cells`.
 pub fn eval_spreadsheet(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
@@ -158,6 +175,7 @@ fn eval_driver(
                 const outputs = stack[stack_index * driver_cell_count ..][0..driver_cell_count];
                 for (outputs) |*output| output.* = 0;
                 const table = &spreadsheet.tables[sum_column.table_index];
+                // Currently filters can't refer to `this`, so we only have to evaluate them once per driver.
                 eval_filters(sum_column.filters, table, &scratchpad.row_bitset);
                 switch (table.columns[sum_column.column_index]) {
                     .dimension_string => {},

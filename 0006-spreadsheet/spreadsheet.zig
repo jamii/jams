@@ -5,13 +5,15 @@ const DynamicBitSet = std.DynamicBitSet;
 const allocator = std.heap.c_allocator;
 
 pub fn oom() noreturn {
-    std.debug.panic("OOM", .{});
+    std.debug.panic("Out of memory", .{});
 }
 
 pub const Spreadsheet = struct {
-    // Assume that every driver has the same number of cells.
+    // Each driver has a formula that produces a timeseries with `driver_cell_count` values.
     driver_cell_count: u32,
     driver_formulas: []const DriverFormula,
+
+    // Tables contain data from external systems.
     tables: []Table,
 
     pub fn deinit(spreadsheet: Spreadsheet) void {
@@ -54,24 +56,30 @@ pub const Spreadsheet = struct {
     }
 };
 
+// Use 32 bit indexes everywhere, limiting us to a maximum of 4 billion cells.
 pub const DriverIndex = u32;
 pub const CellIndex = u32;
 pub const TableIndex = u32;
 pub const ColumnIndex = u32;
 
+// Driver formulas are represented as a stack machine to keep all the exprs in contiguous memory.
+// Driver formulas are evaluated at some CellIndex, which can be referred to by using `this` in a CellIndexFormula.
 pub const DriverFormula = []const DriverFormulaExpr;
 pub const DriverFormulaExpr = union(enum) {
     constant: f64,
+    // Read a cell from another driver.
     cell: struct {
         driver_index: DriverIndex,
         cell_index_formula: CellIndexFormula,
     },
-    add, // Pop two results off stack.
-    // TODO Add aggregates over drivers.
+    // Pop two results off stack and add them together.
+    add,
+    // Read a table, filter out some rows, and sum the values at `this` CellIndex.
     sum_column: struct {
         table_index: TableIndex,
         column_index: ColumnIndex,
         filters: []const Filter,
+        // TODO Add a CellIndexFormula rather than always using `this`.
     },
 
     pub fn format(expr: DriverFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -92,11 +100,14 @@ pub const DriverFormulaExpr = union(enum) {
     }
 };
 
+// Cell index formulas are represented as a stack machine to keep all the exprs in contiguous memory.
 pub const CellIndexFormula = []const CellIndexFormulaExpr;
 pub const CellIndexFormulaExpr = union(enum) {
+    // Return the CellIndex at which the current driver formula is being evaluated.
     this,
     constant: i32,
-    add, // Pop two results off stack.
+    // Pop two results off stack and add them together.
+    add,
 
     pub fn format(expr: CellIndexFormulaExpr, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -109,6 +120,7 @@ pub const CellIndexFormulaExpr = union(enum) {
     }
 };
 
+// A table of data from an external system.
 pub const Table = struct {
     row_count: usize,
     columns: []Column,
@@ -127,6 +139,7 @@ pub const Column = union(enum) {
 };
 
 pub const Filter = union(enum) {
+    // Keep only rows whose value at `column_index` is less than `string`.
     less_than: struct {
         column_index: ColumnIndex,
         string: []const u8,
@@ -141,6 +154,8 @@ pub const Filter = union(enum) {
     }
 };
 
+// Evaluate `filters` against the rows in `table`.
+// Sets `row_bitset` to true at each row that satisfies all the filters.
 pub fn eval_filters(
     filters: []const Filter,
     table: *Table,
@@ -154,7 +169,8 @@ pub fn eval_filters(
                 switch (table.columns[less_than.column_index]) {
                     .dimension_string => |dim| {
                         for (dim.starts[0 .. dim.starts.len - 1], dim.starts[1..], 0..) |lo, hi, row_index| {
-                            if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt) row_bitset.unset(row_index);
+                            if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt)
+                                row_bitset.unset(row_index);
                         }
                     },
                     .vectors => {
@@ -166,16 +182,19 @@ pub fn eval_filters(
     }
 }
 
+// Whether to leave generated drivers in dependency order or shuffle them randomly.
 const Order = enum {
     linear,
     shuffled,
 };
 
+// Whether to generate recursive drivers or not.
 const Recursion = enum {
-    non_recursive,
     recursive,
+    non_recursive,
 };
 
+// Generate a random spreadsheet.
 fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, driver_count: u32) Spreadsheet {
     const table_count = 10;
     const driver_cell_count: u32 = 20;
@@ -217,10 +236,10 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
     const schedule = allocator.alloc(DriverIndex, driver_count) catch oom();
     defer allocator.free(schedule);
 
+    // We want to generate an acylic spreadsheet, so generate a random schedule and only allow drivers to refer to other drivers earlier in the schedule.
     for (schedule, 0..) |*p, i| p.* = @intCast(i);
     if (order == .shuffled) {
-        // We want to generate an acylic spreadsheet, but still require non-trivial scheduling.
-        // So generate a random schedule and only allow drivers to refer to other drivers eariler in the schedule.
+        // Shuffle the schedule order so that evaluation isn't trivial.
         random.shuffle(DriverIndex, schedule);
     }
 
@@ -233,6 +252,7 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
 
         const upstream = switch (recursion) {
             .non_recursive => schedule[0..schedule_index],
+            // For recursive spreadsheets, allow drivers to refer to themselves.
             .recursive => schedule[0 .. schedule_index + 1],
         };
         generate_driver_formula(random, upstream, driver_index, tables, &output);
@@ -246,9 +266,11 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
     };
 }
 
+// Generate a random `DriverFormula` into `output`.
+// The result may refer to any drivers in `upstream`.
 fn generate_driver_formula(
     random: std.Random,
-    schedule: []const DriverIndex,
+    upstream: []const DriverIndex,
     driver_index: DriverIndex,
     tables: []const Table,
     output: *ArrayList(DriverFormulaExpr),
@@ -258,16 +280,16 @@ fn generate_driver_formula(
             output.append(.{ .constant = random.float(f64) }) catch oom();
         },
         .cell => {
-            if (schedule.len == 0) {
+            if (upstream.len == 0) {
                 output.append(.{ .constant = random.float(f64) }) catch oom();
             } else {
-                const cell_driver_index = schedule[random.uintLessThan(usize, schedule.len)];
+                const cell_driver_index = upstream[random.uintLessThan(usize, upstream.len)];
 
                 var cell_index_formula = ArrayList(CellIndexFormulaExpr).init(allocator);
                 defer cell_index_formula.deinit();
 
                 if (cell_driver_index == driver_index) {
-                    // Ensure that recursive formula don't form cycles
+                    // To ensure that recursive formula don't generate cycles, only allow them to refer to earlier cells.
                     cell_index_formula.append(.this) catch oom();
                     cell_index_formula.append(.{ .constant = random.intRangeLessThan(i32, -3, 0) }) catch oom();
                     cell_index_formula.append(.add) catch oom();
@@ -281,14 +303,14 @@ fn generate_driver_formula(
             }
         },
         .add => {
-            generate_driver_formula(random, schedule, driver_index, tables, output);
-            generate_driver_formula(random, schedule, driver_index, tables, output);
+            generate_driver_formula(random, upstream, driver_index, tables, output);
+            generate_driver_formula(random, upstream, driver_index, tables, output);
             output.append(.add) catch oom();
         },
         .sum_column => {
             const table_index = random.uintLessThan(TableIndex, @intCast(tables.len));
             const column_count = tables[table_index].columns.len;
-            // Rather than be careful about picking a vectors column, we'll just say that sum over a dimensions column returns zero.
+            // Rather than be careful about picking a vectors column, we'll just say that sums over other columns always returns zero.
             const column_index = random.uintLessThan(ColumnIndex, @intCast(column_count));
             const filters = allocator.alloc(Filter, random.uintLessThan(usize, 3)) catch oom();
             for (filters) |*filter| {
@@ -311,6 +333,7 @@ fn generate_driver_formula(
     }
 }
 
+// Generate a random `CellIndexFormula` into `output`.
 fn generate_cell_index_formula(
     random: std.Random,
     output: *ArrayList(CellIndexFormulaExpr),
@@ -342,6 +365,7 @@ const recursive_engines = .{
     // @import("./vector.zig"), // can't handle recursion without mixed scheduling
 };
 
+// Benchmark evaluation of large random spreadsheets using different engines.
 pub fn main() void {
     for ([2]Order{ .linear, .shuffled }) |order| {
         inline for ([2]Recursion{ .non_recursive, .recursive }) |recursion| {

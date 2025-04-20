@@ -1,3 +1,5 @@
+//! The simplest possible engine.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
@@ -12,12 +14,11 @@ const DriverFormula = @import("./spreadsheet.zig").DriverFormula;
 const CellIndexFormula = @import("./spreadsheet.zig").CellIndexFormula;
 const eval_filters = @import("./spreadsheet.zig").eval_filters;
 
+// We store cells all together in one slice and index them by `FlatIndex`.
 pub const FlatIndex = u32;
-
 inline fn to_flat_index(driver_cell_count: u32, driver_index: DriverIndex, cell_index: CellIndex) FlatIndex {
     return (driver_index * driver_cell_count) + cell_index;
 }
-
 inline fn from_flat_index(driver_cell_count: u32, flat_index: FlatIndex) struct { DriverIndex, CellIndex } {
     return .{
         @divTrunc(flat_index, driver_cell_count),
@@ -25,12 +26,23 @@ inline fn from_flat_index(driver_cell_count: u32, flat_index: FlatIndex) struct 
     };
 }
 
+// Temporary storage for evaluating a spreadsheet.
 pub const Scratchpad = struct {
     cells: []f64,
+
+    // A cell index is in `scheduling` when it is in the process of being scheduled, but its dependencies haven't been scheduled yet.
     scheduling: DynamicBitSet,
+
+    // A cell index is in `scheduled` when it has been added to the schedule.
     scheduled: DynamicBitSet,
+
+    // Stack for `DriverFormula`s
     driver_stack: ArrayList(f64),
+
+    // Stack for `CellIndexFormula`s.
     cell_index_stack: ArrayList(i32),
+
+    // Bitset used for `eval_filters`.
     row_bitset: DynamicBitSet,
 
     pub fn init(spreadsheet: Spreadsheet) Scratchpad {
@@ -73,6 +85,7 @@ pub const Scratchpad = struct {
 
 pub const Schedule = []FlatIndex;
 
+// Figure out what order to evaluate cells in.
 pub fn create_schedule(spreadsheet: Spreadsheet, scratchpad: *Scratchpad) Schedule {
     const schedule_len = spreadsheet.driver_cell_count * spreadsheet.driver_formulas.len;
 
@@ -106,7 +119,7 @@ fn visit_cell(
         switch (expr) {
             .constant, .add, .sum_column => {},
             .cell => |cell| {
-                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
+                if (eval_cell_index(scratchpad, spreadsheet.driver_cell_count, cell.cell_index_formula, cell_index)) |evalled_cell_index| {
                     const expr_flat_index = to_flat_index(spreadsheet.driver_cell_count, cell.driver_index, evalled_cell_index);
                     if (!scratchpad.scheduled.isSet(expr_flat_index)) {
                         if (scratchpad.scheduling.isSet(expr_flat_index))
@@ -124,6 +137,7 @@ fn visit_cell(
     schedule.appendAssumeCapacity(flat_index);
 }
 
+// Evaluate `spreadsheet` in `schedule` order, storing the results in `scratchpad.cells`.
 pub fn eval_spreadsheet(
     spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
@@ -151,7 +165,7 @@ fn eval_driver(
                 stack.appendAssumeCapacity(constant);
             },
             .cell => |cell| {
-                if (eval_cell_index(spreadsheet, scratchpad, cell.cell_index_formula, cell_index)) |expr_cell_index| {
+                if (eval_cell_index(scratchpad, driver_cell_count, cell.cell_index_formula, cell_index)) |expr_cell_index| {
                     stack.appendAssumeCapacity(scratchpad.cells[to_flat_index(driver_cell_count, cell.driver_index, expr_cell_index)]);
                 } else {
                     // TODO How are out-of-bounds cell indexes handled?
@@ -185,8 +199,8 @@ fn eval_driver(
 }
 
 fn eval_cell_index(
-    spreadsheet: Spreadsheet,
     scratchpad: *Scratchpad,
+    driver_cell_count: u32,
     formula: CellIndexFormula,
     this_cell_index: CellIndex,
 ) ?CellIndex {
@@ -208,7 +222,7 @@ fn eval_cell_index(
         }
     }
     const result = stack.pop().?;
-    if (result >= 0 and @as(u32, @intCast(result)) < spreadsheet.driver_cell_count) {
+    if (result >= 0 and @as(u32, @intCast(result)) < driver_cell_count) {
         return @intCast(result);
     } else {
         return null;
