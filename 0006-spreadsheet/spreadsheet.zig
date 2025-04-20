@@ -372,7 +372,7 @@ pub fn main() void {
             var rng = std.Random.DefaultPrng.init(42);
             const random = rng.random();
 
-            const spreadsheet = generate_spreadsheet(random, order, recursion, 1_000_000);
+            const spreadsheet = generate_spreadsheet(random, order, recursion, 100_000);
             defer spreadsheet.deinit();
 
             std.debug.print("driver{} = {any}\n", .{
