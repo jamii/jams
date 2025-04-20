@@ -37,7 +37,6 @@ pub const Spreadsheet = struct {
         allocator.free(spreadsheet.driver_formulas);
 
         for (spreadsheet.tables) |*table| {
-            table.bitset.deinit();
             for (table.columns) |column| {
                 switch (column) {
                     .dimension_string => |dim| {
@@ -112,7 +111,6 @@ pub const CellIndexFormulaExpr = union(enum) {
 
 pub const Table = struct {
     row_count: usize,
-    bitset: DynamicBitSet,
     columns: []Column,
 };
 
@@ -146,15 +144,17 @@ pub const Filter = union(enum) {
 pub fn eval_filters(
     filters: []const Filter,
     table: *Table,
+    row_bitset: *DynamicBitSet,
 ) void {
-    table.bitset.unmanaged.setAll();
+    assert(row_bitset.unmanaged.bit_length >= table.row_count);
+    row_bitset.unmanaged.setAll();
     for (filters) |filter| {
         switch (filter) {
             .less_than => |less_than| {
                 switch (table.columns[less_than.column_index]) {
                     .dimension_string => |dim| {
                         for (dim.starts[0 .. dim.starts.len - 1], dim.starts[1..], 0..) |lo, hi, row_index| {
-                            if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt) table.bitset.unset(row_index);
+                            if (std.mem.order(u8, dim.bytes[lo..hi], less_than.string) != .lt) row_bitset.unset(row_index);
                         }
                     },
                     .vectors => {
@@ -210,7 +210,6 @@ fn generate_spreadsheet(random: std.Random, order: Order, recursion: Recursion, 
         }
         table.* = .{
             .row_count = row_count,
-            .bitset = DynamicBitSet.initFull(allocator, row_count) catch oom(),
             .columns = columns,
         };
     }

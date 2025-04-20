@@ -31,6 +31,7 @@ pub const Scratchpad = struct {
     scheduled: DynamicBitSet,
     driver_stack: ArrayList(f64),
     cell_index_stack: ArrayList(i32),
+    row_bitset: DynamicBitSet,
 
     pub fn init(spreadsheet: Spreadsheet) Scratchpad {
         var driver_stack_size_max: usize = 0;
@@ -46,12 +47,17 @@ pub const Scratchpad = struct {
                 }
             }
         }
+        var max_row_count: usize = 0;
+        for (spreadsheet.tables) |table| {
+            max_row_count = @max(max_row_count, table.row_count);
+        }
         return .{
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduling = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = ArrayList(f64).initCapacity(allocator, driver_stack_size_max) catch oom(),
             .cell_index_stack = ArrayList(i32).initCapacity(allocator, cell_index_stack_size_max) catch oom(),
+            .row_bitset = DynamicBitSet.initEmpty(allocator, max_row_count) catch oom(),
         };
     }
 
@@ -61,6 +67,7 @@ pub const Scratchpad = struct {
         scratchpad.scheduled.deinit();
         scratchpad.driver_stack.deinit();
         scratchpad.cell_index_stack.deinit();
+        scratchpad.row_bitset.deinit();
     }
 };
 
@@ -158,14 +165,14 @@ fn eval_driver(
             },
             .sum_column => |sum_column| {
                 const table = &spreadsheet.tables[sum_column.table_index];
-                eval_filters(sum_column.filters, table);
+                eval_filters(sum_column.filters, table, &scratchpad.row_bitset);
                 var sum: f64 = 0;
                 switch (table.columns[sum_column.column_index]) {
                     .vectors => |vectors| {
                         const vector = vectors[cell_index * table.row_count ..][0..table.row_count];
                         // TODO This would benefit from simd, or at least inlining the isSet math.
                         for (vector, 0..) |float, row_index| {
-                            if (table.bitset.isSet(row_index)) sum += float;
+                            if (scratchpad.row_bitset.isSet(row_index)) sum += float;
                         }
                     },
                     .dimension_string => {},

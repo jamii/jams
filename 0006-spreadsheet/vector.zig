@@ -18,6 +18,7 @@ pub const Scratchpad = struct {
     scheduled: DynamicBitSet,
     driver_stack: []f64,
     cell_index_stack: []i32,
+    row_bitset: DynamicBitSet,
 
     pub fn init(spreadsheet: Spreadsheet) Scratchpad {
         var driver_stack_size_max: usize = 0;
@@ -33,12 +34,17 @@ pub const Scratchpad = struct {
                 }
             }
         }
+        var max_row_count: usize = 0;
+        for (spreadsheet.tables) |table| {
+            max_row_count = @max(max_row_count, table.row_count);
+        }
         return .{
             .cells = allocator.alloc(f64, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduling = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .scheduled = DynamicBitSet.initEmpty(allocator, spreadsheet.driver_formulas.len * spreadsheet.driver_cell_count) catch oom(),
             .driver_stack = allocator.alloc(f64, driver_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
             .cell_index_stack = allocator.alloc(i32, cell_index_stack_size_max * spreadsheet.driver_cell_count) catch oom(),
+            .row_bitset = DynamicBitSet.initEmpty(allocator, max_row_count) catch oom(),
         };
     }
 
@@ -48,6 +54,7 @@ pub const Scratchpad = struct {
         scratchpad.scheduled.deinit();
         allocator.free(scratchpad.driver_stack);
         allocator.free(scratchpad.cell_index_stack);
+        scratchpad.row_bitset.deinit();
     }
 };
 
@@ -151,14 +158,14 @@ fn eval_driver(
                 const outputs = stack[stack_index * driver_cell_count ..][0..driver_cell_count];
                 for (outputs) |*output| output.* = 0;
                 const table = &spreadsheet.tables[sum_column.table_index];
-                eval_filters(sum_column.filters, table);
+                eval_filters(sum_column.filters, table, &scratchpad.row_bitset);
                 switch (table.columns[sum_column.column_index]) {
                     .dimension_string => {},
                     .vectors => |vectors| {
                         for (0..driver_cell_count) |cell_index| {
                             const vector = vectors[cell_index * table.row_count ..][0..table.row_count];
                             for (vector, 0..) |float, row_index| {
-                                if (table.bitset.isSet(row_index)) outputs[cell_index] += float;
+                                if (scratchpad.row_bitset.isSet(row_index)) outputs[cell_index] += float;
                             }
                         }
                     },
