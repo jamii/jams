@@ -22,7 +22,6 @@ const (
 type Value struct {
 	p0    unsafe.Pointer
 	p1    unsafe.Pointer
-	p2    unsafe.Pointer
 	data0 uint64
 	data1 uint64
 	data2 uint8
