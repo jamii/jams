@@ -6,8 +6,8 @@
     src = fetchTarball (
       if (pkgs.system == "x86_64-linux")
       then {
-        url = "https://ziglang.org/builds/zig-linux-x86_64-0.10.0-dev.4060+61aaef0b0.tar.xz";
-        sha256 = "062x1l566zxv6b0d4rq5mayipf737c15drgvk2hkgnggihlrfwjf";
+        url = "https://ziglang.org/download/0.10.1/zig-linux-x86_64-0.10.1.tar.xz";
+        sha256 = "1acanv3avbkq50ybwjhp89znx1crvs2jba73giffwkgyniyk2xiq";
       }
       else throw ("Unknown system " ++ pkgs.system)
     );
