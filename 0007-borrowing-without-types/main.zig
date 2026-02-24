@@ -6,24 +6,162 @@ const assert = std.debug.assert;
 
 const allocator = std.heap.c_allocator;
 
+fn oom() noreturn {
+    std.debug.panic("OOM", .{});
+}
+
 const Compiler = struct {
     source: []const u8,
+
+    tokens: ArrayList(Token),
+    token_to_range: ArrayList([2]usize),
+
+    error_message: ?[]u8,
 
     pub fn init(source: []const u8) Compiler {
         return .{
             .source = source,
+
+            .tokens = .{},
+            .token_to_range = .{},
+
+            .error_message = null,
         };
     }
 
-    pub fn deinit(compiler: *Compiler) void {
-        _ = compiler;
+    pub fn deinit(c: *Compiler) void {
+        if (c.error_message) |err| allocator.free(err);
+
+        c.token_to_range.deinit(allocator);
+        c.tokens.deinit(allocator);
     }
 
-    pub fn run(compiler: *Compiler) []const u8 {
-        _ = compiler;
+    pub fn run(c: *Compiler) ![]const u8 {
+        try tokenize(c);
         return "dummy";
     }
 };
+
+const Token = enum {
+    @"(",
+    @")",
+    @"[",
+    @"]",
+    @"}",
+    @"{",
+    @",",
+    @".",
+    @";",
+    @"=",
+    @"<",
+    @"+",
+
+    name,
+    number,
+    comment,
+    @"if",
+    @"else",
+    @"while",
+    let,
+
+    eof,
+};
+
+pub fn tokenize(c: *Compiler) !void {
+    const source = c.source;
+    var pos: usize = 0;
+    next_token: while (pos < source.len) {
+        const start = pos;
+        const char = source[pos];
+        pos += 1;
+        const token: Token = switch (char) {
+            '(' => .@"(",
+            ')' => .@")",
+            '[' => .@"[",
+            ']' => .@"]",
+            '}' => .@"}",
+            '{' => .@"{",
+            ',' => .@",",
+            '.' => .@".",
+            ';' => .@";",
+            '=' => .@"=",
+            '<' => .@"<",
+            '+' => .@"+",
+            '/' => token: {
+                if (pos < source.len and source[pos] == '/') {
+                    while (pos < source.len and source[pos] != '\n') {
+                        pos += 1;
+                    }
+                    break :token .comment;
+                } else {
+                    return fail_bad_token(c, start);
+                }
+            },
+            'a'...'z' => token: {
+                while (pos < source.len) {
+                    switch (source[pos]) {
+                        'a'...'z' => pos += 1,
+                        else => break,
+                    }
+                }
+                const name = source[start..pos];
+                const keywords = [_]Token{
+                    .@"if",
+                    .@"else",
+                    .@"while",
+                    .let,
+                };
+                inline for (keywords) |keyword| {
+                    if (std.mem.eql(u8, name, @tagName(keyword)))
+                        break :token keyword;
+                }
+                break :token .name;
+            },
+            '0'...'9' => token: {
+                while (pos < source.len) {
+                    switch (source[pos]) {
+                        '0'...'9' => pos += 1,
+                        else => break,
+                    }
+                }
+                break :token .number;
+            },
+            ' ' => {
+                while (pos < source.len and source[pos] == ' ') {
+                    pos += 1;
+                }
+                continue :next_token;
+            },
+            '\n' => {
+                continue :next_token;
+            },
+            else => return fail_bad_token(c, start),
+        };
+        _ = c.tokens.append(allocator, token) catch oom();
+        _ = c.token_to_range.append(allocator, .{ start, pos }) catch oom();
+    }
+
+    _ = c.tokens.append(allocator, .eof) catch oom();
+    _ = c.token_to_range.append(allocator, .{ pos, pos }) catch oom();
+}
+
+fn line_col_from_pos(c: *Compiler, pos: usize) [2]usize {
+    var line: usize = 0;
+    var col = pos;
+    for (c.source[0..pos], 0..) |char, char_pos| {
+        if (char == '\n') {
+            line += 1;
+            col = pos - char_pos - 1;
+        }
+    }
+    return .{ line, col };
+}
+
+fn fail_bad_token(c: *Compiler, pos: usize) error{Error} {
+    const line_col = line_col_from_pos(c, pos);
+    c.error_message = std.fmt.allocPrint(allocator, "Bad token at {}:{}", .{ line_col[0], line_col[1] }) catch oom();
+    return error.Error;
+}
 
 pub fn main() !void {
     const cwd = std.fs.cwd();
@@ -65,7 +203,9 @@ pub fn main() !void {
             assert(parts.next() == null);
 
             var compiler = Compiler.init(source);
-            const actual = compiler.run();
+            defer compiler.deinit();
+
+            const actual = compiler.run() catch compiler.error_message.?;
 
             if (!std.mem.eql(u8, expected, actual)) {
                 std.debug.print(
