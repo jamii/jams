@@ -1,5 +1,5 @@
 ```test
-42
+1 + 2 < 3
 
-dummy
+Ambigous precedence: + vs < at 1:7
 ```
