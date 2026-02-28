@@ -103,7 +103,6 @@ const Token = enum {
     @"}",
     @"{",
     @",",
-    @".",
     @";",
     @"=",
     @"<",
@@ -111,6 +110,8 @@ const Token = enum {
     @"!",
 
     let,
+    get,
+    set,
     @"if",
     @"else",
     @"while",
@@ -138,7 +139,6 @@ pub fn tokenize(c: *Compiler) !void {
             '}' => .@"}",
             '{' => .@"{",
             ',' => .@",",
-            '.' => .@".",
             ';' => .@";",
             '=' => .@"=",
             '<' => .@"<",
@@ -164,6 +164,8 @@ pub fn tokenize(c: *Compiler) !void {
                 const name = source[start..pos];
                 const keywords = [_]Token{
                     .let,
+                    .get,
+                    .set,
                     .@"if",
                     .@"else",
                     .@"while",
@@ -225,23 +227,15 @@ const Expr = union(enum) {
     null,
     number: i64,
     list: []ExprId,
-    list_get: struct {
-        list: ExprId,
-        index: ExprId,
-    },
-    get: struct {
-        name: []const u8,
-        is_unique: bool,
-    },
+    name: []const u8,
     let: struct {
         name: []const u8,
         value: ExprId,
     },
-    set: struct {
-        ref: ExprId,
-        value: ExprId,
+    block: struct {
+        items: []ExprId,
+        return_null: bool,
     },
-    block: []ExprId,
     @"if": struct {
         cond: ExprId,
         then: ExprId,
@@ -263,15 +257,18 @@ const Expr = union(enum) {
 
     fn deinit(expr: Expr) void {
         switch (expr) {
-            .list, .block => |exprs| allocator.free(exprs),
+            .list => |exprs| allocator.free(exprs),
+            .block => |block| allocator.free(block.items),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             .call => |call| allocator.free(call.args),
-            .null, .number, .list_get, .get, .let, .set, .@"if", .@"while", .builtin => {},
+            .null, .number, .name, .let, .@"if", .@"while", .builtin => {},
         }
     }
 };
 
 const Builtin = enum {
+    get,
+    set,
     @"+",
     @"<",
 };
@@ -325,20 +322,11 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     var expr = try parseExprBase(c);
     while (true) {
         switch (peek(c)) {
-            .@"[" => expr = try parseListGet(c, expr),
             .@"(" => expr = try parseCall(c, expr),
             else => break,
         }
     }
     return expr;
-}
-
-fn parseListGet(c: *Compiler, list: ExprId) error{Error}!ExprId {
-    const start = c.expr_to_tokens.items[list.id][0];
-    try expect(c, .@"[");
-    const index = try parseExprLoose(c);
-    try expect(c, .@"]");
-    return pushExpr(c, start, .{ .list_get = .{ .list = list, .index = index } });
 }
 
 fn parseCall(c: *Compiler, @"fn": ExprId) error{Error}!ExprId {
@@ -364,7 +352,7 @@ fn parseExprBase(c: *Compiler) error{Error}!ExprId {
         .null => parseNull(c),
         .number => parseNumber(c),
         .@"[" => parseList(c),
-        .name => parseGet(c),
+        .name => parseName(c),
         .@"{" => parseBlock(c),
         .@"if" => parseIf(c),
         .@"while" => parseWhile(c),
@@ -418,11 +406,15 @@ fn parseList(c: *Compiler) error{Error}!ExprId {
     return pushExpr(c, start, .{ .list = elems.toOwnedSlice(allocator) catch oom() });
 }
 
-fn parseGet(c: *Compiler) error{Error}!ExprId {
+fn parseName(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName(c);
-    const is_unique = takeIf(c, .@"!");
-    return pushExpr(c, start, .{ .get = .{ .name = name, .is_unique = is_unique } });
+    for ([_]Builtin{ .get, .set }) |builtin| {
+        if (std.mem.eql(u8, name, @tagName(builtin))) {
+            return pushExpr(c, start, .{ .builtin = builtin });
+        }
+    }
+    return pushExpr(c, start, .{ .name = name });
 }
 
 fn parseBlock(c: *Compiler) error{Error}!ExprId {
@@ -433,26 +425,21 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
     var items: ArrayList(ExprId) = .{};
     defer items.deinit(allocator);
 
-    while (true) {
-        var item: ?ExprId = null;
-        switch (peek(c)) {
-            .@"}" => break,
-            .let => {
-                item = try parseLet(c);
-            },
-            else => {
-                item = try parseExprLoose(c);
-                if (peek(c) == .@"=")
-                    item = try parseSet(c, item.?);
-            },
-        }
-        items.append(allocator, item.?) catch oom();
-        if (!takeIf(c, .@";")) break;
-    }
+    const return_null = while (true) {
+        if (peek(c) == .@"}") break true;
+        const item = if (peek(c) == .let) try parseLet(c) else try parseExprLoose(c);
+        items.append(allocator, item) catch oom();
+        if (!takeIf(c, .@";")) break false;
+    };
 
     try expect(c, .@"}");
 
-    return pushExpr(c, start, .{ .block = items.toOwnedSlice(allocator) catch oom() });
+    return pushExpr(c, start, .{
+        .block = .{
+            .items = items.toOwnedSlice(allocator) catch oom(),
+            .return_null = return_null,
+        },
+    });
 }
 
 fn parseLet(c: *Compiler) error{Error}!ExprId {
@@ -462,13 +449,6 @@ fn parseLet(c: *Compiler) error{Error}!ExprId {
     try expect(c, .@"=");
     const value = try parseExprLoose(c);
     return pushExpr(c, start, .{ .let = .{ .name = name, .value = value } });
-}
-
-fn parseSet(c: *Compiler, ref: ExprId) error{Error}!ExprId {
-    const start = c.expr_to_tokens.items[ref.id][0];
-    try expect(c, .@"=");
-    const value = try parseExprLoose(c);
-    return pushExpr(c, start, .{ .set = .{ .ref = ref, .value = value } });
 }
 
 fn parseIf(c: *Compiler) error{Error}!ExprId {
@@ -606,25 +586,21 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
                 try analyze(c, item);
             }
         },
-        .list_get => |list_get| {
-            try analyze(c, list_get.list);
-            try analyze(c, list_get.index);
-        },
-        .get => |get| {
-            if (resolve(c, get.name)) |scope_index| {
+        .name => |name| {
+            if (resolve(c, name)) |scope_index| {
                 var fn_id_next = c.fn_id_current;
                 while (fn_id_next) |fn_id| {
                     const @"fn" = &c.fns.items[fn_id.id];
                     if (@"fn".scope_start <= scope_index and
-                        !@"fn".closure_index.contains(get.name))
+                        !@"fn".closure_index.contains(name))
                     {
-                        @"fn".closure_index.put(get.name, @"fn".closure.items.len) catch oom();
-                        @"fn".closure.append(allocator, get.name) catch oom();
+                        @"fn".closure_index.put(name, @"fn".closure.items.len) catch oom();
+                        @"fn".closure.append(allocator, name) catch oom();
                     }
                     fn_id_next = @"fn".parent;
                 }
             } else {
-                return failNotDefined(c, expr_id, get.name);
+                return failNotDefined(c, expr_id, name);
             }
         },
         .let => |let| {
@@ -634,15 +610,11 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
             try analyze(c, let.value);
             c.scope.append(allocator, .{ .name = let.name, .let_id = expr_id }) catch oom();
         },
-        .set => |set| {
-            try analyze(c, set.ref);
-            try analyze(c, set.value);
-        },
         .block => |block| {
             const scope_start = c.scope.items.len;
             defer c.scope.shrinkRetainingCapacity(scope_start);
 
-            for (block) |statement| {
+            for (block.items) |statement| {
                 try analyze(c, statement);
             }
         },
