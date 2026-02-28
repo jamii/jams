@@ -25,6 +25,7 @@ const Compiler = struct {
 
     // analyze
     fns: ArrayList(Fn),
+    expr_to_fn: std.AutoHashMap(ExprId, FnId),
     scope: ArrayList(ScopeItem),
     fn_id_current: ?FnId,
 
@@ -46,6 +47,7 @@ const Compiler = struct {
             .token_next = .{ .id = 0 },
 
             .fns = .{},
+            .expr_to_fn = .init(allocator),
             .scope = .{},
             .fn_id_current = null,
 
@@ -62,6 +64,7 @@ const Compiler = struct {
         c.bindings.deinit(allocator);
 
         c.scope.deinit(allocator);
+        c.expr_to_fn.deinit();
         for (c.fns.items) |*@"fn"| @"fn".deinit();
         c.fns.deinit(allocator);
 
@@ -124,7 +127,7 @@ fn lineColFromSourceLocation(c: *Compiler, source_location_orig: SourceLocation)
 
 // --- TOKENIZE ---
 
-const TokenId = struct { id: usize };
+const TokenId = packed struct { id: usize };
 
 const Token = enum {
     @"(",
@@ -248,7 +251,7 @@ fn failBadToken(c: *Compiler, pos: usize) error{Error} {
 
 // --- PARSE ---
 
-const ExprId = struct { id: usize };
+const ExprId = packed struct { id: usize };
 
 const Expr = union(enum) {
     null,
@@ -277,7 +280,7 @@ const Expr = union(enum) {
         body: ExprId,
     },
     call: struct {
-        @"fn": ExprId,
+        closure: ExprId,
         args: []ExprId,
     },
     call_builtin: struct {
@@ -358,10 +361,10 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     return expr;
 }
 
-fn parseCall(c: *Compiler, @"fn": ExprId) error{Error}!ExprId {
-    const start = c.expr_to_tokens.items[@"fn".id][0];
+fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
+    const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
-    return pushExpr(c, start, .{ .call = .{ .@"fn" = @"fn", .args = args } });
+    return pushExpr(c, start, .{ .call = .{ .closure = closure, .args = args } });
 }
 
 fn parseArgs(c: *Compiler) error{Error}![]ExprId {
@@ -595,17 +598,18 @@ fn failExpected(c: *Compiler, expected: []const u8) error{Error} {
 
 // --- ANALYZE ---
 
-const FnId = struct { id: usize };
+const FnId = packed struct { id: usize };
 
 const Fn = struct {
     parent: ?FnId,
-    closure: ArrayList([]const u8),
-    closure_index: std.hash_map.StringHashMap(usize),
+    body_expr_id: ExprId,
+    capture_names: ArrayList([]const u8),
+    capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
 
     fn deinit(@"fn": *Fn) void {
-        @"fn".closure_index.deinit();
-        @"fn".closure.deinit(allocator);
+        @"fn".capture_name_to_index.deinit();
+        @"fn".capture_names.deinit(allocator);
     }
 };
 
@@ -632,20 +636,20 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
             }
         },
         .name => |name| {
-            if (resolve(c.scope, name)) |scope_index| {
-                var fn_id_next = c.fn_id_current;
-                while (fn_id_next) |fn_id| {
-                    const @"fn" = &c.fns.items[fn_id.id];
-                    if (@"fn".scope_start <= scope_index and
-                        !@"fn".closure_index.contains(name))
-                    {
-                        @"fn".closure_index.put(name, @"fn".closure.items.len) catch oom();
-                        @"fn".closure.append(allocator, name) catch oom();
-                    }
-                    fn_id_next = @"fn".parent;
-                }
-            } else {
+            const scope_index = resolve(c.scope, name) orelse
                 return failNotDefined(c, expr_id, name);
+
+            var fn_id_next = c.fn_id_current;
+            while (fn_id_next) |fn_id| {
+                const @"fn" = &c.fns.items[fn_id.id];
+                if (scope_index <= @"fn".scope_start and
+                    !@"fn".capture_name_to_index.contains(name))
+                {
+                    const capture_index = @"fn".capture_names.items.len;
+                    @"fn".capture_name_to_index.put(name, capture_index) catch oom();
+                    @"fn".capture_names.append(allocator, name) catch oom();
+                }
+                fn_id_next = @"fn".parent;
             }
         },
         .let => |let| {
@@ -679,15 +683,17 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
 
             c.fns.append(allocator, .{
                 .parent = parent,
-                .closure = .{},
-                .closure_index = .init(allocator),
+                .body_expr_id = @"fn".body,
+                .capture_names = .{},
+                .capture_name_to_index = .init(allocator),
                 .scope_start = c.scope.items.len,
             }) catch oom();
+            c.expr_to_fn.put(expr_id, c.fn_id_current.?) catch oom();
 
             try analyze(c, @"fn".body);
         },
         .call => |call| {
-            try analyze(c, call.@"fn");
+            try analyze(c, call.closure);
             for (call.args) |arg| {
                 try analyze(c, arg);
             }
@@ -730,12 +736,12 @@ const Kind = enum(u64) {
     null = 0,
     number = 1,
     tuple = 2,
-    @"fn" = 3,
+    closure = 3,
 };
 
-const ValueFn = struct {
+const Closure = struct {
     fn_id: FnId,
-    closure: []Value,
+    capture_values: []Value,
 };
 
 const Value = packed struct {
@@ -784,12 +790,12 @@ const Value = packed struct {
         return @ptrCast(value.asPtr().?[2..][0..len]);
     }
 
-    fn asFn(value: Value) ?ValueFn {
-        if (value.kind() != .@"fn") return null;
+    fn asClosure(value: Value) ?Closure {
+        if (value.kind() != .closure) return null;
         const fn_id = FnId{ .id = value.asPtr().?[1] };
-        const closure_len = value.asPtr().?[2];
-        const closure: []Value = @ptrCast(value.asPtr().?[3..][0..closure_len]);
-        return .{ .fn_id = fn_id, .closure = closure };
+        const capture_count = value.asPtr().?[2];
+        const capture_values: []Value = @ptrCast(value.asPtr().?[3..][0..capture_count]);
+        return .{ .fn_id = fn_id, .capture_values = capture_values };
     }
 
     fn initNull() Value {
@@ -811,22 +817,27 @@ const Value = packed struct {
         return .initPtr(@ptrCast(ptr));
     }
 
-    fn initFn(@"fn": FnId, closure_len: u64) Value {
+    fn initClosure(fn_id: FnId, closure_len: u64) Value {
         const ptr = allocator.alloc(u64, 3 + closure_len) catch oom();
-        ptr[0] = @intFromEnum(Kind.@"fn");
-        ptr[1] = @bitCast(@"fn");
+        ptr[0] = @intFromEnum(Kind.closure);
+        ptr[1] = @bitCast(fn_id);
         ptr[2] = closure_len;
-        @memset(ptr[3][0..closure_len], @bitCast(Value.initPtr(null)));
+        @memset(ptr[3..][0..closure_len], @bitCast(Value.initPtr(null)));
         return .initPtr(@ptrCast(ptr));
     }
 
     fn deinit(value: *Value) void {
         if (value.ownership == .owned) {
+            switch (value.kind()) {
+                .null, .number => {},
+                .tuple => for (value.asTuple().?) |*elem| elem.deinit(),
+                .closure => for (value.asClosure().?.capture_values) |*capture_value| capture_value.deinit(),
+            }
             const len = switch (value.kind()) {
                 .null => return,
                 .number => 2,
                 .tuple => 2 + value.asTuple().?.len,
-                .@"fn" => 3 + value.asFn().?.closure.len,
+                .closure => 3 + value.asClosure().?.capture_values.len,
             };
             allocator.free(value.asPtr().?[0..len]);
         }
@@ -850,13 +861,13 @@ const Value = packed struct {
                 }
                 try writer.print("]", .{});
             },
-            .@"fn" => {
-                const @"fn" = value.asFn().?;
-                try writer.print("fn<{}>[", .{@"fn".fn_id});
-                for (@"fn".closure, 0..) |item, i| {
+            .closure => {
+                const closure = value.asClosure().?;
+                try writer.print("fn<{}>[", .{closure.fn_id});
+                for (closure.capture_values, 0..) |capture_value, i| {
                     if (i != 0)
                         try writer.print(", ", .{});
-                    try writer.print("{f}", .{item});
+                    try writer.print("{f}", .{capture_value});
                 }
                 try writer.print("]", .{});
             },
@@ -947,6 +958,52 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 
             return value.take();
         },
+        .@"fn" => {
+            const fn_id = c.expr_to_fn.get(expr_id).?;
+            const @"fn" = &c.fns.items[fn_id.id];
+
+            var value = Value.initClosure(fn_id, @"fn".capture_names.items.len);
+            defer value.deinit();
+
+            for (@"fn".capture_names.items, value.asClosure().?.capture_values) |capture_name, *capture_value| {
+                const binding_index = resolve(c.bindings, capture_name).?;
+                capture_value.* = c.bindings.items[binding_index].value.borrow();
+            }
+
+            return value.take();
+        },
+        .call => |call| {
+            var closure_value = try eval(c, call.closure);
+            defer closure_value.deinit();
+
+            try checkKind(c, .{ .expr_id = call.closure }, .{ .expected = .closure, .actual = closure_value.kind() });
+            const closure = closure_value.asClosure().?;
+            const @"fn" = &c.fns.items[closure.fn_id.id];
+
+            const args = allocator.alloc(Value, call.args.len) catch oom();
+            for (args) |*arg| arg.* = Value.initNull();
+            defer {
+                for (args) |*arg| arg.deinit();
+                allocator.free(args);
+            }
+
+            for (args, call.args) |*arg_value, arg_expr|
+                arg_value.* = try eval(c, arg_expr);
+
+            const bindings_start = c.bindings.items.len;
+            defer {
+                while (c.bindings.items.len > bindings_start) {
+                    var binding = c.bindings.pop().?;
+                    binding.value.deinit();
+                }
+            }
+
+            for (@"fn".capture_names.items, closure.capture_values) |capture_name, capture_value| {
+                c.bindings.append(allocator, .{ .name = capture_name, .value = capture_value }) catch oom();
+            }
+
+            return eval(c, @"fn".body_expr_id);
+        },
         .call_builtin => |call_builtin| {
             const args = allocator.alloc(Value, call_builtin.args.len) catch oom();
             for (args) |*arg| arg.* = Value.initNull();
@@ -969,7 +1026,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                 .@"<", .get, .set => |builtin| return fail(c, .{ .expr_id = expr_id }, "TODO .{}", .{builtin}),
             }
         },
-        inline .@"fn", .call => |_, tag| return fail(c, .{ .expr_id = expr_id }, "TODO .{}", .{tag}),
     }
 }
 
