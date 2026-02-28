@@ -28,6 +28,9 @@ const Compiler = struct {
     scope: ArrayList(ScopeItem),
     fn_id_current: ?FnId,
 
+    // eval
+    bindings: ArrayList(Binding),
+
     error_message: ?[]u8,
 
     pub fn init(source: []const u8) Compiler {
@@ -46,12 +49,17 @@ const Compiler = struct {
             .scope = .{},
             .fn_id_current = null,
 
+            .bindings = .{},
+
             .error_message = null,
         };
     }
 
     pub fn deinit(c: *Compiler) void {
         if (c.error_message) |err| allocator.free(err);
+
+        for (c.bindings.items) |*binding| binding.value.deinit();
+        c.bindings.deinit(allocator);
 
         c.scope.deinit(allocator);
         for (c.fns.items) |*@"fn"| @"fn".deinit();
@@ -69,26 +77,49 @@ const Compiler = struct {
         try tokenize(c);
         c.expr_top = try parse(c);
         try analyze(c, c.expr_top.?);
-        return "dummy";
+        const value = try eval(c, c.expr_top.?);
+        return std.fmt.allocPrint(allocator, "{f}", .{value});
     }
 };
 
-fn fail(c: *Compiler, line_col: [2]usize, comptime fmt: []const u8, args: anytype) error{Error} {
+const SourceLocation = union(enum) {
+    pos: usize,
+    token_id: TokenId,
+    expr_id: ExprId,
+};
+
+fn fail(c: *Compiler, source_location: SourceLocation, comptime fmt: []const u8, args: anytype) error{Error} {
     assert(c.error_message == null);
+    const line_col = lineColFromSourceLocation(c, source_location);
     c.error_message = std.fmt.allocPrint(allocator, "Error at {}:{}\n" ++ fmt, .{ line_col[0], line_col[1] } ++ args) catch oom();
     return error.Error;
 }
 
-fn lineColFromPos(c: *Compiler, pos: usize) [2]usize {
-    var line: usize = 1;
-    var col = pos + 1;
-    for (c.source[0..pos], 0..) |char, char_pos| {
-        if (char == '\n') {
-            line += 1;
-            col = pos - char_pos;
+fn lineColFromSourceLocation(c: *Compiler, source_location_orig: SourceLocation) [2]usize {
+    var source_location = source_location_orig;
+    while (true) {
+        switch (source_location) {
+            .expr_id => |expr_id| {
+                const token_id = c.expr_to_tokens.items[expr_id.id][0];
+                source_location = .{ .token_id = token_id };
+            },
+            .token_id => |token_id| {
+                const pos = c.token_to_range.items[token_id.id][0];
+                source_location = .{ .pos = pos };
+            },
+            .pos => |pos| {
+                var line: usize = 1;
+                var col = pos + 1;
+                for (c.source[0..pos], 0..) |char, char_pos| {
+                    if (char == '\n') {
+                        line += 1;
+                        col = pos - char_pos;
+                    }
+                }
+                return .{ line, col };
+            },
         }
     }
-    return .{ line, col };
 }
 
 // --- TOKENIZE ---
@@ -172,7 +203,7 @@ pub fn tokenize(c: *Compiler) !void {
                     .@"fn",
                     .null,
                 };
-                inline for (keywords) |keyword| {
+                for (keywords) |keyword| {
                     if (std.mem.eql(u8, name, @tagName(keyword)))
                         break :token keyword;
                 }
@@ -209,14 +240,10 @@ pub fn tokenize(c: *Compiler) !void {
 fn failBadToken(c: *Compiler, pos: usize) error{Error} {
     return fail(
         c,
-        lineColFromPos(c, pos),
+        .{ .pos = pos },
         "Bad token",
         .{},
     );
-}
-
-fn lineColFromTokenId(c: *Compiler, token_id: TokenId) [2]usize {
-    return lineColFromPos(c, c.token_to_range.items[token_id.id][0]);
 }
 
 // --- PARSE ---
@@ -226,14 +253,14 @@ const ExprId = struct { id: usize };
 const Expr = union(enum) {
     null,
     number: i64,
-    list: []ExprId,
+    tuple: []ExprId,
     name: []const u8,
     let: struct {
         name: []const u8,
         value: ExprId,
     },
     block: struct {
-        items: []ExprId,
+        statements: []ExprId,
         return_null: bool,
     },
     @"if": struct {
@@ -253,15 +280,18 @@ const Expr = union(enum) {
         @"fn": ExprId,
         args: []ExprId,
     },
-    builtin: Builtin,
+    call_builtin: struct {
+        builtin: Builtin,
+        args: []ExprId,
+    },
 
     fn deinit(expr: Expr) void {
         switch (expr) {
-            .list => |exprs| allocator.free(exprs),
-            .block => |block| allocator.free(block.items),
+            .tuple => |exprs| allocator.free(exprs),
+            .block => |block| allocator.free(block.statements),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
-            .call => |call| allocator.free(call.args),
-            .null, .number, .name, .let, .@"if", .@"while", .builtin => {},
+            inline .call, .call_builtin => |call| allocator.free(call.args),
+            .null, .number, .name, .let, .@"if", .@"while" => {},
         }
     }
 };
@@ -286,7 +316,6 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
     while (true) {
         switch (peek(c)) {
             .@"+", .@"<" => {
-                const builtin_start = c.token_next;
                 const builtin: Builtin = switch (peek(c)) {
                     .@"+" => .@"+",
                     .@"<" => .@"<",
@@ -295,7 +324,7 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
                 if (last_builtin != null and last_builtin.? != builtin) {
                     return fail(
                         c,
-                        lineColFromTokenId(c, c.token_next),
+                        .{ .token_id = c.token_next },
                         "Ambigous precedence: `{s}` vs `{s}`",
                         .{
                             @tagName(last_builtin.?),
@@ -307,8 +336,8 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
                 last_builtin = builtin;
 
                 const right = try parseExprTight(c);
-                expr = pushExpr(c, start, .{ .call = .{
-                    .@"fn" = pushExpr(c, builtin_start, .{ .builtin = builtin }),
+                expr = pushExpr(c, start, .{ .call_builtin = .{
+                    .builtin = builtin,
                     .args = allocator.dupe(ExprId, &.{ expr, right }) catch oom(),
                 } });
             },
@@ -331,6 +360,11 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 
 fn parseCall(c: *Compiler, @"fn": ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[@"fn".id][0];
+    const args = try parseArgs(c);
+    return pushExpr(c, start, .{ .call = .{ .@"fn" = @"fn", .args = args } });
+}
+
+fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@"(");
 
     var args: ArrayList(ExprId) = .{};
@@ -344,12 +378,15 @@ fn parseCall(c: *Compiler, @"fn": ExprId) error{Error}!ExprId {
     }
 
     try expect(c, .@")");
-    return pushExpr(c, start, .{ .call = .{ .@"fn" = @"fn", .args = args.toOwnedSlice(allocator) catch oom() } });
+
+    return args.toOwnedSlice(allocator) catch oom();
 }
 
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
     return switch (peek(c)) {
         .null => parseNull(c),
+        .get => parseGet(c),
+        .set => parseSet(c),
         .number => parseNumber(c),
         .@"[" => parseList(c),
         .name => parseName(c),
@@ -367,6 +404,24 @@ fn parseNull(c: *Compiler) error{Error}!ExprId {
     return pushExpr(c, start, .null);
 }
 
+fn parseGet(c: *Compiler) error{Error}!ExprId {
+    const start = c.token_next;
+    try expect(c, .get);
+    const args = try parseArgs(c);
+    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = .get, .args = args } });
+    try checkArgCount(c, .{ .token_id = start }, .{ .expected = 2, .actual = args.len });
+    return expr_id;
+}
+
+fn parseSet(c: *Compiler) error{Error}!ExprId {
+    const start = c.token_next;
+    try expect(c, .set);
+    const args = try parseArgs(c);
+    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = .set, .args = args } });
+    try checkArgCount(c, .{ .token_id = start }, .{ .expected = 3, .actual = args.len });
+    return expr_id;
+}
+
 fn parseNumber(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const source = peekSource(c);
@@ -377,7 +432,7 @@ fn parseNumber(c: *Compiler) error{Error}!ExprId {
         };
         return fail(
             c,
-            lineColFromTokenId(c, c.token_next),
+            .{ .token_id = c.token_next },
             "Failed to parse integer due to {s}",
             .{reason},
         );
@@ -403,17 +458,12 @@ fn parseList(c: *Compiler) error{Error}!ExprId {
 
     try expect(c, .@"]");
 
-    return pushExpr(c, start, .{ .list = elems.toOwnedSlice(allocator) catch oom() });
+    return pushExpr(c, start, .{ .tuple = elems.toOwnedSlice(allocator) catch oom() });
 }
 
 fn parseName(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName(c);
-    for ([_]Builtin{ .get, .set }) |builtin| {
-        if (std.mem.eql(u8, name, @tagName(builtin))) {
-            return pushExpr(c, start, .{ .builtin = builtin });
-        }
-    }
     return pushExpr(c, start, .{ .name = name });
 }
 
@@ -422,13 +472,13 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
 
     try expect(c, .@"{");
 
-    var items: ArrayList(ExprId) = .{};
-    defer items.deinit(allocator);
+    var statements: ArrayList(ExprId) = .{};
+    defer statements.deinit(allocator);
 
     const return_null = while (true) {
         if (peek(c) == .@"}") break true;
-        const item = if (peek(c) == .let) try parseLet(c) else try parseExprLoose(c);
-        items.append(allocator, item) catch oom();
+        const statement = if (peek(c) == .let) try parseLet(c) else try parseExprLoose(c);
+        statements.append(allocator, statement) catch oom();
         if (!takeIf(c, .@";")) break false;
     };
 
@@ -436,7 +486,7 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
 
     return pushExpr(c, start, .{
         .block = .{
-            .items = items.toOwnedSlice(allocator) catch oom(),
+            .statements = statements.toOwnedSlice(allocator) catch oom(),
             .return_null = return_null,
         },
     });
@@ -537,15 +587,10 @@ fn failExpected(c: *Compiler, expected: []const u8) error{Error} {
     const actual = c.tokens.items[c.token_next.id];
     return fail(
         c,
-        lineColFromTokenId(c, c.token_next),
-        "Expected {s} but found {}",
-        .{ expected, actual },
+        .{ .token_id = c.token_next },
+        "Expected {s} but found `{s}`",
+        .{ expected, @tagName(actual) },
     );
-}
-
-fn lineColFromExprId(c: *Compiler, expr_id: ExprId) [2]usize {
-    const token_id = c.expr_to_tokens.items[expr_id.id][0];
-    return lineColFromTokenId(c, token_id);
 }
 
 // --- ANALYZE ---
@@ -569,11 +614,11 @@ const ScopeItem = struct {
     let_id: ExprId,
 };
 
-fn resolve(c: *Compiler, name: []const u8) ?usize {
-    var scope_index = c.scope.items.len;
-    while (scope_index > 0) : (scope_index -= 1) {
-        const scope_item = c.scope.items[scope_index - 1];
-        if (std.mem.eql(u8, scope_item.name, name)) return scope_index - 1;
+fn resolve(list: anytype, name: []const u8) ?usize {
+    var i = list.items.len;
+    while (i > 0) : (i -= 1) {
+        const item = list.items[i - 1];
+        if (std.mem.eql(u8, item.name, name)) return i - 1;
     }
     return null;
 }
@@ -581,13 +626,13 @@ fn resolve(c: *Compiler, name: []const u8) ?usize {
 fn analyze(c: *Compiler, expr_id: ExprId) !void {
     switch (c.exprs.items[expr_id.id]) {
         .null, .number => {},
-        .list => |list| {
-            for (list) |item| {
+        .tuple => |tuple| {
+            for (tuple) |item| {
                 try analyze(c, item);
             }
         },
         .name => |name| {
-            if (resolve(c, name)) |scope_index| {
+            if (resolve(c.scope, name)) |scope_index| {
                 var fn_id_next = c.fn_id_current;
                 while (fn_id_next) |fn_id| {
                     const @"fn" = &c.fns.items[fn_id.id];
@@ -604,7 +649,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
             }
         },
         .let => |let| {
-            if (resolve(c, let.name)) |scope_index| {
+            if (resolve(c.scope, let.name)) |scope_index| {
                 return failAlreadyDefined(c, expr_id, c.scope.items[scope_index].let_id, let.name);
             }
             try analyze(c, let.value);
@@ -614,7 +659,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
             const scope_start = c.scope.items.len;
             defer c.scope.shrinkRetainingCapacity(scope_start);
 
-            for (block.items) |statement| {
+            for (block.statements) |statement| {
                 try analyze(c, statement);
             }
         },
@@ -641,24 +686,34 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
 
             try analyze(c, @"fn".body);
         },
-        else => panic("TODO", .{}),
+        .call => |call| {
+            try analyze(c, call.@"fn");
+            for (call.args) |arg| {
+                try analyze(c, arg);
+            }
+        },
+        .call_builtin => |call_builtin| {
+            for (call_builtin.args) |arg| {
+                try analyze(c, arg);
+            }
+        },
     }
 }
 
 fn failNotDefined(c: *Compiler, expr_id: ExprId, name: []const u8) error{Error} {
     return fail(
         c,
-        lineColFromExprId(c, expr_id),
+        .{ .expr_id = expr_id },
         "Name `{s}` is not defined at this point",
         .{name},
     );
 }
 
 fn failAlreadyDefined(c: *Compiler, expr_id: ExprId, let_id: ExprId, name: []const u8) error{Error} {
-    const line_col = lineColFromExprId(c, let_id);
+    const line_col = lineColFromSourceLocation(c, .{ .expr_id = let_id });
     return fail(
         c,
-        lineColFromExprId(c, expr_id),
+        .{ .expr_id = expr_id },
         "Name `{s}` is already defined at {}:{}",
         .{ name, line_col[0], line_col[1] },
     );
@@ -666,9 +721,14 @@ fn failAlreadyDefined(c: *Compiler, expr_id: ExprId, let_id: ExprId, name: []con
 
 // --- EVAL ---
 
+const Ownership = enum(u1) {
+    owned = 0,
+    borrowed = 1,
+};
+
 const Kind = enum(u64) {
     null = 0,
-    i64 = 1,
+    number = 1,
     tuple = 2,
     @"fn" = 3,
 };
@@ -678,59 +738,260 @@ const ValueFn = struct {
     closure: []Value,
 };
 
-const Value = struct {
-    ptr: ?[*]u64,
+const Value = packed struct {
+    ownership: Ownership,
+    ptr: u63,
+
+    fn asPtr(value: Value) ?[*]u64 {
+        return @ptrFromInt(value.ptr);
+    }
+
+    fn initPtr(ptr: ?[*]u64) Value {
+        return .{
+            .ownership = .owned,
+            .ptr = @intCast(@intFromPtr(ptr)),
+        };
+    }
+
+    fn borrow(value: Value) Value {
+        return .{
+            .ownership = .borrowed,
+            .ptr = value.ptr,
+        };
+    }
+
+    fn take(value: *Value) Value {
+        const taken = value.*;
+        value.* = .initNull();
+        return taken;
+    }
 
     fn kind(value: Value) Kind {
-        return if (value.ptr) |ptr|
+        return if (value.asPtr()) |ptr|
             @enumFromInt(ptr[0])
         else
             .null;
     }
 
-    fn as_i64(value: Value) ?*i64 {
-        if (value.kind() != .i64) return null;
-        return @ptrCast(value.ptr.?[1]);
+    fn asNumber(value: Value) ?i64 {
+        if (value.kind() != .number) return null;
+        return @bitCast(value.asPtr().?[1]);
     }
 
-    fn as_tuple(value: Value) ?[]Value {
+    fn asTuple(value: Value) ?[]Value {
         if (value.kind() != .tuple) return null;
-        const len = value.ptr.?[1].*;
-        return @ptrCast(value.ptr.?[2..][0..len]);
+        const len = value.asPtr().?[1];
+        return @ptrCast(value.asPtr().?[2..][0..len]);
     }
 
-    fn as_fn(value: Value) ?Fn {
+    fn asFn(value: Value) ?ValueFn {
         if (value.kind() != .@"fn") return null;
-        const body = ExprId{ .id = value.ptr.?[1].* };
-        const closure_len = value.ptr.?[2].*;
-        const closure: []Value = @ptrCast(value.ptr.?[3..][0..closure_len]);
-        return .{ .body = body, .closure = closure };
+        const fn_id = FnId{ .id = value.asPtr().?[1] };
+        const closure_len = value.asPtr().?[2];
+        const closure: []Value = @ptrCast(value.asPtr().?[3..][0..closure_len]);
+        return .{ .fn_id = fn_id, .closure = closure };
     }
 
-    fn from_i64(i: i64) Value {
-        const ptr = allocator.alloc(u64, 2);
-        ptr.?[0] = @intFromEnum(Kind.i64);
-        ptr.?[1] = @bitCast(i);
-        return .{ .ptr = ptr };
+    fn initNull() Value {
+        return .initPtr(null);
     }
 
-    fn from_tuple(len: u64) Value {
-        const ptr = allocator.alloc(u64, 2 + len);
-        ptr.?[0] = @intFromEnum(Kind.tuple);
-        ptr.?[1] = len;
-        @memset(ptr.?[2..][0..len], @bitCast(Value{ .ptr = null }));
-        return .{ .ptr = ptr };
+    fn initNumber(i: i64) Value {
+        const ptr = allocator.alloc(u64, 2) catch oom();
+        ptr[0] = @intFromEnum(Kind.number);
+        ptr[1] = @bitCast(i);
+        return .initPtr(@ptrCast(ptr));
     }
 
-    fn from_fn(@"fn": FnId, closure_len: u64) Value {
-        const ptr = allocator.alloc(u64, 3 + closure_len);
-        ptr.?[0] = @intFromEnum(Kind.@"fn");
-        ptr.?[1] = @bitCast(@"fn");
-        ptr.?[2] = closure_len;
-        @memset(ptr.?[3][0..closure_len], @bitCast(Value{ .ptr = null }));
-        return .{ .ptr = ptr };
+    fn initTuple(len: u64) Value {
+        const ptr = allocator.alloc(u64, 2 + len) catch oom();
+        ptr[0] = @intFromEnum(Kind.tuple);
+        ptr[1] = len;
+        @memset(ptr[2..][0..len], @bitCast(Value.initPtr(null)));
+        return .initPtr(@ptrCast(ptr));
+    }
+
+    fn initFn(@"fn": FnId, closure_len: u64) Value {
+        const ptr = allocator.alloc(u64, 3 + closure_len) catch oom();
+        ptr[0] = @intFromEnum(Kind.@"fn");
+        ptr[1] = @bitCast(@"fn");
+        ptr[2] = closure_len;
+        @memset(ptr[3][0..closure_len], @bitCast(Value.initPtr(null)));
+        return .initPtr(@ptrCast(ptr));
+    }
+
+    fn deinit(value: *Value) void {
+        if (value.ownership == .owned) {
+            const len = switch (value.kind()) {
+                .null => return,
+                .number => 2,
+                .tuple => 2 + value.asTuple().?.len,
+                .@"fn" => 3 + value.asFn().?.closure.len,
+            };
+            allocator.free(value.asPtr().?[0..len]);
+        }
+        value.* = .initNull();
+    }
+
+    pub fn format(value: Value, writer: *std.io.Writer) std.io.Writer.Error!void {
+        switch (value.kind()) {
+            .null => {
+                try writer.print("null", .{});
+            },
+            .number => {
+                try writer.print("{}", .{value.asNumber().?});
+            },
+            .tuple => {
+                try writer.print("[", .{});
+                for (value.asTuple().?, 0..) |item, i| {
+                    if (i != 0)
+                        try writer.print(", ", .{});
+                    try writer.print("{f}", .{item});
+                }
+                try writer.print("]", .{});
+            },
+            .@"fn" => {
+                const @"fn" = value.asFn().?;
+                try writer.print("fn<{}>[", .{@"fn".fn_id});
+                for (@"fn".closure, 0..) |item, i| {
+                    if (i != 0)
+                        try writer.print(", ", .{});
+                    try writer.print("{f}", .{item});
+                }
+                try writer.print("]", .{});
+            },
+        }
     }
 };
+
+const Binding = struct {
+    name: []const u8,
+    value: Value,
+};
+
+fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
+    switch (c.exprs.items[expr_id.id]) {
+        .null => {
+            return .initNull();
+        },
+        .number => |number| {
+            return .initNumber(number);
+        },
+        .tuple => |exprs| {
+            var value = Value.initTuple(exprs.len);
+            defer value.deinit();
+
+            const tuple = value.asTuple().?;
+            for (tuple, exprs) |*item, expr| {
+                item.* = try eval(c, expr);
+            }
+
+            return value.take();
+        },
+        .name => |name| {
+            const binding_index = resolve(c.bindings, name).?;
+            const value = c.bindings.items[binding_index].value;
+            return value.borrow();
+        },
+        .let => |let| {
+            var value = try eval(c, let.value);
+            defer value.deinit();
+
+            c.bindings.append(allocator, .{
+                .name = let.name,
+                .value = value.take(),
+            }) catch oom();
+
+            return Value.initNull();
+        },
+        .block => |block| {
+            const bindings_start = c.bindings.items.len;
+
+            var value = Value.initNull();
+            defer value.deinit();
+
+            for (block.statements) |statement| {
+                value.deinit();
+                value = try eval(c, statement);
+            }
+            if (block.return_null) {
+                value.deinit();
+            }
+
+            while (c.bindings.items.len > bindings_start) {
+                var binding = c.bindings.pop().?;
+                binding.value.deinit();
+            }
+
+            return value.take();
+        },
+        .@"if" => |@"if"| {
+            var cond = try eval(c, @"if".cond);
+            defer cond.deinit();
+
+            return eval(c, if (cond.kind() != .null) @"if".then else @"if".@"else");
+        },
+        .@"while" => |@"while"| {
+            var value = Value.initNull();
+            defer value.deinit();
+
+            while (true) {
+                var cond = try eval(c, @"while".cond);
+                defer cond.deinit();
+
+                if (cond.kind() == .null) break;
+
+                value.deinit();
+                value = try eval(c, @"while".body);
+            }
+
+            return value.take();
+        },
+        .call_builtin => |call_builtin| {
+            const args = allocator.alloc(Value, call_builtin.args.len) catch oom();
+            for (args) |*arg| arg.* = Value.initNull();
+            defer {
+                for (args) |*arg| arg.deinit();
+                allocator.free(args);
+            }
+
+            for (args, call_builtin.args) |*value, expr| {
+                value.* = try eval(c, expr);
+            }
+
+            switch (call_builtin.builtin) {
+                .@"+" => {
+                    try checkArgCount(c, .{ .expr_id = expr_id }, .{ .expected = 2, .actual = args.len });
+                    try checkKind(c, .{ .expr_id = call_builtin.args[0] }, .{ .expected = .number, .actual = args[0].kind() });
+                    try checkKind(c, .{ .expr_id = call_builtin.args[1] }, .{ .expected = .number, .actual = args[1].kind() });
+                    return Value.initNumber(args[0].asNumber().? +% args[1].asNumber().?);
+                },
+                .@"<", .get, .set => |builtin| return fail(c, .{ .expr_id = expr_id }, "TODO .{}", .{builtin}),
+            }
+        },
+        inline .@"fn", .call => |_, tag| return fail(c, .{ .expr_id = expr_id }, "TODO .{}", .{tag}),
+    }
+}
+
+fn checkArgCount(c: *Compiler, source_location: SourceLocation, opts: struct { expected: usize, actual: usize }) error{Error}!void {
+    if (opts.expected != opts.actual)
+        return fail(
+            c,
+            source_location,
+            "Expected {} arguments but found {} arguments",
+            .{ opts.expected, opts.actual },
+        );
+}
+
+fn checkKind(c: *Compiler, source_location: SourceLocation, opts: struct { expected: Kind, actual: Kind }) error{Error}!void {
+    if (opts.expected != opts.actual)
+        return fail(
+            c,
+            source_location,
+            "Expected a {s} but found a {s}",
+            .{ @tagName(opts.expected), @tagName(opts.actual) },
+        );
+}
 
 // ---
 

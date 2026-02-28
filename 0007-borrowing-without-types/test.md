@@ -1,11 +1,8 @@
 ```test
 {
-  let a = 1;
-  fn () {
-    let b = 1;
-  };
-  a
+let a = 1;
+a + 1
 }
 
-dummy
+2
 ```
