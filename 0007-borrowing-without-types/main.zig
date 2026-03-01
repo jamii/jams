@@ -146,6 +146,8 @@ const Token = enum {
     let,
     get,
     set,
+    take,
+    copy,
     @"if",
     @"else",
     @"while",
@@ -200,6 +202,8 @@ pub fn tokenize(c: *Compiler) !void {
                     .let,
                     .get,
                     .set,
+                    .take,
+                    .copy,
                     .@"if",
                     .@"else",
                     .@"while",
@@ -302,6 +306,8 @@ const Expr = union(enum) {
 const Builtin = enum {
     get,
     set,
+    take,
+    copy,
     @"+",
     @"<",
 };
@@ -388,8 +394,6 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
     return switch (peek(c)) {
         .null => parseNull(c),
-        .get => parseGet(c),
-        .set => parseSet(c),
         .number => parseNumber(c),
         .@"[" => parseList(c),
         .name => parseName(c),
@@ -397,6 +401,7 @@ fn parseExprBase(c: *Compiler) error{Error}!ExprId {
         .@"if" => parseIf(c),
         .@"while" => parseWhile(c),
         .@"fn" => parseFn(c),
+        .get, .set, .take, .copy => parseCallBuiltin(c),
         else => failExpected(c, "expr"),
     };
 }
@@ -405,24 +410,6 @@ fn parseNull(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     try expect(c, .null);
     return pushExpr(c, start, .null);
-}
-
-fn parseGet(c: *Compiler) error{Error}!ExprId {
-    const start = c.token_next;
-    try expect(c, .get);
-    const args = try parseArgs(c);
-    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = .get, .args = args } });
-    try checkArgCount(c, .{ .token_id = start }, .{ .expected = 2, .actual = args.len });
-    return expr_id;
-}
-
-fn parseSet(c: *Compiler) error{Error}!ExprId {
-    const start = c.token_next;
-    try expect(c, .set);
-    const args = try parseArgs(c);
-    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = .set, .args = args } });
-    try checkArgCount(c, .{ .token_id = start }, .{ .expected = 3, .actual = args.len });
-    return expr_id;
 }
 
 fn parseNumber(c: *Compiler) error{Error}!ExprId {
@@ -542,6 +529,23 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     const body = try parseBlock(c);
 
     return pushExpr(c, start, .{ .@"fn" = .{ .params = params.toOwnedSlice(allocator) catch oom(), .body = body } });
+}
+
+fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
+    const start = c.token_next;
+
+    const builtin: Builtin = switch (peek(c)) {
+        .get => .get,
+        .set => .set,
+        .take => .take,
+        .copy => .copy,
+        else => return failExpected(c, "a builtin function"),
+    };
+    _ = take(c);
+
+    const args = try parseArgs(c);
+    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = builtin, .args = args } });
+    return expr_id;
 }
 
 fn expect(c: *Compiler, expected: Token) error{Error}!void {
@@ -826,6 +830,78 @@ const Value = packed struct {
         return .initPtr(@ptrCast(ptr));
     }
 
+    fn initBool(b: bool) Value {
+        return if (b) Value.initTuple(0) else Value.initNull();
+    }
+
+    fn order(a: Value, b: Value) std.math.Order {
+        switch (std.math.order(@intFromEnum(a.kind()), @intFromEnum(b.kind()))) {
+            .lt => return .lt,
+            .gt => return .gt,
+            .eq => {},
+        }
+        switch (a.kind()) {
+            .null => return .eq,
+            .number => return std.math.order(a.asNumber().?, b.asNumber().?),
+            .tuple => {
+                const a_tuple = a.asTuple().?;
+                const b_tuple = b.asTuple().?;
+                for (0..@min(a_tuple.len, b_tuple.len)) |i| {
+                    switch (Value.order(a_tuple[i], b_tuple[i])) {
+                        .lt => return .lt,
+                        .gt => return .gt,
+                        .eq => {},
+                    }
+                }
+                return std.math.order(a_tuple.len, b_tuple.len);
+            },
+            .closure => {
+                const a_closure = a.asClosure().?;
+                const b_closure = b.asClosure().?;
+                switch (std.math.order(a_closure.fn_id.id, b_closure.fn_id.id)) {
+                    .lt => return .lt,
+                    .gt => return .gt,
+                    .eq => {},
+                }
+                for (0..@min(a_closure.capture_values.len, b_closure.capture_values.len)) |i| {
+                    switch (Value.order(a_closure.capture_values[i], b_closure.capture_values[i])) {
+                        .lt => return .lt,
+                        .gt => return .gt,
+                        .eq => {},
+                    }
+                }
+                return std.math.order(a_closure.capture_values.len, b_closure.capture_values.len);
+            },
+        }
+    }
+
+    pub fn copy(value: Value) Value {
+        switch (value.kind()) {
+            .null => {
+                return value;
+            },
+            .number => {
+                return .initNumber(value.asNumber().?);
+            },
+            .tuple => {
+                const in = value.asTuple().?;
+                const out = Value.initTuple(in.len);
+                for (out.asTuple().?, in) |*out_elem, in_elem| {
+                    out_elem.* = in_elem.copy();
+                }
+                return out;
+            },
+            .closure => {
+                const in = value.asClosure().?;
+                const out = Value.initClosure(in.fn_id, in.capture_values.len);
+                for (out.asClosure().?.capture_values, in.capture_values) |*out_elem, in_elem| {
+                    out_elem.* = in_elem.copy();
+                }
+                return out;
+            },
+        }
+    }
+
     fn deinit(value: *Value) void {
         if (value.ownership == .owned) {
             switch (value.kind()) {
@@ -976,7 +1052,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             var closure_value = try eval(c, call.closure);
             defer closure_value.deinit();
 
-            try checkKind(c, .{ .expr_id = call.closure }, .{ .expected = .closure, .actual = closure_value.kind() });
+            try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure_value.kind() });
             const closure = closure_value.asClosure().?;
             const @"fn" = &c.fns.items[closure.fn_id.id];
 
@@ -1018,32 +1094,77 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 
             switch (call_builtin.builtin) {
                 .@"+" => {
-                    try checkArgCount(c, .{ .expr_id = expr_id }, .{ .expected = 2, .actual = args.len });
-                    try checkKind(c, .{ .expr_id = call_builtin.args[0] }, .{ .expected = .number, .actual = args[0].kind() });
-                    try checkKind(c, .{ .expr_id = call_builtin.args[1] }, .{ .expected = .number, .actual = args[1].kind() });
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = args[0].kind() });
+                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
                     return Value.initNumber(args[0].asNumber().? +% args[1].asNumber().?);
                 },
-                .@"<", .get, .set => |builtin| return fail(c, .{ .expr_id = expr_id }, "TODO .{}", .{builtin}),
+                .@"<" => {
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
+                    return Value.initBool(Value.order(args[0], args[1]) == .lt);
+                },
+                .get => {
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
+                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
+                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
+                    return value_ptr.borrow();
+                },
+                .set => {
+                    try checkArgCount(c, expr_id, .{ .expected = 3, .actual = args.len });
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
+                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
+                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
+                    const value_old = value_ptr.take();
+                    value_ptr.* = args[2].take();
+                    return value_old;
+                },
+                .take => {
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
+                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
+                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
+                    return value_ptr.take();
+                },
+                .copy => {
+                    try checkArgCount(c, expr_id, .{ .expected = 1, .actual = args.len });
+                    return args[0].copy();
+                },
             }
         },
     }
 }
 
-fn checkArgCount(c: *Compiler, source_location: SourceLocation, opts: struct { expected: usize, actual: usize }) error{Error}!void {
+fn getPtr(c: *Compiler, expr_id: ExprId, args: *[2]Value) error{Error}!*Value {
+    const tuple = args[0].asTuple().?;
+    const index = args[1].asNumber().?;
+    if (index >= 0 and index < tuple.len) {
+        return &tuple[@intCast(index)];
+    } else {
+        return fail(
+            c,
+            .{ .expr_id = expr_id },
+            "Index {f} is out of bounds for tuple {f}",
+            .{ args[1], args[0] },
+        );
+    }
+}
+
+fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
     if (opts.expected != opts.actual)
         return fail(
             c,
-            source_location,
+            .{ .expr_id = expr_id },
             "Expected {} arguments but found {} arguments",
             .{ opts.expected, opts.actual },
         );
 }
 
-fn checkKind(c: *Compiler, source_location: SourceLocation, opts: struct { expected: Kind, actual: Kind }) error{Error}!void {
+fn checkKind(c: *Compiler, expr_id: ExprId, opts: struct { expected: Kind, actual: Kind }) error{Error}!void {
     if (opts.expected != opts.actual)
         return fail(
             c,
-            source_location,
+            .{ .expr_id = expr_id },
             "Expected a {s} but found a {s}",
             .{ @tagName(opts.expected), @tagName(opts.actual) },
         );
