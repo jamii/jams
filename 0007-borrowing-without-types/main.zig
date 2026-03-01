@@ -291,6 +291,7 @@ const Expr = union(enum) {
         builtin: Builtin,
         args: []ExprId,
     },
+    unique: ExprId,
 
     fn deinit(expr: Expr) void {
         switch (expr) {
@@ -298,7 +299,7 @@ const Expr = union(enum) {
             .block => |block| allocator.free(block.statements),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             inline .call, .call_builtin => |call| allocator.free(call.args),
-            .null, .number, .name, .let, .@"if", .@"while" => {},
+            .null, .number, .name, .let, .@"if", .@"while", .unique => {},
         }
     }
 };
@@ -361,6 +362,7 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     while (true) {
         switch (peek(c)) {
             .@"(" => expr = try parseCall(c, expr),
+            .@"!" => expr = try parseUnique(c, expr),
             else => break,
         }
     }
@@ -389,6 +391,12 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@")");
 
     return args.toOwnedSlice(allocator) catch oom();
+}
+
+fn parseUnique(c: *Compiler, expr: ExprId) error{Error}!ExprId {
+    const start = c.expr_to_tokens.items[expr.id][0];
+    try expect(c, .@"!");
+    return pushExpr(c, start, .{ .unique = expr });
 }
 
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
@@ -706,6 +714,9 @@ fn analyze(c: *Compiler, expr_id: ExprId) !void {
             for (call_builtin.args) |arg| {
                 try analyze(c, arg);
             }
+        },
+        .unique => |unique| {
+            try analyze(c, unique);
         },
     }
 }
@@ -1131,6 +1142,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                     return args[0].copy();
                 },
             }
+        },
+        .unique => |unique| {
+            return eval(c, unique);
         },
     }
 }
