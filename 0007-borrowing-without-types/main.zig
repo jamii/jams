@@ -685,7 +685,25 @@ fn resolve(list: anytype, name: []const u8) ?usize {
     return null;
 }
 
-const BorrowSet = std.hash_map.StringHashMap(Borrow);
+const BorrowSet = struct {
+    owned: ?ExprId,
+    borrowed: std.hash_map.StringHashMap(Borrow),
+
+    fn init(owned: ?ExprId) BorrowSet {
+        return .{ .owned = owned, .borrowed = .init(allocator) };
+    }
+
+    fn deinit(bs: *BorrowSet) void {
+        bs.borrowed.deinit();
+    }
+
+    fn clone(bs: BorrowSet) BorrowSet {
+        return .{
+            .owned = bs.owned,
+            .borrowed = bs.borrowed.clone() catch oom(),
+        };
+    }
+};
 
 const Borrow = struct {
     kind: BorrowKind,
@@ -699,16 +717,17 @@ const BorrowKind = enum {
 };
 
 fn addBorrowSet(bs_old: *BorrowSet, bs_new: BorrowSet) void {
-    var iter = bs_new.iterator();
+    if (bs_old.owned == null) bs_old.owned = bs_new.owned;
+    var iter = bs_new.borrowed.iterator();
     while (iter.next()) |kv| {
-        bs_old.put(kv.key_ptr.*, kv.value_ptr.*) catch oom();
+        bs_old.borrowed.put(kv.key_ptr.*, kv.value_ptr.*) catch oom();
     }
 }
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
     switch (c.exprs.items[expr_id.id]) {
         .null, .number => {
-            return BorrowSet.init(allocator);
+            return BorrowSet.init(expr_id);
         },
         .tuple => |tuple| {
             const scope_start = c.scope.items.len;
@@ -716,7 +735,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             for (tuple) |elem| {
                 const bs_elem = try analyzeAndAddToScope(c, elem);
-                var iter = bs_elem.iterator();
+                var iter = bs_elem.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
                     const borrow = kv.value_ptr.*;
@@ -731,8 +750,8 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 }
             }
 
-            // This tuple borrows from all the names it's elems borrow from.
-            var bs = BorrowSet.init(allocator);
+            // This tuple is an owned value, which borrows from all the names it's elems borrow from.
+            var bs = BorrowSet.init(expr_id);
             for (c.scope.items[scope_start..]) |scope_item| {
                 addBorrowSet(&bs, scope_item.borrow_set);
             }
@@ -765,7 +784,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             // Check if any other names already borrow `get.name`.
             for (c.scope.items) |scope_item| {
-                if (scope_item.borrow_set.get(get.name)) |borrow| {
+                if (scope_item.borrow_set.borrowed.get(get.name)) |borrow| {
                     if (get.borrow_kind == .unique) {
                         const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
                         return fail(
@@ -789,7 +808,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             // Check if `get.name` borrows another name using a conflicting `BorrowKind`.
             if (get.borrow_kind == .unique) {
-                var iter = c.scope.items[scope_index].borrow_set.iterator();
+                var iter = c.scope.items[scope_index].borrow_set.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const borrow_name = kv.key_ptr.*;
                     const borrow = kv.value_ptr;
@@ -805,8 +824,8 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             // This expression borrows from `get.name`.
-            var bs = BorrowSet.init(allocator);
-            bs.putNoClobber(get.name, .{ .kind = get.borrow_kind, .origin = expr_id }) catch oom();
+            var bs = BorrowSet.init(null);
+            bs.borrowed.putNoClobber(get.name, .{ .kind = get.borrow_kind, .origin = expr_id }) catch oom();
             return bs;
         },
         .let => |let| {
@@ -821,13 +840,13 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 .borrow_set = bs,
             }) catch oom();
 
-            return BorrowSet.init(allocator);
+            return BorrowSet.init(expr_id);
         },
         .block => |block| {
             const scope_start = c.scope.items.len;
             defer resetScope(c, scope_start);
 
-            var bs = BorrowSet.init(allocator);
+            var bs = BorrowSet.init(expr_id);
             errdefer bs.deinit();
 
             for (block.statements) |statement| {
@@ -839,11 +858,11 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             if (block.return_null) {
                 bs.deinit();
-                bs = .init(allocator);
+                bs = .init(expr_id);
             }
 
             for (c.scope.items[scope_start..]) |scope_item| {
-                if (bs.contains(scope_item.name.?)) {
+                if (bs.borrowed.contains(scope_item.name.?)) {
                     return fail(
                         c,
                         .{ .expr_id = block.statements[block.statements.len - 1] },
@@ -865,36 +884,23 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var bs_else = try analyze(c, @"if".@"else");
             defer bs_else.deinit();
 
-            var bs = BorrowSet.init(allocator);
+            var bs = BorrowSet.init(bs_then.owned orelse bs_else.owned);
             errdefer bs.deinit();
 
             // This `if` borrows from everything borrowed in the `then` and `else` branches.
-            // But the borrows in each branch must have matching kinds.
+            // But to get a unique borrow it must be unique in both branches.
             std.mem.swap(BorrowSet, &bs, &bs_then);
             {
-                var iter = bs_then.iterator();
+                var iter = bs_then.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
                     const borrow_else = kv.value_ptr.*;
-                    if (bs.get(name)) |borrow_then| {
+                    if (bs.borrowed.get(name)) |borrow_then| {
                         if (borrow_then.kind == .unique and borrow_else.kind == .shared) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "The 'then' branch of this 'if' uniquely borrows `{s}` but the 'else' branch non-uniquely borrows `{s}`.",
-                                .{ name, name },
-                            );
-                        }
-                        if (borrow_then.kind == .shared and borrow_else.kind == .unique) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "The 'then' branch of this 'if' non-uniquely borrows `{s}` but the 'else' branch uniquely borrows `{s}`.",
-                                .{ name, name },
-                            );
+                            bs.borrowed.put(name, borrow_else) catch oom();
                         }
                     } else {
-                        bs.putNoClobber(name, borrow_else) catch oom();
+                        bs.borrowed.putNoClobber(name, borrow_else) catch oom();
                     }
                 }
             }
@@ -907,7 +913,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var bs_body = try analyze(c, @"while".body);
             bs_body.deinit();
 
-            return BorrowSet.init(allocator);
+            return BorrowSet.init(expr_id);
         },
         .@"fn" => |@"fn"| {
             const scope_start = c.scope.items.len;
@@ -936,8 +942,8 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             for (@"fn".params) |param| {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
-                var bs_param = BorrowSet.init(allocator);
-                bs_param.putNoClobber("<params>", .{ .kind = param.borrow_kind, .origin = expr_id }) catch oom();
+                var bs_param = BorrowSet.init(null);
+                bs_param.borrowed.putNoClobber("<params>", .{ .kind = param.borrow_kind, .origin = expr_id }) catch oom();
                 c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
             }
 
@@ -945,7 +951,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             defer bs_body.deinit();
 
             {
-                var iter = bs_body.iterator();
+                var iter = bs_body.borrowed.iterator();
                 if (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
                     return fail(
@@ -957,10 +963,10 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 }
             }
 
-            // This `fn` borrows from any name that it captures.
-            var bs = BorrowSet.init(allocator);
+            // This `fn` is owned, and borrows from any name that it captures.
+            var bs = BorrowSet.init(expr_id);
             for (c.fns.items[fn_id.id].captures.items) |capture| {
-                bs.putNoClobber(capture.name, capture.borrow) catch oom();
+                bs.borrowed.putNoClobber(capture.name, capture.borrow) catch oom();
             }
             return bs;
         },
@@ -974,12 +980,13 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 const bs_arg = try analyzeAndAddToScope(c, arg);
 
                 var is_unique = false;
-                var iter = bs_arg.iterator();
+                var iter = bs_arg.borrowed.iterator();
                 while (iter.next()) |kv| is_unique |= kv.value_ptr.kind == .unique;
                 if (is_unique) call.unique_bitmap |= @as(u64, 1) << @intCast(i);
             }
 
-            return BorrowSet.init(allocator);
+            // The result of the call is assumed to be owned.
+            return BorrowSet.init(expr_id);
         },
         .call_builtin => |call_builtin| {
             const scope_start = c.scope.items.len;
@@ -990,14 +997,14 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     for (call_builtin.args) |arg|
                         _ = try analyzeAndAddToScope(c, arg);
 
-                    return BorrowSet.init(allocator);
+                    return BorrowSet.init(expr_id);
                 },
                 .get => {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
                     const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
                     _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
 
-                    return bs_tuple.clone() catch oom();
+                    return bs_tuple.clone();
                 },
                 .set => {
                     try checkArgCount(c, expr_id, .{ .expected = 3, .actual = call_builtin.args.len });
@@ -1007,7 +1014,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
                     // `tuple` must not contain any shared borrows.
                     {
-                        var iter = bs_tuple.iterator();
+                        var iter = bs_tuple.borrowed.iterator();
                         while (iter.next()) |kv| {
                             const name = kv.key_ptr.*;
                             const borrow = kv.value_ptr.*;
@@ -1024,7 +1031,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
                     // 'elem' must not borrow from anything.
                     {
-                        var iter = bs_elem.iterator();
+                        var iter = bs_elem.borrowed.iterator();
                         if (iter.next()) |kv| {
                             const name = kv.key_ptr.*;
                             return fail(
@@ -1037,7 +1044,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     }
 
                     // The result is owned.
-                    return BorrowSet.init(allocator);
+                    return BorrowSet.init(expr_id);
                 },
                 .take => {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
@@ -1046,7 +1053,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
                     // `tuple` must not contain any shared borrows.
                     {
-                        var iter = bs_tuple.iterator();
+                        var iter = bs_tuple.borrowed.iterator();
                         while (iter.next()) |kv| {
                             const name = kv.key_ptr.*;
                             const borrow = kv.value_ptr.*;
@@ -1062,7 +1069,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     }
 
                     // The result is owned.
-                    return BorrowSet.init(allocator);
+                    return BorrowSet.init(expr_id);
                 },
             }
         },
