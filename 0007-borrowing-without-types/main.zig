@@ -263,7 +263,7 @@ const Expr = union(enum) {
     tuple: []ExprId,
     get: struct {
         name: []const u8,
-        borrow_kind: BorrowKind,
+        kind: GetKind,
     },
     let: struct {
         name: []const u8,
@@ -307,9 +307,19 @@ const Expr = union(enum) {
     }
 };
 
+const GetKind = enum {
+    unique,
+    shared,
+};
+
 const Param = struct {
     name: []const u8,
-    borrow_kind: BorrowKind,
+    kind: ParamKind,
+};
+
+const ParamKind = enum {
+    mixed,
+    unique,
 };
 
 const Builtin = enum {
@@ -478,8 +488,8 @@ fn parseList(c: *Compiler) error{Error}!ExprId {
 fn parseGet(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName(c);
-    const borrow_kind: BorrowKind = if (takeIf(c, .@"!")) .unique else .shared;
-    return pushExpr(c, start, .{ .get = .{ .name = name, .borrow_kind = borrow_kind } });
+    const kind: GetKind = if (takeIf(c, .@"!")) .unique else .shared;
+    return pushExpr(c, start, .{ .get = .{ .name = name, .kind = kind } });
 }
 
 fn parseBlock(c: *Compiler) error{Error}!ExprId {
@@ -545,8 +555,8 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
         const name = try expectName(c);
-        const borrow_kind: BorrowKind = if (takeIf(c, .@"!")) .unique else .shared;
-        params.append(allocator, .{ .name = name, .borrow_kind = borrow_kind }) catch oom();
+        const kind: ParamKind = if (takeIf(c, .@"!")) .unique else .mixed;
+        params.append(allocator, .{ .name = name, .kind = kind }) catch oom();
         if (!takeIf(c, .@",")) break;
     } else {
         return fail(
@@ -706,14 +716,9 @@ const BorrowSet = struct {
 };
 
 const Borrow = struct {
-    kind: BorrowKind,
+    kind: GetKind,
     // The `Expr.get` where this borrow originated from.
     origin: ExprId,
-};
-
-const BorrowKind = enum {
-    unique,
-    shared,
 };
 
 fn addBorrowSet(bs_old: *BorrowSet, bs_new: BorrowSet) void {
@@ -768,14 +773,14 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 const @"fn" = &c.fns.items[fn_id.id];
                 if (scope_index < @"fn".scope_start) {
                     if (@"fn".capture_name_to_index.get(get.name)) |capture_index| {
-                        if (get.borrow_kind == .unique)
+                        if (get.kind == .unique)
                             @"fn".captures.items[capture_index].borrow.kind = .unique;
                     } else {
                         const capture_index = @"fn".captures.items.len;
                         @"fn".capture_name_to_index.put(get.name, capture_index) catch oom();
                         @"fn".captures.append(allocator, .{
                             .name = get.name,
-                            .borrow = .{ .kind = get.borrow_kind, .origin = expr_id },
+                            .borrow = .{ .kind = get.kind, .origin = expr_id },
                         }) catch oom();
                     }
                 }
@@ -785,7 +790,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             // Check if any other names already borrow `get.name`.
             for (c.scope.items) |scope_item| {
                 if (scope_item.borrow_set.borrowed.get(get.name)) |borrow| {
-                    if (get.borrow_kind == .unique) {
+                    if (get.kind == .unique) {
                         const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
                         return fail(
                             c,
@@ -807,7 +812,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             // Check if `get.name` borrows another name using a conflicting `BorrowKind`.
-            if (get.borrow_kind == .unique) {
+            if (get.kind == .unique) {
                 var iter = c.scope.items[scope_index].borrow_set.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const borrow_name = kv.key_ptr.*;
@@ -825,7 +830,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             // This expression borrows from `get.name`.
             var bs = BorrowSet.init(null);
-            bs.borrowed.putNoClobber(get.name, .{ .kind = get.borrow_kind, .origin = expr_id }) catch oom();
+            bs.borrowed.putNoClobber(get.name, .{ .kind = get.kind, .origin = expr_id }) catch oom();
             return bs;
         },
         .let => |let| {
@@ -927,7 +932,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             var unique_bitmap: u64 = 0;
             for (@"fn".params, 0..) |param, i| {
-                if (param.borrow_kind == .unique)
+                if (param.kind == .unique)
                     unique_bitmap |= (@as(u64, 1) << @intCast(i));
             }
             c.fns.append(allocator, .{
@@ -943,7 +948,11 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             for (@"fn".params) |param| {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
                 var bs_param = BorrowSet.init(null);
-                bs_param.borrowed.putNoClobber("<params>", .{ .kind = param.borrow_kind, .origin = expr_id }) catch oom();
+                const kind: GetKind = switch (param.kind) {
+                    .mixed => .shared,
+                    .unique => .unique,
+                };
+                bs_param.borrowed.putNoClobber("<params>", .{ .kind = kind, .origin = expr_id }) catch oom();
                 c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
             }
 
