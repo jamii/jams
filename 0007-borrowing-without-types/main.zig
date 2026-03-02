@@ -143,6 +143,7 @@ const Token = enum {
     @"<",
     @"+",
     @"!",
+    @"&",
 
     let,
     get,
@@ -180,6 +181,7 @@ pub fn tokenize(c: *Compiler) !void {
             '<' => .@"<",
             '+' => .@"+",
             '!' => .@"!",
+            '&' => .@"&",
             '/' => {
                 if (pos < source.len and source[pos] == '/') {
                     while (pos < source.len and source[pos] != '\n') {
@@ -284,12 +286,14 @@ const Expr = union(enum) {
     },
     @"fn": struct {
         params: []Param,
+        kind: ReturnKind,
         body: ExprId,
     },
     call: struct {
         closure: ExprId,
         args: []ExprId,
-        unique_bitmap: u64,
+        kind: ReturnKind,
+        kind_bitmap: u64,
     },
     call_builtin: struct {
         builtin: Builtin,
@@ -312,6 +316,12 @@ const GetKind = enum {
     shared,
 };
 
+const ReturnKind = enum {
+    mixed,
+    unique,
+    owned,
+};
+
 const Param = struct {
     name: []const u8,
     kind: ParamKind,
@@ -320,6 +330,7 @@ const Param = struct {
 const ParamKind = enum {
     mixed,
     unique,
+    shared,
 };
 
 const Builtin = enum {
@@ -389,16 +400,23 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
+    const return_kind: ReturnKind = if (takeIf(c, .@"&"))
+        .mixed
+    else if (takeIf(c, .@"!"))
+        .unique
+    else
+        .owned;
     return pushExpr(c, start, .{
         .call = .{
             .closure = closure,
             .args = args,
-            .unique_bitmap = 0, // filled in later by `analyze`
+            .kind = return_kind,
+            .kind_bitmap = 0, // filled in later by `analyze`
         },
     });
 }
 
-const arg_count_max: usize = 64;
+const arg_count_max: usize = 31;
 
 fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@"(");
@@ -555,8 +573,13 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
         const name = try expectName(c);
-        const kind: ParamKind = if (takeIf(c, .@"!")) .unique else .mixed;
-        params.append(allocator, .{ .name = name, .kind = kind }) catch oom();
+        const param_kind: ParamKind = if (takeIf(c, .@"!"))
+            .unique
+        else if (takeIf(c, .@"&"))
+            .shared
+        else
+            .mixed;
+        params.append(allocator, .{ .name = name, .kind = param_kind }) catch oom();
         if (!takeIf(c, .@",")) break;
     } else {
         return fail(
@@ -569,9 +592,20 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
 
     try expect(c, .@")");
 
+    const return_kind: ReturnKind = if (takeIf(c, .@"&"))
+        .mixed
+    else if (takeIf(c, .@"!"))
+        .unique
+    else
+        .owned;
+
     const body = try parseBlock(c);
 
-    return pushExpr(c, start, .{ .@"fn" = .{ .params = params.toOwnedSlice(allocator) catch oom(), .body = body } });
+    return pushExpr(c, start, .{ .@"fn" = .{
+        .params = params.toOwnedSlice(allocator) catch oom(),
+        .kind = return_kind,
+        .body = body,
+    } });
 }
 
 fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
@@ -658,7 +692,7 @@ const Fn = struct {
     captures: ArrayList(Capture),
     capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
-    unique_bitmap: u64,
+    kind_bitmap: u64,
 
     fn deinit(@"fn": *Fn) void {
         @"fn".capture_name_to_index.deinit();
@@ -930,10 +964,10 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             c.fn_id_current = fn_id;
             defer c.fn_id_current = parent;
 
-            var unique_bitmap: u64 = 0;
+            var kind_bitmap: u64 = 0;
             for (@"fn".params, 0..) |param, i| {
                 if (param.kind == .unique)
-                    unique_bitmap |= (@as(u64, 1) << @intCast(i));
+                    kind_bitmap |= (@as(u64, 1) << @intCast(i));
             }
             c.fns.append(allocator, .{
                 .parent = parent,
@@ -941,7 +975,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 .captures = .{},
                 .capture_name_to_index = .init(allocator),
                 .scope_start = scope_start,
-                .unique_bitmap = unique_bitmap,
+                .kind_bitmap = kind_bitmap,
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
@@ -949,7 +983,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
                 var bs_param = BorrowSet.init(null);
                 const kind: GetKind = switch (param.kind) {
-                    .mixed => .shared,
+                    .mixed, .shared => .shared,
                     .unique => .unique,
                 };
                 bs_param.borrowed.putNoClobber("<params>", .{ .kind = kind, .origin = expr_id }) catch oom();
@@ -963,12 +997,27 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 var iter = bs_body.borrowed.iterator();
                 if (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
-                    return fail(
-                        c,
-                        .{ .expr_id = expr_id },
-                        "The return value of this function borrows from `{s}`, but functions must only return owned values.",
-                        .{name},
-                    );
+                    const borrow = kv.value_ptr.*;
+                    switch (@"fn".kind) {
+                        .mixed => {},
+                        .unique => {
+                            if (borrow.kind == .shared)
+                                return fail(
+                                    c,
+                                    .{ .expr_id = expr_id },
+                                    "The return value of this function borrows non-uniquely from `{s}`, but the function is declared to return a unique borrow.",
+                                    .{name},
+                                );
+                        },
+                        .owned => {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "The return value of this function borrows from `{s}`, but the function is declared to return an owned value.",
+                                .{name},
+                            );
+                        },
+                    }
                 }
             }
 
@@ -991,11 +1040,43 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 var is_unique = false;
                 var iter = bs_arg.borrowed.iterator();
                 while (iter.next()) |kv| is_unique |= kv.value_ptr.kind == .unique;
-                if (is_unique) call.unique_bitmap |= @as(u64, 1) << @intCast(i);
+                if (is_unique) call.kind_bitmap |= @as(u64, 1) << @intCast(i);
             }
 
-            // The result of the call is assumed to be owned.
-            return BorrowSet.init(expr_id);
+            switch (call.kind) {
+                .mixed => {
+                    var bs = BorrowSet.init(expr_id);
+                    for (c.scope.items[scope_start..]) |scope_item| {
+                        var iter = scope_item.borrow_set.borrowed.iterator();
+                        while (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            var borrow = kv.value_ptr.*;
+                            // The function is not allowed to return unique borrows.
+                            borrow.kind = .shared;
+                            if (!bs.borrowed.contains(name))
+                                bs.borrowed.put(name, borrow) catch oom();
+                        }
+                    }
+                    return bs;
+                },
+                .unique => {
+                    var bs = BorrowSet.init(expr_id);
+                    for (c.scope.items[scope_start..]) |scope_item| {
+                        var iter = scope_item.borrow_set.borrowed.iterator();
+                        while (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            const borrow = kv.value_ptr.*;
+                            // A unique return borrow must have come from a unique arg borrow.
+                            if (!bs.borrowed.contains(name) and borrow.kind == .unique)
+                                bs.borrowed.put(name, borrow) catch oom();
+                        }
+                    }
+                    return bs;
+                },
+                .owned => {
+                    return BorrowSet.init(expr_id);
+                },
+            }
         },
         .call_builtin => |call_builtin| {
             const scope_start = c.scope.items.len;
@@ -1444,9 +1525,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
             try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
 
-            const missing_unique_bitmap = @"fn".unique_bitmap & ~call.unique_bitmap;
-            if (missing_unique_bitmap != 0) {
-                const arg_index = @ctz(missing_unique_bitmap);
+            const missing_kind_bitmap = @"fn".kind_bitmap & ~call.kind_bitmap;
+            if (missing_kind_bitmap != 0) {
+                const arg_index = @ctz(missing_kind_bitmap);
                 return fail(
                     c,
                     .{ .expr_id = call.args[arg_index] },

@@ -187,20 +187,20 @@ The callee expected this argument to be uniquely shared, but it was not.
 
 ```test
 {
-  let f = fn (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am, an, ao, ap, aq, ar, as, at, au, av, aw, ax, ay, az, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am) {};
+  let f = fn (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af) {};
 }
 
-Error at 2:245
-Functions may take at most 64 arguments
+Error at 2:113
+Functions may take at most 31 arguments
 ```
 
 ```test
 {
-  f(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am, an, ao, ap, aq, ar, as, at, au, av, aw, ax, ay, az, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am);
+  f(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af);
 }
 
-Error at 2:235
-Functions may take at most 64 arguments
+Error at 2:103
+Functions may take at most 31 arguments
 ```
 
 ```test
@@ -362,7 +362,7 @@ The value returned from this block borrows from `a`, but `a` will be destroyed a
 }
 
 Error at 2:11
-The return value of this function borrows from `x`, but functions must only return owned values.
+The return value of this function borrows from `x`, but the function is declared to return an owned value.
 ```
 
 ```test
@@ -386,7 +386,7 @@ The return value of this function borrows from `x`, but functions must only retu
 }
 
 Error at 2:13
-Bad token
+Expected a `(` but found a `&`
 ```
 
 ```test
@@ -408,4 +408,82 @@ Expected 0 arguments but found 1 arguments
 
 Error at 3:3
 Expected 1 arguments but found 0 arguments
+```
+
+```test
+{
+  let f = fn (a&) {
+    get(a, 0)
+  };
+  let x = [42];
+  copy(f(x))
+}
+
+Error at 2:11
+The return value of this function borrows from `a`, but the function is declared to return an owned value.
+```
+
+```test
+{
+  let f = fn (a&)& {
+    get(a, 0)
+  };
+  let x = [42];
+  f(x)&
+}
+
+Error at 6:3
+The value returned from this block borrows from `f`, but `f` will be destroyed at the end of this block.
+```
+
+```test
+{
+  let f = fn (a&)& {
+    get(a, 0)
+  };
+  let x = [42];
+  copy(f)(x)&
+}
+
+Error at 6:3
+The value returned from this block borrows from `x`, but `x` will be destroyed at the end of this block.
+```
+
+```test
+{
+  let f = fn (a&)& {
+    get(a, 0)
+  };
+  { 
+    let x = [42];
+    f(x)&
+  }
+}
+
+Error at 7:5
+The value returned from this block borrows from `x`, but `x` will be destroyed at the end of this block.
+```
+
+```test
+{
+  let f = fn (a&)& {
+    get(a, 0)
+  };
+  let x = [42];
+  copy(f(x))
+}
+
+42
+```
+
+```test
+{
+  let f = fn (a&)& {
+    get(a, 0)
+  };
+  let x = [42];
+  copy(f(x)&)
+}
+
+42
 ```
