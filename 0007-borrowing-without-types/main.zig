@@ -941,8 +941,21 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
             }
 
-            var bs_fn = try analyze(c, @"fn".body);
-            bs_fn.deinit();
+            var bs_body = try analyze(c, @"fn".body);
+            defer bs_body.deinit();
+
+            {
+                var iter = bs_body.iterator();
+                if (iter.next()) |kv| {
+                    const name = kv.key_ptr.*;
+                    return fail(
+                        c,
+                        .{ .expr_id = expr_id },
+                        "The return value of this function borrows from `{s}`, but functions must only return owned values.",
+                        .{name},
+                    );
+                }
+            }
 
             // This `fn` borrows from any name that it captures.
             var bs = BorrowSet.init(allocator);

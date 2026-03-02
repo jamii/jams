@@ -358,19 +358,20 @@ The value returned from this block borrows from `a`, but `a` will be destroyed a
     get(x, 0)
   };
   let x = [42];
-  // f(x) // TODO should infer that this function returns a borrow
+  f(x)
 }
 
-null
+Error at 2:11
+The return value of this function borrows from `x`, but functions must only return owned values.
 ```
 
 ```test
 {
   let f = fn (x) {
-    get(x, 0)
+    copy(get(x, 0))
   };
   let x = [42];
-  copy(f(x))
+  f(x)
 }
 
 42
@@ -378,13 +379,14 @@ null
 
 ```test
 {
-  let f = fn (x) {
+  let f = fn& (x) {
     get(x, 0)
   };
-  // copy(f([42])) // TODO the 42 gets destroyed when f returns!
+  copy(f([42])&) // TODO the 42 gets destroyed when f returns!
 }
 
-null
+Error at 2:13
+Bad token
 ```
 
 ```test
