@@ -301,3 +301,40 @@ This value can't be stored inside a tuple because it uniquely borrows from `a`.
 Error at 4:7
 Can't set an elem on this tuple because it borrows non-uniquely from `a`.'
 ```
+
+```test
+set([2], 0, 1)
+
+2
+```
+
+```test
+get([2], 0)
+
+2
+```
+
+```test
+take([2], 0)
+
+2
+```
+
+```test
+{
+  let a = 1;
+  get([2, a], 0)
+}
+
+Error at 3:3
+The value returned from this block borrows from `a`, but `a` will be destroyed at the end of this block.
+```
+
+```test
+{
+  let a = 1;
+  copy(get([2, a], 0))
+}
+
+2
+```

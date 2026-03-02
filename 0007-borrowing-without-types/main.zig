@@ -1474,7 +1474,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                     try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
                     const value_ptr = try getPtr(c, expr_id, args[0..2]);
-                    return value_ptr.borrow();
+                    if (args[0].ownership == .owned and value_ptr.ownership == .owned) {
+                        return value_ptr.take();
+                    } else {
+                        return value_ptr.borrow();
+                    }
                 },
                 .set => {
                     try checkArgCount(c, expr_id, .{ .expected = 3, .actual = args.len });
@@ -1504,16 +1508,16 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 fn getPtr(c: *Compiler, expr_id: ExprId, args: *[2]Value) error{Error}!*Value {
     const tuple = args[0].asTuple().?;
     const index = args[1].asNumber().?;
-    if (index >= 0 and index < tuple.len) {
-        return &tuple[@intCast(index)];
-    } else {
+
+    if (index < 0 or index >= tuple.len)
         return fail(
             c,
             .{ .expr_id = expr_id },
             "Index {f} is out of bounds for tuple {f}",
             .{ args[1], args[0] },
         );
-    }
+
+    return &tuple[@intCast(index)];
 }
 
 fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
