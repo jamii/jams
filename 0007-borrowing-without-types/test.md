@@ -8,7 +8,7 @@
 }
 
 Error at 4:20
-Can't borrow `i` here because it is already uniquely borrowed by `<anon>` at 4:9'
+Can't borrow `i` here because it is already uniquely borrowed by `<anon>` at 4:9
 ```
 
 ```test
@@ -209,7 +209,7 @@ Functions may take at most 64 arguments
 }
 
 Error at 4:11
-Can't borrow `a` here because it is already uniquely borrowed by `b` at 3:11'
+Can't borrow `a` here because it is already uniquely borrowed by `b` at 3:11
 ```
 
 ```test
@@ -222,7 +222,7 @@ Can't borrow `a` here because it is already uniquely borrowed by `b` at 3:11'
 }
 
 Error at 5:7
-Can't uniquely borrow `b` here because it is already borrowed by `c` at 4:15'
+Can't uniquely borrow `b` here because it is already borrowed by `c` at 4:15
 ```
 
 ```test
@@ -235,7 +235,7 @@ Can't uniquely borrow `b` here because it is already borrowed by `c` at 4:15'
 }
 
 Error at 5:7
-Can't uniquely borrow `a` here because it is already borrowed by `b` at 3:11'
+Can't uniquely borrow `a` here because it is already borrowed by `b` at 3:11
 ```
 
 ```test
@@ -299,7 +299,7 @@ This value can't be stored inside a tuple because it uniquely borrows from `a`.
 }
 
 Error at 4:7
-Can't set an elem on this tuple because it borrows non-uniquely from `a`.'
+Can't set an elem on this tuple because it borrows non-uniquely from `a`.
 ```
 
 ```test

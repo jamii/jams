@@ -770,7 +770,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't uniquely borrow `{s}` here because it is already borrowed by `{s}` at {}:{}'",
+                            "Can't uniquely borrow `{s}` here because it is already borrowed by `{s}` at {}:{}",
                             .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
                         );
                     }
@@ -779,7 +779,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` here because it is already uniquely borrowed by `{s}` at {}:{}'",
+                            "Can't borrow `{s}` here because it is already uniquely borrowed by `{s}` at {}:{}",
                             .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
                         );
                     }
@@ -1001,7 +1001,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
-                                    "Can't set an elem on this tuple because it borrows non-uniquely from `{s}`.'",
+                                    "Can't set an elem on this tuple because it borrows non-uniquely from `{s}`.",
                                     .{name},
                                 );
                             }
@@ -1040,7 +1040,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
-                                    "Can't take an elem from this tuple because it borrows non-uniquely from `{s}`.'",
+                                    "Can't take an elem from this tuple because it borrows non-uniquely from `{s}`.",
                                     .{name},
                                 );
                             }
