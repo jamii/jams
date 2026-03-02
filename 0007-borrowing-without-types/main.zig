@@ -426,7 +426,7 @@ fn parseExprBase(c: *Compiler) error{Error}!ExprId {
         .@"while" => parseWhile(c),
         .@"fn" => parseFn(c),
         .get, .set, .take, .copy => parseCallBuiltin(c),
-        else => failExpected(c, "expr"),
+        else => failExpected(c, "an expression"),
     };
 }
 
@@ -584,7 +584,12 @@ fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
 fn expect(c: *Compiler, expected: Token) error{Error}!void {
     const actual = peek(c);
     if (expected != actual) {
-        return failExpected(c, @tagName(expected));
+        return fail(
+            c,
+            .{ .token_id = c.token_next },
+            "Expected a `{s}` but found a `{s}`",
+            .{ @tagName(expected), @tagName(actual) },
+        );
     }
     _ = take(c);
 }
@@ -628,7 +633,7 @@ fn failExpected(c: *Compiler, expected: []const u8) error{Error} {
     return fail(
         c,
         .{ .token_id = c.token_next },
-        "Expected {s} but found `{s}`",
+        "Expected {s} but found a `{s}`",
         .{ expected, @tagName(actual) },
     );
 }
@@ -718,7 +723,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = elem },
-                            "This value can't be stored inside a tuple because it uniquely borrows from {s}.",
+                            "This value can't be stored inside a tuple because it uniquely borrows from `{s}`.",
                             .{name},
                         );
                     }
@@ -765,7 +770,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't uniquely borrow {s} here because it is already borrowed by {s} at {}:{}'",
+                            "Can't uniquely borrow `{s}` here because it is already borrowed by `{s}` at {}:{}'",
                             .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
                         );
                     }
@@ -774,7 +779,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't borrow {s} here because it is already uniquely borrowed by {s} at {}:{}'",
+                            "Can't borrow `{s}` here because it is already uniquely borrowed by `{s}` at {}:{}'",
                             .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
                         );
                     }
@@ -791,7 +796,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't uniquely borrow {s} because it borrows non-uniquely from {s}'",
+                            "Can't uniquely borrow `{s}` because it borrows non-uniquely from `{s}`",
                             .{ get.name, borrow_name },
                         );
                     }
@@ -841,7 +846,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     return fail(
                         c,
                         .{ .expr_id = block.statements[block.statements.len - 1] },
-                        "The value returned from this block borrows from {s}, but {s} will be destroyed at the end of this block.",
+                        "The value returned from this block borrows from `{s}`, but `{s}` will be destroyed at the end of this block.",
                         .{ scope_item.name.?, scope_item.name.? },
                     );
                 }
@@ -875,7 +880,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                             return fail(
                                 c,
                                 .{ .expr_id = expr_id },
-                                "The 'then' branch of this 'if' uniquely borrows {s} but the 'else' branch non-uniquely borrows {s}.",
+                                "The 'then' branch of this 'if' uniquely borrows `{s}` but the 'else' branch non-uniquely borrows `{s}`.",
                                 .{ name, name },
                             );
                         }
@@ -883,7 +888,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                             return fail(
                                 c,
                                 .{ .expr_id = expr_id },
-                                "The 'then' branch of this 'if' non-uniquely borrows {s} but the 'else' branch uniquely borrows {s}.",
+                                "The 'then' branch of this 'if' non-uniquely borrows `{s}` but the 'else' branch uniquely borrows `{s}`.",
                                 .{ name, name },
                             );
                         }
@@ -996,7 +1001,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
-                                    "Can't set an elem on this tuple because it borrows non-uniquely from {s}.'",
+                                    "Can't set an elem on this tuple because it borrows non-uniquely from `{s}`.'",
                                     .{name},
                                 );
                             }
@@ -1011,7 +1016,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                             return fail(
                                 c,
                                 .{ .expr_id = call_builtin.args[2] },
-                                "Can't set this elem because it borrows from {s}.",
+                                "Can't set this elem because it borrows from `{s}`.",
                                 .{name},
                             );
                         }
@@ -1035,7 +1040,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
-                                    "Can't take an elem from this tuple because it borrows non-uniquely from {s}.'",
+                                    "Can't take an elem from this tuple because it borrows non-uniquely from `{s}`.'",
                                     .{name},
                                 );
                             }

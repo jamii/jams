@@ -8,7 +8,7 @@
 }
 
 Error at 4:20
-Can't borrow i here because it is already uniquely borrowed by <anon> at 4:9'
+Can't borrow `i` here because it is already uniquely borrowed by `<anon>` at 4:9'
 ```
 
 ```test
@@ -31,7 +31,7 @@ Can't borrow i here because it is already uniquely borrowed by <anon> at 4:9'
 }
 
 Error at 3:3
-The value returned from this block borrows from i, but i will be destroyed at the end of this block.
+The value returned from this block borrows from `i`, but `i` will be destroyed at the end of this block.
 ```
 
 ```test
@@ -85,7 +85,7 @@ null
 }
 
 Error at 4:3
-The value returned from this block borrows from i, but i will be destroyed at the end of this block.
+The value returned from this block borrows from `i`, but `i` will be destroyed at the end of this block.
 ```
 
 ```test
@@ -129,7 +129,7 @@ fn<.{ .id = 0 }>[[0], [1]]
 }
 
 Error at 3:9
-Can't uniquely borrow x because it borrows non-uniquely from <params>'
+Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
 ```
 
 ```test
@@ -209,7 +209,7 @@ Functions may take at most 64 arguments
 }
 
 Error at 4:11
-Can't borrow a here because it is already uniquely borrowed by b at 3:11'
+Can't borrow `a` here because it is already uniquely borrowed by `b` at 3:11'
 ```
 
 ```test
@@ -222,7 +222,7 @@ Can't borrow a here because it is already uniquely borrowed by b at 3:11'
 }
 
 Error at 5:7
-Can't uniquely borrow b here because it is already borrowed by c at 4:15'
+Can't uniquely borrow `b` here because it is already borrowed by `c` at 4:15'
 ```
 
 ```test
@@ -235,7 +235,7 @@ Can't uniquely borrow b here because it is already borrowed by c at 4:15'
 }
 
 Error at 5:7
-Can't uniquely borrow a here because it is already borrowed by b at 3:11'
+Can't uniquely borrow `a` here because it is already borrowed by `b` at 3:11'
 ```
 
 ```test
@@ -256,13 +256,36 @@ Can't uniquely borrow a here because it is already borrowed by b at 3:11'
 {
   let a = [1];
   let b = [2];
+  let c = [a!, a!];
+}
+
+Error at 4:12
+This value can't be stored inside a tuple because it uniquely borrows from `a`.
+```
+
+```test
+{
+  let a = [1];
+  let b = [2];
+  let c = [a!];
+  set(c!, 0, copy(b))
+}
+
+Error at 4:12
+This value can't be stored inside a tuple because it uniquely borrows from `a`.
+```
+
+```test
+{
+  let a = [1];
+  let b = [2];
   let c = [a!, b!];
   let d = take(c!, 1);
   set(get(c!, 0), 0, 42);
   set(d!, 0, 101);
-  copy([a, b])
+  [copy(c), copy(d)]
 }
 
 Error at 4:12
-This value can't be stored inside a tuple because it uniquely borrows from a.
+This value can't be stored inside a tuple because it uniquely borrows from `a`.
 ```
