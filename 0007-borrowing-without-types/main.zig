@@ -157,7 +157,6 @@ const Token = enum {
 
     name,
     number,
-    comment,
     eof,
 };
 
@@ -181,12 +180,12 @@ pub fn tokenize(c: *Compiler) !void {
             '<' => .@"<",
             '+' => .@"+",
             '!' => .@"!",
-            '/' => token: {
+            '/' => {
                 if (pos < source.len and source[pos] == '/') {
                     while (pos < source.len and source[pos] != '\n') {
                         pos += 1;
                     }
-                    break :token .comment;
+                    continue :next_token;
                 } else {
                     return failBadToken(c, start);
                 }
@@ -290,6 +289,7 @@ const Expr = union(enum) {
     call: struct {
         closure: ExprId,
         args: []ExprId,
+        unique_bitmap: u64,
     },
     call_builtin: struct {
         builtin: Builtin,
@@ -379,8 +379,16 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
-    return pushExpr(c, start, .{ .call = .{ .closure = closure, .args = args } });
+    return pushExpr(c, start, .{
+        .call = .{
+            .closure = closure,
+            .args = args,
+            .unique_bitmap = 0, // filled in later by `analyze`
+        },
+    });
 }
+
+const arg_count_max: usize = 64;
 
 fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@"(");
@@ -388,11 +396,18 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     var args: ArrayList(ExprId) = .{};
     defer args.deinit(allocator);
 
-    while (true) {
+    for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
         const arg = try parseExprLoose(c);
         args.append(allocator, arg) catch oom();
         if (!takeIf(c, .@",")) break;
+    } else {
+        return fail(
+            c,
+            .{ .token_id = c.token_next },
+            "Functions may take at most {} arguments",
+            .{arg_count_max},
+        );
     }
 
     try expect(c, .@")");
@@ -527,12 +542,19 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     var params: ArrayList(Param) = .{};
     defer params.deinit(allocator);
 
-    while (true) {
+    for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
         const name = try expectName(c);
         const borrow_kind: BorrowKind = if (takeIf(c, .@"!")) .unique else .shared;
         params.append(allocator, .{ .name = name, .borrow_kind = borrow_kind }) catch oom();
         if (!takeIf(c, .@",")) break;
+    } else {
+        return fail(
+            c,
+            .{ .token_id = c.token_next },
+            "Functions may take at most {} arguments",
+            .{arg_count_max},
+        );
     }
 
     try expect(c, .@")");
@@ -621,6 +643,7 @@ const Fn = struct {
     captures: ArrayList(Capture),
     capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
+    unique_bitmap: u64,
 
     fn deinit(@"fn": *Fn) void {
         @"fn".capture_name_to_index.deinit();
@@ -890,12 +913,18 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             c.fn_id_current = fn_id;
             defer c.fn_id_current = parent;
 
+            var unique_bitmap: u64 = 0;
+            for (@"fn".params, 0..) |param, i| {
+                if (param.borrow_kind == .unique)
+                    unique_bitmap |= (@as(u64, 1) << @intCast(i));
+            }
             c.fns.append(allocator, .{
                 .parent = parent,
                 .body_expr_id = @"fn".body,
                 .captures = .{},
                 .capture_name_to_index = .init(allocator),
                 .scope_start = scope_start,
+                .unique_bitmap = unique_bitmap,
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
@@ -916,14 +945,19 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
             return bs;
         },
-        .call => |call| {
+        .call => |*call| {
             const scope_start = c.scope.items.len;
             defer resetScope(c, scope_start);
 
             _ = try analyzeAndAddToScope(c, call.closure);
 
-            for (call.args) |arg| {
-                _ = try analyzeAndAddToScope(c, arg);
+            for (call.args, 0..) |arg, i| {
+                const bs_arg = try analyzeAndAddToScope(c, arg);
+
+                var is_unique = false;
+                var iter = bs_arg.iterator();
+                while (iter.next()) |kv| is_unique |= kv.value_ptr.kind == .unique;
+                if (is_unique) call.unique_bitmap |= @as(u64, 1) << @intCast(i);
             }
 
             return BorrowSet.init(allocator);
@@ -1371,6 +1405,17 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure_value.kind() });
             const closure = closure_value.asClosure().?;
             const @"fn" = &c.fns.items[closure.fn_id.id];
+
+            const missing_unique_bitmap = @"fn".unique_bitmap & ~call.unique_bitmap;
+            if (missing_unique_bitmap != 0) {
+                const arg_index = @ctz(missing_unique_bitmap);
+                return fail(
+                    c,
+                    .{ .expr_id = call.args[arg_index] },
+                    "The callee expected this argument to be uniquely shared, but it was not.",
+                    .{},
+                );
+            }
 
             const args = allocator.alloc(Value, call.args.len) catch oom();
             for (args) |*arg| arg.* = Value.initNull();

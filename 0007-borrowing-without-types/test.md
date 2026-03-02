@@ -118,8 +118,6 @@ The value returned from this block borrows from i, but i will be destroyed at th
 fn<.{ .id = 0 }>[[0], [1]]
 ```
 
-// TODO Don't allow this shadowing.
-
 ```test
 {
   let f = fn (x) {
@@ -147,7 +145,6 @@ Can't uniquely borrow x because it borrows non-uniquely from <params>'
 [1]
 ```
 
-// TODO Should fail dynamic check.
 ```test
 {
   let f = fn (x!) {
@@ -158,5 +155,37 @@ Can't uniquely borrow x because it borrows non-uniquely from <params>'
   copy(x)
 }
 
-[1]
+Error at 6:5
+The callee expected this argument to be uniquely shared, but it was not.
+```
+
+```test
+{
+  let f = fn (x) {
+    get(x, 0);
+  };
+  let x = [0];
+  f(x!); // it's ok (but misleading?) to pass a unique arg where it isn't expected
+  copy(x)
+}
+
+[0]
+```
+
+```test
+{
+  let f = fn (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am, an, ao, ap, aq, ar, as, at, au, av, aw, ax, ay, az, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am) {};
+}
+
+Error at 2:245
+Functions may take at most 64 arguments
+```
+
+```test
+{
+  f(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am, an, ao, ap, aq, ar, as, at, au, av, aw, ax, ay, az, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am);
+}
+
+Error at 2:235
+Functions may take at most 64 arguments
 ```
