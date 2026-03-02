@@ -289,3 +289,15 @@ This value can't be stored inside a tuple because it uniquely borrows from `a`.
 Error at 4:12
 This value can't be stored inside a tuple because it uniquely borrows from `a`.
 ```
+
+```test
+{
+  let a = [1];
+  let b = 2;
+  set(a, 0, b);
+  copy(a);
+}
+
+Error at 4:7
+Can't set an elem on this tuple because it borrows non-uniquely from `a`.'
+```
