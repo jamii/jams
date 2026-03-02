@@ -644,7 +644,7 @@ const FnId = packed struct { id: usize };
 
 const Fn = struct {
     parent: ?FnId,
-    body_expr_id: ExprId,
+    fn_expr_id: ExprId,
     captures: ArrayList(Capture),
     capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
@@ -662,7 +662,7 @@ const Capture = struct {
 };
 
 const ScopeItem = struct {
-    // Either the name from an `Expr.let`, or null if this is an anonymous expression.
+    // Either the name from an `Expr.let`, or null if this is some other expression.
     name: ?[]const u8,
     expr_id: ExprId,
     borrow_set: BorrowSet,
@@ -677,9 +677,10 @@ fn resolve(list: anytype, name: []const u8) ?usize {
     while (i > 0) : (i -= 1) {
         const index = i - 1;
         const item = list.items[index];
-        if (item.name) |item_name|
+        if (item.name) |item_name| {
             if (std.mem.eql(u8, item_name, name))
                 return index;
+        }
     }
     return null;
 }
@@ -925,7 +926,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
             c.fns.append(allocator, .{
                 .parent = parent,
-                .body_expr_id = @"fn".body,
+                .fn_expr_id = expr_id,
                 .captures = .{},
                 .capture_name_to_index = .init(allocator),
                 .scope_start = scope_start,
@@ -1411,6 +1412,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             const closure = closure_value.asClosure().?;
             const @"fn" = &c.fns.items[closure.fn_id.id];
 
+            const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
+            try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
+
             const missing_unique_bitmap = @"fn".unique_bitmap & ~call.unique_bitmap;
             if (missing_unique_bitmap != 0) {
                 const arg_index = @ctz(missing_unique_bitmap);
@@ -1444,7 +1448,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                 c.bindings.append(allocator, .{ .name = capture.name, .value = capture_value.borrow() }) catch oom();
             }
 
-            return eval(c, @"fn".body_expr_id);
+            for (fn_expr.params, args) |param, arg| {
+                c.bindings.append(allocator, .{ .name = param.name, .value = arg }) catch oom();
+            }
+
+            return eval(c, fn_expr.body);
         },
         .call_builtin => |call_builtin| {
             const args = allocator.alloc(Value, call_builtin.args.len) catch oom();

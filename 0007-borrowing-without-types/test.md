@@ -174,6 +174,19 @@ The callee expected this argument to be uniquely shared, but it was not.
 
 ```test
 {
+  let f = fn (x) {
+    get(x, 0);
+  };
+  let y = [0];
+  f(y!);
+  copy(y)
+}
+
+[0]
+```
+
+```test
+{
   let f = fn (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am, an, ao, ap, aq, ar, as, at, au, av, aw, ax, ay, az, aa, ab, ac, ad, ae, af, ag, ah, ai, aj, ak, al, am) {};
 }
 
@@ -337,4 +350,60 @@ The value returned from this block borrows from `a`, but `a` will be destroyed a
 }
 
 2
+```
+
+```test
+{
+  let f = fn (x) {
+    get(x, 0)
+  };
+  let x = [42];
+  // f(x) // TODO should infer that this function returns a borrow
+}
+
+null
+```
+
+```test
+{
+  let f = fn (x) {
+    get(x, 0)
+  };
+  let x = [42];
+  copy(f(x))
+}
+
+42
+```
+
+```test
+{
+  let f = fn (x) {
+    get(x, 0)
+  };
+  // copy(f([42])) // TODO the 42 gets destroyed when f returns!
+}
+
+null
+```
+
+```test
+{
+  let f = fn () {};
+  f(1)
+}
+
+Error at 3:3
+Expected 0 arguments but found 1 arguments
+```
+
+
+```test
+{
+  let f = fn (x) {};
+  f()
+}
+
+Error at 3:3
+Expected 1 arguments but found 0 arguments
 ```
