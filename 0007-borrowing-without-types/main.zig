@@ -284,7 +284,7 @@ const Expr = union(enum) {
         body: ExprId,
     },
     @"fn": struct {
-        params: [][]const u8,
+        params: []Param,
         body: ExprId,
     },
     call: struct {
@@ -305,6 +305,11 @@ const Expr = union(enum) {
             .null, .number, .get, .let, .@"if", .@"while" => {},
         }
     }
+};
+
+const Param = struct {
+    name: []const u8,
+    borrow_kind: BorrowKind,
 };
 
 const Builtin = enum {
@@ -519,13 +524,14 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     try expect(c, .@"fn");
     try expect(c, .@"(");
 
-    var params: ArrayList([]const u8) = .{};
+    var params: ArrayList(Param) = .{};
     defer params.deinit(allocator);
 
     while (true) {
         if (peek(c) == .@")") break;
-        const param = try expectName(c);
-        params.append(allocator, param) catch oom();
+        const name = try expectName(c);
+        const borrow_kind: BorrowKind = if (takeIf(c, .@"!")) .unique else .shared;
+        params.append(allocator, .{ .name = name, .borrow_kind = borrow_kind }) catch oom();
         if (!takeIf(c, .@",")) break;
     }
 
@@ -712,7 +718,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var fn_id_next = c.fn_id_current;
             while (fn_id_next) |fn_id| {
                 const @"fn" = &c.fns.items[fn_id.id];
-                if (scope_index <= @"fn".scope_start) {
+                if (scope_index < @"fn".scope_start) {
                     if (@"fn".capture_name_to_index.get(get.name)) |capture_index| {
                         if (get.borrow_kind == .unique)
                             @"fn".captures.items[capture_index].borrow.kind = .unique;
@@ -875,6 +881,9 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             return BorrowSet.init(allocator);
         },
         .@"fn" => |@"fn"| {
+            const scope_start = c.scope.items.len;
+            defer resetScope(c, scope_start);
+
             const fn_id = FnId{ .id = c.fns.items.len };
 
             const parent = c.fn_id_current;
@@ -886,9 +895,16 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 .body_expr_id = @"fn".body,
                 .captures = .{},
                 .capture_name_to_index = .init(allocator),
-                .scope_start = c.scope.items.len,
+                .scope_start = scope_start,
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
+
+            for (@"fn".params) |param| {
+                // TODO Get decent error reporting out of this. A real name and expr_id.
+                var bs_param = BorrowSet.init(allocator);
+                bs_param.putNoClobber("<params>", .{ .kind = param.borrow_kind, .origin = expr_id }) catch oom();
+                c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
+            }
 
             var bs_fn = try analyze(c, @"fn".body);
             bs_fn.deinit();
@@ -1375,7 +1391,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             }
 
             for (@"fn".captures.items, closure.capture_values) |capture, capture_value| {
-                c.bindings.append(allocator, .{ .name = capture.name, .value = capture_value }) catch oom();
+                c.bindings.append(allocator, .{ .name = capture.name, .value = capture_value.borrow() }) catch oom();
             }
 
             return eval(c, @"fn".body_expr_id);
