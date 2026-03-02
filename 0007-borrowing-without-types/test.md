@@ -189,3 +189,80 @@ Functions may take at most 64 arguments
 Error at 2:235
 Functions may take at most 64 arguments
 ```
+
+```test
+{
+  let a = [[1]];
+  set(get(a!, 0), 0, 2);
+  copy(a)
+}
+
+[[2]]
+```
+
+```test
+{
+  let a = [0];
+  let b = a!;
+  let c = a;
+  copy(c)
+}
+
+Error at 4:11
+Can't borrow a here because it is already uniquely borrowed by b at 3:11'
+```
+
+```test
+{
+  let a = [[0]];
+  let b = a!;
+  let c = get(b, 0);
+  set(b!, 0, 1);
+  copy(b)
+}
+
+Error at 5:7
+Can't uniquely borrow b here because it is already borrowed by c at 4:15'
+```
+
+```test
+{
+  let a = [[0]];
+  let b = a!;
+  let c = get(b, 0);
+  set(a!, 0, 1);
+  copy(b)
+}
+
+Error at 5:7
+Can't uniquely borrow a here because it is already borrowed by b at 3:11'
+```
+
+```test
+{
+  let a = [[0]];
+  let b = a!;
+  {
+    let c = get(b, 0);
+  };
+  set(b!, 0, 1);
+  copy(b)
+}
+
+[1]
+```
+
+```test
+{
+  let a = [1];
+  let b = [2];
+  let c = [a!, b!];
+  let d = take(c!, 1);
+  set(get(c!, 0), 0, 42);
+  set(d!, 0, 101);
+  copy([a, b])
+}
+
+Error at 4:12
+This value can't be stored inside a tuple because it uniquely borrows from a.
+```
