@@ -79,7 +79,8 @@ const Compiler = struct {
     pub fn run(c: *Compiler) ![]const u8 {
         try tokenize(c);
         c.expr_top = try parse(c);
-        try analyze(c, c.expr_top.?);
+        var bs = try analyze(c, c.expr_top.?);
+        bs.deinit();
         const value = try eval(c, c.expr_top.?);
         return std.fmt.allocPrint(allocator, "{f}", .{value});
     }
@@ -261,7 +262,10 @@ const Expr = union(enum) {
     null,
     number: i64,
     tuple: []ExprId,
-    name: []const u8,
+    get: struct {
+        name: []const u8,
+        borrow_kind: BorrowKind,
+    },
     let: struct {
         name: []const u8,
         value: ExprId,
@@ -291,7 +295,6 @@ const Expr = union(enum) {
         builtin: Builtin,
         args: []ExprId,
     },
-    unique: ExprId,
 
     fn deinit(expr: Expr) void {
         switch (expr) {
@@ -299,7 +302,7 @@ const Expr = union(enum) {
             .block => |block| allocator.free(block.statements),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             inline .call, .call_builtin => |call| allocator.free(call.args),
-            .null, .number, .name, .let, .@"if", .@"while", .unique => {},
+            .null, .number, .get, .let, .@"if", .@"while" => {},
         }
     }
 };
@@ -362,7 +365,6 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     while (true) {
         switch (peek(c)) {
             .@"(" => expr = try parseCall(c, expr),
-            .@"!" => expr = try parseUnique(c, expr),
             else => break,
         }
     }
@@ -393,18 +395,12 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     return args.toOwnedSlice(allocator) catch oom();
 }
 
-fn parseUnique(c: *Compiler, expr: ExprId) error{Error}!ExprId {
-    const start = c.expr_to_tokens.items[expr.id][0];
-    try expect(c, .@"!");
-    return pushExpr(c, start, .{ .unique = expr });
-}
-
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
     return switch (peek(c)) {
         .null => parseNull(c),
         .number => parseNumber(c),
         .@"[" => parseList(c),
-        .name => parseName(c),
+        .name => parseGet(c),
         .@"{" => parseBlock(c),
         .@"if" => parseIf(c),
         .@"while" => parseWhile(c),
@@ -459,10 +455,11 @@ fn parseList(c: *Compiler) error{Error}!ExprId {
     return pushExpr(c, start, .{ .tuple = elems.toOwnedSlice(allocator) catch oom() });
 }
 
-fn parseName(c: *Compiler) error{Error}!ExprId {
+fn parseGet(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName(c);
-    return pushExpr(c, start, .{ .name = name });
+    const borrow_kind: BorrowKind = if (takeIf(c, .@"!")) .unique else .shared;
+    return pushExpr(c, start, .{ .get = .{ .name = name, .borrow_kind = borrow_kind } });
 }
 
 fn parseBlock(c: *Compiler) error{Error}!ExprId {
@@ -615,109 +612,404 @@ const FnId = packed struct { id: usize };
 const Fn = struct {
     parent: ?FnId,
     body_expr_id: ExprId,
-    capture_names: ArrayList([]const u8),
+    captures: ArrayList(Capture),
     capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
 
     fn deinit(@"fn": *Fn) void {
         @"fn".capture_name_to_index.deinit();
-        @"fn".capture_names.deinit(allocator);
+        @"fn".captures.deinit(allocator);
     }
 };
 
-const ScopeItem = struct {
+const Capture = struct {
     name: []const u8,
-    let_id: ExprId,
+    borrow: Borrow,
+};
+
+const ScopeItem = struct {
+    // Either the name from an `Expr.let`, or null if this is an anonymous expression.
+    name: ?[]const u8,
+    expr_id: ExprId,
+    borrow_set: BorrowSet,
+
+    fn deinit(scope_item: *ScopeItem) void {
+        scope_item.borrow_set.deinit();
+    }
 };
 
 fn resolve(list: anytype, name: []const u8) ?usize {
     var i = list.items.len;
     while (i > 0) : (i -= 1) {
-        const item = list.items[i - 1];
-        if (std.mem.eql(u8, item.name, name)) return i - 1;
+        const index = i - 1;
+        const item = list.items[index];
+        if (item.name) |item_name|
+            if (std.mem.eql(u8, item_name, name))
+                return index;
     }
     return null;
 }
 
-fn analyze(c: *Compiler, expr_id: ExprId) !void {
-    switch (c.exprs.items[expr_id.id]) {
-        .null, .number => {},
-        .tuple => |tuple| {
-            for (tuple) |item| {
-                try analyze(c, item);
-            }
-        },
-        .name => |name| {
-            const scope_index = resolve(c.scope, name) orelse
-                return failNotDefined(c, expr_id, name);
+const BorrowSet = std.hash_map.StringHashMap(Borrow);
 
+const Borrow = struct {
+    kind: BorrowKind,
+    // The `Expr.get` where this borrow originated from.
+    origin: ExprId,
+};
+
+const BorrowKind = enum {
+    unique,
+    shared,
+};
+
+fn addBorrowSet(bs_old: *BorrowSet, bs_new: BorrowSet) void {
+    var iter = bs_new.iterator();
+    while (iter.next()) |kv| {
+        bs_old.put(kv.key_ptr.*, kv.value_ptr.*) catch oom();
+    }
+}
+
+fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
+    switch (c.exprs.items[expr_id.id]) {
+        .null, .number => {
+            return BorrowSet.init(allocator);
+        },
+        .tuple => |tuple| {
+            const scope_start = c.scope.items.len;
+            defer resetScope(c, scope_start);
+
+            for (tuple) |elem| {
+                const bs_elem = try analyzeAndAddToScope(c, elem);
+                var iter = bs_elem.iterator();
+                while (iter.next()) |kv| {
+                    const name = kv.key_ptr.*;
+                    const borrow = kv.value_ptr.*;
+                    if (borrow.kind == .unique) {
+                        return fail(
+                            c,
+                            .{ .expr_id = elem },
+                            "This value can't be stored inside a tuple because it uniquely borrows from {s}.",
+                            .{name},
+                        );
+                    }
+                }
+            }
+
+            // This tuple borrows from all the names it's elems borrow from.
+            var bs = BorrowSet.init(allocator);
+            for (c.scope.items[scope_start..]) |scope_item| {
+                addBorrowSet(&bs, scope_item.borrow_set);
+            }
+            return bs;
+        },
+        .get => |get| {
+            // Find the corresponding `let`.
+            const scope_index = resolve(c.scope, get.name) orelse
+                return failNotDefined(c, expr_id, get.name);
+
+            // Update captures of any enclosing functions.
             var fn_id_next = c.fn_id_current;
             while (fn_id_next) |fn_id| {
                 const @"fn" = &c.fns.items[fn_id.id];
-                if (scope_index <= @"fn".scope_start and
-                    !@"fn".capture_name_to_index.contains(name))
-                {
-                    const capture_index = @"fn".capture_names.items.len;
-                    @"fn".capture_name_to_index.put(name, capture_index) catch oom();
-                    @"fn".capture_names.append(allocator, name) catch oom();
+                if (scope_index <= @"fn".scope_start) {
+                    if (@"fn".capture_name_to_index.get(get.name)) |capture_index| {
+                        if (get.borrow_kind == .unique)
+                            @"fn".captures.items[capture_index].borrow.kind = .unique;
+                    } else {
+                        const capture_index = @"fn".captures.items.len;
+                        @"fn".capture_name_to_index.put(get.name, capture_index) catch oom();
+                        @"fn".captures.append(allocator, .{
+                            .name = get.name,
+                            .borrow = .{ .kind = get.borrow_kind, .origin = expr_id },
+                        }) catch oom();
+                    }
                 }
                 fn_id_next = @"fn".parent;
             }
+
+            // Check if any other names already borrow `get.name`.
+            for (c.scope.items) |scope_item| {
+                if (scope_item.borrow_set.get(get.name)) |borrow| {
+                    if (get.borrow_kind == .unique) {
+                        const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't uniquely borrow {s} here because it is already borrowed by {s} at {}:{}'",
+                            .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
+                        );
+                    }
+                    if (borrow.kind == .unique) {
+                        const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't borrow {s} here because it is already uniquely borrowed by {s} at {}:{}'",
+                            .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
+                        );
+                    }
+                }
+            }
+
+            // Check if `get.name` borrows another name using a conflicting `BorrowKind`.
+            if (get.borrow_kind == .unique) {
+                var iter = c.scope.items[scope_index].borrow_set.iterator();
+                while (iter.next()) |kv| {
+                    const borrow_name = kv.key_ptr.*;
+                    const borrow = kv.value_ptr;
+                    if (borrow.kind == .shared) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't uniquely borrow {s} because it borrows non-uniquely from {s}'",
+                            .{ get.name, borrow_name },
+                        );
+                    }
+                }
+            }
+
+            // This expression borrows from `get.name`.
+            var bs = BorrowSet.init(allocator);
+            bs.putNoClobber(get.name, .{ .kind = get.borrow_kind, .origin = expr_id }) catch oom();
+            return bs;
         },
         .let => |let| {
             if (resolve(c.scope, let.name)) |scope_index| {
-                return failAlreadyDefined(c, expr_id, c.scope.items[scope_index].let_id, let.name);
+                return failAlreadyDefined(c, expr_id, c.scope.items[scope_index].expr_id, let.name);
             }
-            try analyze(c, let.value);
-            c.scope.append(allocator, .{ .name = let.name, .let_id = expr_id }) catch oom();
+
+            const bs = try analyze(c, let.value);
+            c.scope.append(allocator, .{
+                .name = let.name,
+                .expr_id = expr_id,
+                .borrow_set = bs,
+            }) catch oom();
+
+            return BorrowSet.init(allocator);
         },
         .block => |block| {
             const scope_start = c.scope.items.len;
-            defer c.scope.shrinkRetainingCapacity(scope_start);
+            defer resetScope(c, scope_start);
+
+            var bs = BorrowSet.init(allocator);
+            errdefer bs.deinit();
 
             for (block.statements) |statement| {
-                try analyze(c, statement);
+                const bs_statement = try analyze(c, statement);
+
+                bs.deinit();
+                bs = bs_statement;
             }
+
+            if (block.return_null) {
+                bs.deinit();
+                bs = .init(allocator);
+            }
+
+            for (c.scope.items[scope_start..]) |scope_item| {
+                if (bs.contains(scope_item.name.?)) {
+                    return fail(
+                        c,
+                        .{ .expr_id = block.statements[block.statements.len - 1] },
+                        "The value returned from this block borrows from {s}, but {s} will be destroyed at the end of this block.",
+                        .{ scope_item.name.?, scope_item.name.? },
+                    );
+                }
+            }
+
+            return bs;
         },
         .@"if" => |@"if"| {
-            try analyze(c, @"if".cond);
-            try analyze(c, @"if".then);
-            try analyze(c, @"if".@"else");
+            var bs_cond = try analyze(c, @"if".cond);
+            bs_cond.deinit();
+
+            var bs_then = try analyze(c, @"if".then);
+            defer bs_then.deinit();
+
+            var bs_else = try analyze(c, @"if".@"else");
+            defer bs_else.deinit();
+
+            var bs = BorrowSet.init(allocator);
+            errdefer bs.deinit();
+
+            // This `if` borrows from everything borrowed in the `then` and `else` branches.
+            // But the borrows in each branch must have matching kinds.
+            std.mem.swap(BorrowSet, &bs, &bs_then);
+            {
+                var iter = bs_then.iterator();
+                while (iter.next()) |kv| {
+                    const name = kv.key_ptr.*;
+                    const borrow_else = kv.value_ptr.*;
+                    if (bs.get(name)) |borrow_then| {
+                        if (borrow_then.kind == .unique and borrow_else.kind == .shared) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "The 'then' branch of this 'if' uniquely borrows {s} but the 'else' branch non-uniquely borrows {s}.",
+                                .{ name, name },
+                            );
+                        }
+                        if (borrow_then.kind == .shared and borrow_else.kind == .unique) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "The 'then' branch of this 'if' non-uniquely borrows {s} but the 'else' branch uniquely borrows {s}.",
+                                .{ name, name },
+                            );
+                        }
+                    } else {
+                        bs.putNoClobber(name, borrow_else) catch oom();
+                    }
+                }
+            }
+            return bs;
         },
         .@"while" => |@"while"| {
-            try analyze(c, @"while".cond);
-            try analyze(c, @"while".body);
+            var bs_cond = try analyze(c, @"while".cond);
+            bs_cond.deinit();
+
+            var bs_body = try analyze(c, @"while".body);
+            bs_body.deinit();
+
+            return BorrowSet.init(allocator);
         },
         .@"fn" => |@"fn"| {
+            const fn_id = FnId{ .id = c.fns.items.len };
+
             const parent = c.fn_id_current;
-            c.fn_id_current = .{ .id = c.fns.items.len };
+            c.fn_id_current = fn_id;
             defer c.fn_id_current = parent;
 
             c.fns.append(allocator, .{
                 .parent = parent,
                 .body_expr_id = @"fn".body,
-                .capture_names = .{},
+                .captures = .{},
                 .capture_name_to_index = .init(allocator),
                 .scope_start = c.scope.items.len,
             }) catch oom();
-            c.expr_to_fn.put(expr_id, c.fn_id_current.?) catch oom();
+            c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
-            try analyze(c, @"fn".body);
+            var bs_fn = try analyze(c, @"fn".body);
+            bs_fn.deinit();
+
+            // This `fn` borrows from any name that it captures.
+            var bs = BorrowSet.init(allocator);
+            for (c.fns.items[fn_id.id].captures.items) |capture| {
+                bs.putNoClobber(capture.name, capture.borrow) catch oom();
+            }
+            return bs;
         },
         .call => |call| {
-            try analyze(c, call.closure);
+            const scope_start = c.scope.items.len;
+            defer resetScope(c, scope_start);
+
+            _ = try analyzeAndAddToScope(c, call.closure);
+
             for (call.args) |arg| {
-                try analyze(c, arg);
+                _ = try analyzeAndAddToScope(c, arg);
             }
+
+            return BorrowSet.init(allocator);
         },
         .call_builtin => |call_builtin| {
-            for (call_builtin.args) |arg| {
-                try analyze(c, arg);
+            const scope_start = c.scope.items.len;
+            defer resetScope(c, scope_start);
+
+            switch (call_builtin.builtin) {
+                .@"+", .@"<", .copy => {
+                    for (call_builtin.args) |arg|
+                        _ = try analyzeAndAddToScope(c, arg);
+
+                    return BorrowSet.init(allocator);
+                },
+                .get => {
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
+                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
+                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
+
+                    return bs_tuple.clone() catch oom();
+                },
+                .set => {
+                    try checkArgCount(c, expr_id, .{ .expected = 3, .actual = call_builtin.args.len });
+                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
+                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
+                    const bs_elem = try analyzeAndAddToScope(c, call_builtin.args[2]);
+
+                    // `tuple` must not contain any shared borrows.
+                    {
+                        var iter = bs_tuple.iterator();
+                        while (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            const borrow = kv.value_ptr.*;
+                            if (borrow.kind == .shared) {
+                                return fail(
+                                    c,
+                                    .{ .expr_id = call_builtin.args[0] },
+                                    "Can't set an elem on this tuple because it borrows non-uniquely from {s}.'",
+                                    .{name},
+                                );
+                            }
+                        }
+                    }
+
+                    // 'elem' must not borrow from anything.
+                    {
+                        var iter = bs_elem.iterator();
+                        if (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            return fail(
+                                c,
+                                .{ .expr_id = call_builtin.args[2] },
+                                "Can't set this elem because it borrows from {s}.",
+                                .{name},
+                            );
+                        }
+                    }
+
+                    // The result is owned.
+                    return BorrowSet.init(allocator);
+                },
+                .take => {
+                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
+                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
+                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
+
+                    // `tuple` must not contain any shared borrows.
+                    {
+                        var iter = bs_tuple.iterator();
+                        while (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            const borrow = kv.value_ptr.*;
+                            if (borrow.kind == .shared) {
+                                return fail(
+                                    c,
+                                    .{ .expr_id = call_builtin.args[0] },
+                                    "Can't take an elem from this tuple because it borrows non-uniquely from {s}.'",
+                                    .{name},
+                                );
+                            }
+                        }
+                    }
+
+                    // The result is owned.
+                    return BorrowSet.init(allocator);
+                },
             }
         },
-        .unique => |unique| {
-            try analyze(c, unique);
-        },
+    }
+}
+
+fn analyzeAndAddToScope(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
+    const bs = try analyze(c, expr_id);
+    c.scope.append(allocator, .{ .name = null, .expr_id = expr_id, .borrow_set = bs }) catch oom();
+    return bs;
+}
+
+fn resetScope(c: *Compiler, scope_start: usize) void {
+    while (c.scope.items.len > scope_start) {
+        var scope_item = c.scope.pop().?;
+        scope_item.deinit();
     }
 }
 
@@ -963,7 +1255,7 @@ const Value = packed struct {
 };
 
 const Binding = struct {
-    name: []const u8,
+    name: ?[]const u8,
     value: Value,
 };
 
@@ -986,8 +1278,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 
             return value.take();
         },
-        .name => |name| {
-            const binding_index = resolve(c.bindings, name).?;
+        .get => |get| {
+            const binding_index = resolve(c.bindings, get.name).?;
             const value = c.bindings.items[binding_index].value;
             return value.borrow();
         },
@@ -1030,30 +1322,27 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             return eval(c, if (cond.kind() != .null) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
-            var value = Value.initNull();
-            defer value.deinit();
-
             while (true) {
                 var cond = try eval(c, @"while".cond);
                 defer cond.deinit();
 
                 if (cond.kind() == .null) break;
 
-                value.deinit();
-                value = try eval(c, @"while".body);
+                var value = try eval(c, @"while".body);
+                defer value.deinit();
             }
 
-            return value.take();
+            return Value.initNull();
         },
         .@"fn" => {
             const fn_id = c.expr_to_fn.get(expr_id).?;
             const @"fn" = &c.fns.items[fn_id.id];
 
-            var value = Value.initClosure(fn_id, @"fn".capture_names.items.len);
+            var value = Value.initClosure(fn_id, @"fn".captures.items.len);
             defer value.deinit();
 
-            for (@"fn".capture_names.items, value.asClosure().?.capture_values) |capture_name, *capture_value| {
-                const binding_index = resolve(c.bindings, capture_name).?;
+            for (@"fn".captures.items, value.asClosure().?.capture_values) |capture, *capture_value| {
+                const binding_index = resolve(c.bindings, capture.name).?;
                 capture_value.* = c.bindings.items[binding_index].value.borrow();
             }
 
@@ -1085,8 +1374,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                 }
             }
 
-            for (@"fn".capture_names.items, closure.capture_values) |capture_name, capture_value| {
-                c.bindings.append(allocator, .{ .name = capture_name, .value = capture_value }) catch oom();
+            for (@"fn".captures.items, closure.capture_values) |capture, capture_value| {
+                c.bindings.append(allocator, .{ .name = capture.name, .value = capture_value }) catch oom();
             }
 
             return eval(c, @"fn".body_expr_id);
@@ -1142,9 +1431,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                     return args[0].copy();
                 },
             }
-        },
-        .unique => |unique| {
-            return eval(c, unique);
         },
     }
 }
