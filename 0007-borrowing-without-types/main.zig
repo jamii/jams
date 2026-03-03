@@ -27,6 +27,7 @@ const Compiler = struct {
     fns: ArrayList(Fn),
     expr_to_fn: std.AutoHashMap(ExprId, FnId),
     expr_to_lease: ArrayList(Lease),
+    expr_to_fn_lease_bitmap: std.AutoHashMap(ExprId, FnLeaseBitmap),
     scope: ArrayList(ScopeItem),
     fn_id_current: ?FnId,
 
@@ -50,6 +51,7 @@ const Compiler = struct {
             .fns = .{},
             .expr_to_fn = .init(allocator),
             .expr_to_lease = .{},
+            .expr_to_fn_lease_bitmap = .init(allocator),
             .scope = .{},
             .fn_id_current = null,
 
@@ -60,22 +62,23 @@ const Compiler = struct {
     }
 
     pub fn deinit(c: *Compiler) void {
-        if (c.error_message) |err| allocator.free(err);
+        c.tokens.deinit(allocator);
+        c.token_to_range.deinit(allocator);
+
+        for (c.exprs.items) |expr| expr.deinit();
+        c.exprs.deinit(allocator);
+        c.expr_to_tokens.deinit(allocator);
+
+        c.fns.deinit(allocator);
+        c.expr_to_fn.deinit();
+        c.expr_to_lease.deinit(allocator);
+        c.expr_to_fn_lease_bitmap.deinit();
+        c.scope.deinit(allocator);
 
         for (c.bindings.items) |*binding| binding.value.deinit();
         c.bindings.deinit(allocator);
 
-        c.scope.deinit(allocator);
-        c.expr_to_lease.deinit(allocator);
-        c.expr_to_fn.deinit();
-        c.fns.deinit(allocator);
-
-        c.expr_to_tokens.deinit(allocator);
-        for (c.exprs.items) |expr| expr.deinit();
-        c.exprs.deinit(allocator);
-
-        c.token_to_range.deinit(allocator);
-        c.tokens.deinit(allocator);
+        if (c.error_message) |err| allocator.free(err);
     }
 
     pub fn run(c: *Compiler) ![]const u8 {
@@ -292,7 +295,6 @@ const Expr = union(enum) {
         params: []ExprId,
         return_lease: Lease,
         body: ExprId,
-        lease_bitmap: LeaseBitmap,
     },
     param: struct {
         name: []const u8,
@@ -301,9 +303,7 @@ const Expr = union(enum) {
     call: struct {
         closure: ExprId,
         args: []ExprId,
-        arg_leases: []Lease,
         return_lease: Lease,
-        lease_bitmap: LeaseBitmap,
     },
     call_builtin: struct {
         builtin: Builtin,
@@ -315,10 +315,7 @@ const Expr = union(enum) {
             .tuple => |exprs| allocator.free(exprs),
             .block => |block| allocator.free(block.statements),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
-            .call => |call| {
-                allocator.free(call.args);
-                allocator.free(call.arg_leases);
-            },
+            .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
             .null, .number, .get, .let, .@"if", .@"while", .param => {},
         }
@@ -398,15 +395,12 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
-    const arg_leases = allocator.alloc(Lease, args.len) catch oom();
     const return_lease = parseLease(c) orelse .owned;
     return pushExpr(c, start, .{
         .call = .{
             .closure = closure,
             .args = args,
-            .arg_leases = arg_leases, // filled in later by `analyze`
             .return_lease = return_lease,
-            .lease_bitmap = .{ .bits = 0 }, // filled in later by `analyze`
         },
     });
 }
@@ -592,7 +586,6 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
             .params = params.toOwnedSlice(allocator) catch oom(),
             .return_lease = return_lease,
             .body = body,
-            .lease_bitmap = .{ .bits = 0 }, // filled in later by `analyze`
         },
     });
 }
@@ -751,16 +744,16 @@ fn leaseFromBorrowSet(bs: BorrowSet) Lease {
     return result;
 }
 
-const LeaseBitmap = struct {
+const FnLeaseBitmap = struct {
     bits: u64,
 
-    fn setParam(lb: *LeaseBitmap, i: usize, lease: Lease) void {
+    fn setParam(f: *FnLeaseBitmap, i: usize, lease: Lease) void {
         assert(i < arg_count_max);
-        lb.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * i);
+        f.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * i);
     }
 
-    fn setReturn(lb: *LeaseBitmap, lease: Lease) void {
-        lb.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * arg_count_max);
+    fn setReturn(f: *FnLeaseBitmap, lease: Lease) void {
+        f.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * arg_count_max);
     }
 };
 
@@ -956,12 +949,14 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
+            var fn_lease_bitmap = FnLeaseBitmap{ .bits = 0 };
             for (@"fn".params, 0..) |param_id, i| {
                 const param = c.exprs.items[param_id.id].param;
                 c.expr_to_lease.items[param_id.id] = param.lease;
-                @"fn".lease_bitmap.setParam(i, param.lease);
+                fn_lease_bitmap.setParam(i, param.lease);
             }
-            @"fn".lease_bitmap.setReturn(@"fn".return_lease);
+            fn_lease_bitmap.setReturn(@"fn".return_lease);
+            c.expr_to_fn_lease_bitmap.putNoClobber(expr_id, fn_lease_bitmap) catch oom();
 
             for (@"fn".params) |param_id| {
                 const param = c.exprs.items[param_id.id].param;
@@ -1030,13 +1025,14 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             _ = try analyzeAndAddToScope(c, call.closure);
 
+            var fn_lease_bitmap = FnLeaseBitmap{ .bits = 0 };
             for (call.args, 0..) |arg, i| {
                 const bs_arg = try analyzeAndAddToScope(c, arg);
                 const lease = leaseFromBorrowSet(bs_arg);
-                call.arg_leases[i] = lease;
-                call.lease_bitmap.setParam(i, lease);
+                fn_lease_bitmap.setParam(i, lease);
             }
-            call.lease_bitmap.setReturn(call.return_lease);
+            fn_lease_bitmap.setReturn(call.return_lease);
+            c.expr_to_fn_lease_bitmap.put(expr_id, fn_lease_bitmap) catch oom();
 
             switch (call.return_lease) {
                 .owned => {
@@ -1456,10 +1452,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
-            if (call.lease_bitmap.bits != fn_expr.lease_bitmap.bits) {
+            if (c.expr_to_fn_lease_bitmap.get(expr_id).?.bits != c.expr_to_fn_lease_bitmap.get(@"fn".fn_expr_id).?.bits) {
                 try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
 
-                for (call.args, call.arg_leases, fn_expr.params) |arg, arg_lease, param_id| {
+                for (call.args, fn_expr.params) |arg, param_id| {
+                    const arg_lease = c.expr_to_lease.items[arg.id];
                     const param = c.exprs.items[param_id.id].param;
                     if (arg_lease != param.lease) {
                         return fail(
