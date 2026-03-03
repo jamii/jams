@@ -158,8 +158,7 @@ Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
   copy(x)
 }
 
-Error at 6:5
-The callee expected this argument to be uniquely shared, but it was not.
+[1]
 ```
 
 ```test

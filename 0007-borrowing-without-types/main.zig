@@ -141,6 +141,7 @@ const Token = enum {
     @"=",
     @"<",
     @"+",
+    @"^",
     @"!",
     @"&",
 
@@ -179,6 +180,7 @@ pub fn tokenize(c: *Compiler) !void {
             '=' => .@"=",
             '<' => .@"<",
             '+' => .@"+",
+            '^' => .@"^",
             '!' => .@"!",
             '&' => .@"&",
             '/' => {
@@ -264,7 +266,7 @@ const Expr = union(enum) {
     tuple: []ExprId,
     get: struct {
         name: []const u8,
-        kind: GetKind,
+        lease: Lease,
     },
     let: struct {
         name: []const u8,
@@ -285,14 +287,15 @@ const Expr = union(enum) {
     },
     @"fn": struct {
         params: []Param,
-        kind: ReturnKind,
+        return_lease: Lease,
         body: ExprId,
+        lease_bitmap: u64,
     },
     call: struct {
         closure: ExprId,
         args: []ExprId,
-        kind: ReturnKind,
-        kind_bitmap: u64,
+        return_lease: Lease,
+        lease_bitmap: u64,
     },
     call_builtin: struct {
         builtin: Builtin,
@@ -310,24 +313,13 @@ const Expr = union(enum) {
     }
 };
 
-const GetKind = enum {
-    unique,
-    shared,
-};
-
-const ReturnKind = enum {
-    mixed,
-    unique,
-    owned,
-};
-
 const Param = struct {
     name: []const u8,
-    kind: ParamKind,
+    lease: Lease,
 };
 
-const ParamKind = enum {
-    mixed,
+const Lease = enum {
+    owned,
     unique,
     shared,
 };
@@ -399,18 +391,13 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
-    const return_kind: ReturnKind = if (takeIf(c, .@"&"))
-        .mixed
-    else if (takeIf(c, .@"!"))
-        .unique
-    else
-        .owned;
+    const return_lease = parseLease(c) orelse .owned;
     return pushExpr(c, start, .{
         .call = .{
             .closure = closure,
             .args = args,
-            .kind = return_kind,
-            .kind_bitmap = 0, // filled in later by `analyze`
+            .return_lease = return_lease,
+            .lease_bitmap = 0, // filled in later by `analyze`
         },
     });
 }
@@ -505,8 +492,8 @@ fn parseList(c: *Compiler) error{Error}!ExprId {
 fn parseGet(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName(c);
-    const kind: GetKind = if (takeIf(c, .@"!")) .unique else .shared;
-    return pushExpr(c, start, .{ .get = .{ .name = name, .kind = kind } });
+    const lease = parseLease(c) orelse .shared;
+    return pushExpr(c, start, .{ .get = .{ .name = name, .lease = lease } });
 }
 
 fn parseBlock(c: *Compiler) error{Error}!ExprId {
@@ -572,13 +559,8 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
         const name = try expectName(c);
-        const param_kind: ParamKind = if (takeIf(c, .@"!"))
-            .unique
-        else if (takeIf(c, .@"&"))
-            .shared
-        else
-            .mixed;
-        params.append(allocator, .{ .name = name, .kind = param_kind }) catch oom();
+        const param_lease = parseLease(c) orelse .shared;
+        params.append(allocator, .{ .name = name, .lease = param_lease }) catch oom();
         if (!takeIf(c, .@",")) break;
     } else {
         return fail(
@@ -590,21 +572,17 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     }
 
     try expect(c, .@")");
-
-    const return_kind: ReturnKind = if (takeIf(c, .@"&"))
-        .mixed
-    else if (takeIf(c, .@"!"))
-        .unique
-    else
-        .owned;
-
+    const return_lease = parseLease(c) orelse .owned;
     const body = try parseBlock(c);
 
-    return pushExpr(c, start, .{ .@"fn" = .{
-        .params = params.toOwnedSlice(allocator) catch oom(),
-        .kind = return_kind,
-        .body = body,
-    } });
+    return pushExpr(c, start, .{
+        .@"fn" = .{
+            .params = params.toOwnedSlice(allocator) catch oom(),
+            .return_lease = return_lease,
+            .body = body,
+            .lease_bitmap = 0, // filled in later by `analyze`
+        },
+    });
 }
 
 fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
@@ -622,6 +600,17 @@ fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
     const args = try parseArgs(c);
     const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = builtin, .args = args } });
     return expr_id;
+}
+
+fn parseLease(c: *Compiler) ?Lease {
+    return if (takeIf(c, .@"^"))
+        .owned
+    else if (takeIf(c, .@"!"))
+        .unique
+    else if (takeIf(c, .@"&"))
+        .shared
+    else
+        null;
 }
 
 fn expect(c: *Compiler, expected: Token) error{Error}!void {
@@ -689,7 +678,6 @@ const Fn = struct {
     parent: ?FnId,
     fn_expr_id: ExprId,
     scope_start: usize,
-    kind_bitmap: u64,
 };
 
 const ScopeItem = struct {
@@ -735,9 +723,14 @@ const BorrowSet = struct {
 };
 
 const Borrow = struct {
-    kind: GetKind,
+    lease: BorrowLease,
     // The `Expr.get` where this borrow originated from.
     origin: ExprId,
+};
+
+const BorrowLease = enum {
+    unique,
+    shared,
 };
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
@@ -766,6 +759,12 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             return BorrowSet.init();
         },
         .get => |get| {
+            const get_lease: BorrowLease = switch (get.lease) {
+                .owned => panic("TODO", .{}),
+                .unique => .unique,
+                .shared => .shared,
+            };
+
             // Find the corresponding `let`.
             const scope_index = resolve(c.scope, get.name) orelse
                 return failNotDefined(c, expr_id, get.name);
@@ -781,7 +780,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             // Check if any other names already borrow `get.name`.
             for (c.scope.items) |scope_item| {
                 if (scope_item.borrow_set.borrowed.get(get.name)) |borrow| {
-                    if (get.kind == .unique) {
+                    if (get_lease == .unique) {
                         const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
                         return fail(
                             c,
@@ -790,7 +789,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                             .{ get.name, scope_item.name orelse "<anon>", line_col[0], line_col[1] },
                         );
                     }
-                    if (borrow.kind == .unique) {
+                    if (borrow.lease == .unique) {
                         const line_col = lineColFromSourceLocation(c, .{ .expr_id = borrow.origin });
                         return fail(
                             c,
@@ -803,12 +802,12 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             // Check if `get.name` borrows another name using a conflicting `BorrowKind`.
-            if (get.kind == .unique) {
+            if (get_lease == .unique) {
                 var iter = c.scope.items[scope_index].borrow_set.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const borrow_name = kv.key_ptr.*;
                     const borrow = kv.value_ptr;
-                    if (borrow.kind == .shared) {
+                    if (borrow.lease == .shared) {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
@@ -821,7 +820,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             // This expression borrows from `get.name`.
             var bs = BorrowSet.init();
-            bs.borrowed.putNoClobber(get.name, .{ .kind = get.kind, .origin = expr_id }) catch oom();
+            bs.borrowed.putNoClobber(get.name, .{ .lease = get_lease, .origin = expr_id }) catch oom();
             return bs;
         },
         .let => |let| {
@@ -892,7 +891,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     const name = kv.key_ptr.*;
                     const borrow_else = kv.value_ptr.*;
                     if (bs.borrowed.get(name)) |borrow_then| {
-                        if (borrow_then.kind == .unique and borrow_else.kind == .shared) {
+                        if (borrow_then.lease == .unique and borrow_else.lease == .shared) {
                             bs.borrowed.put(name, borrow_else) catch oom();
                         }
                     } else {
@@ -921,27 +920,22 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             c.fn_id_current = fn_id;
             defer c.fn_id_current = parent;
 
-            var kind_bitmap: u64 = 0;
-            for (@"fn".params, 0..) |param, i| {
-                if (param.kind == .unique)
-                    kind_bitmap |= (@as(u64, 1) << @intCast(i));
-            }
             c.fns.append(allocator, .{
                 .parent = parent,
                 .fn_expr_id = expr_id,
                 .scope_start = scope_start,
-                .kind_bitmap = kind_bitmap,
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
             for (@"fn".params) |param| {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
                 var bs_param = BorrowSet.init();
-                const kind: GetKind = switch (param.kind) {
-                    .mixed, .shared => .shared,
+                const lease: BorrowLease = switch (param.lease) {
+                    .owned => continue,
+                    .shared => .shared,
                     .unique => .unique,
                 };
-                bs_param.borrowed.putNoClobber("<params>", .{ .kind = kind, .origin = expr_id }) catch oom();
+                bs_param.borrowed.putNoClobber("<params>", .{ .lease = lease, .origin = expr_id }) catch oom();
                 c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
             }
 
@@ -953,17 +947,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 if (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
                     const borrow = kv.value_ptr.*;
-                    switch (@"fn".kind) {
-                        .mixed => {},
-                        .unique => {
-                            if (borrow.kind == .shared)
-                                return fail(
-                                    c,
-                                    .{ .expr_id = expr_id },
-                                    "The return value of this function borrows non-uniquely from `{s}`, but the function is declared to return a unique borrow.",
-                                    .{name},
-                                );
-                        },
+                    switch (@"fn".return_lease) {
                         .owned => {
                             return fail(
                                 c,
@@ -972,6 +956,16 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                                 .{name},
                             );
                         },
+                        .unique => {
+                            if (borrow.lease == .shared)
+                                return fail(
+                                    c,
+                                    .{ .expr_id = expr_id },
+                                    "The return value of this function borrows non-uniquely from `{s}`, but the function is declared to return a unique borrow.",
+                                    .{name},
+                                );
+                        },
+                        .shared => {},
                     }
                 }
             }
@@ -985,30 +979,13 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             _ = try analyzeAndAddToScope(c, call.closure);
 
-            for (call.args, 0..) |arg, i| {
-                const bs_arg = try analyzeAndAddToScope(c, arg);
-
-                var is_unique = false;
-                var iter = bs_arg.borrowed.iterator();
-                while (iter.next()) |kv| is_unique |= kv.value_ptr.kind == .unique;
-                if (is_unique) call.kind_bitmap |= @as(u64, 1) << @intCast(i);
+            for (call.args) |arg| {
+                _ = try analyzeAndAddToScope(c, arg);
             }
 
-            switch (call.kind) {
-                .mixed => {
-                    var bs = BorrowSet.init();
-                    for (c.scope.items[scope_start..]) |scope_item| {
-                        var iter = scope_item.borrow_set.borrowed.iterator();
-                        while (iter.next()) |kv| {
-                            const name = kv.key_ptr.*;
-                            var borrow = kv.value_ptr.*;
-                            // The function is not allowed to return unique borrows.
-                            borrow.kind = .shared;
-                            if (!bs.borrowed.contains(name))
-                                bs.borrowed.put(name, borrow) catch oom();
-                        }
-                    }
-                    return bs;
+            switch (call.return_lease) {
+                .owned => {
+                    return BorrowSet.init();
                 },
                 .unique => {
                     var bs = BorrowSet.init();
@@ -1018,14 +995,26 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                             const name = kv.key_ptr.*;
                             const borrow = kv.value_ptr.*;
                             // A unique return borrow must have come from a unique arg borrow.
-                            if (!bs.borrowed.contains(name) and borrow.kind == .unique)
+                            if (!bs.borrowed.contains(name) and borrow.lease == .unique)
                                 bs.borrowed.put(name, borrow) catch oom();
                         }
                     }
                     return bs;
                 },
-                .owned => {
-                    return BorrowSet.init();
+                .shared => {
+                    var bs = BorrowSet.init();
+                    for (c.scope.items[scope_start..]) |scope_item| {
+                        var iter = scope_item.borrow_set.borrowed.iterator();
+                        while (iter.next()) |kv| {
+                            const name = kv.key_ptr.*;
+                            var borrow = kv.value_ptr.*;
+                            // The function is not allowed to return unique borrows.
+                            borrow.lease = .shared;
+                            if (!bs.borrowed.contains(name))
+                                bs.borrowed.put(name, borrow) catch oom();
+                        }
+                    }
+                    return bs;
                 },
             }
         },
@@ -1059,7 +1048,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         while (iter.next()) |kv| {
                             const name = kv.key_ptr.*;
                             const borrow = kv.value_ptr.*;
-                            if (borrow.kind == .shared) {
+                            if (borrow.lease == .shared) {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
@@ -1098,7 +1087,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         while (iter.next()) |kv| {
                             const name = kv.key_ptr.*;
                             const borrow = kv.value_ptr.*;
-                            if (borrow.kind == .shared) {
+                            if (borrow.lease == .shared) {
                                 return fail(
                                     c,
                                     .{ .expr_id = call_builtin.args[0] },
@@ -1439,17 +1428,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
             try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
-
-            const missing_kind_bitmap = @"fn".kind_bitmap & ~call.kind_bitmap;
-            if (missing_kind_bitmap != 0) {
-                const arg_index = @ctz(missing_kind_bitmap);
-                return fail(
-                    c,
-                    .{ .expr_id = call.args[arg_index] },
-                    "The callee expected this argument to be uniquely shared, but it was not.",
-                    .{},
-                );
-            }
 
             const args = allocator.alloc(Value, call.args.len) catch oom();
             for (args) |*arg| arg.* = Value.initNull();
