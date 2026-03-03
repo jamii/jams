@@ -273,8 +273,7 @@ const Expr = union(enum) {
         value: ExprId,
     },
     block: struct {
-        statements: []ExprId,
-        return_null: bool,
+        statements: []ExprId, // non-empty
     },
     @"if": struct {
         cond: ExprId,
@@ -514,12 +513,16 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
         if (!takeIf(c, .@";")) break false;
     };
 
+    if (return_null or statements.items.len == 0) {
+        const statement = pushExpr(c, c.token_next, .null);
+        statements.append(allocator, statement) catch oom();
+    }
+
     try expect(c, .@"}");
 
     return pushExpr(c, start, .{
         .block = .{
             .statements = statements.toOwnedSlice(allocator) catch oom(),
-            .return_null = return_null,
         },
     });
 }
@@ -856,20 +859,12 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             const scope_start = c.scope.items.len;
             defer resetScope(c, scope_start);
 
-            var bs = BorrowSet.init(allocator);
-            errdefer bs.deinit();
-
-            for (block.statements) |statement| {
-                const bs_statement = try analyze(c, statement);
-
-                bs.deinit();
-                bs = bs_statement;
+            for (block.statements[0 .. block.statements.len - 1]) |statement| {
+                var bs_statement = try analyze(c, statement);
+                defer bs_statement.deinit();
             }
 
-            if (block.return_null) {
-                bs.deinit();
-                bs = .init(allocator);
-            }
+            const bs = try analyze(c, block.statements[block.statements.len - 1]);
 
             for (c.scope.items[scope_start..]) |scope_item| {
                 if (bs.contains(scope_item.name.?)) {
@@ -1403,23 +1398,20 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
         .block => |block| {
             const bindings_start = c.bindings.items.len;
 
-            var value = Value.initNull();
-            defer value.deinit();
+            for (block.statements[0 .. block.statements.len - 1]) |statement| {
+                var value = try eval(c, statement);
+                defer value.deinit();
+            }
 
-            for (block.statements) |statement| {
-                value.deinit();
-                value = try eval(c, statement);
-            }
-            if (block.return_null) {
-                value.deinit();
-            }
+            var result = try eval(c, block.statements[block.statements.len - 1]);
+            defer result.deinit();
 
             while (c.bindings.items.len > bindings_start) {
                 var binding = c.bindings.pop().?;
                 binding.value.deinit();
             }
 
-            return value.take();
+            return result.take();
         },
         .@"if" => |@"if"| {
             var cond = try eval(c, @"if".cond);
@@ -1442,11 +1434,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
         },
         .@"fn" => {
             const fn_id = c.expr_to_fn.get(expr_id).?;
-
-            var value = Value.initClosure(fn_id);
-            defer value.deinit();
-
-            return value.take();
+            return Value.initClosure(fn_id);
         },
         .call => |call| {
             var closure_value = try eval(c, call.closure);
