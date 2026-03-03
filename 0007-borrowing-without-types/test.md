@@ -45,16 +45,16 @@ null
 
 ```test
 {
-  let i = [0];
-  let j = [1];
+  let i = [42];
+  let j = [101];
   {
     let k = if null { i! } else { j! };
-    set(k!, 0, 2);
+    set(k!, 0, 55);
   };
   [copy(i), copy(j)]
 }
 
-[[0], [2]]
+[[42], [55]]
 ```
 
 ```test
@@ -131,8 +131,8 @@ Sorry, no closures in part 1.
   copy(x)
 }
 
-Error at 6:5
-This argument is unique but the callee expected a shared parameter.
+Error at 3:9
+Can't uniquely borrow `x` because it borrows non-uniquely from `<caller>`
 ```
 
 ```test
@@ -537,8 +537,8 @@ fn (a)! {
   get(a!, 0)
 }
 
-Error at 1:1
-This function returns a value which borrows uniquely from `a`, but `a` is not declared to be unique.
+Error at 2:7
+Can't uniquely borrow `a` because it borrows non-uniquely from `<caller>`
 ```
 
 ```test

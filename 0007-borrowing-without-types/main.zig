@@ -289,10 +289,14 @@ const Expr = union(enum) {
         body: ExprId,
     },
     @"fn": struct {
-        params: []Param,
+        params: []ExprId,
         return_lease: Lease,
         body: ExprId,
         lease_bitmap: LeaseBitmap,
+    },
+    param: struct {
+        name: []const u8,
+        lease: Lease,
     },
     call: struct {
         closure: ExprId,
@@ -311,15 +315,14 @@ const Expr = union(enum) {
             .tuple => |exprs| allocator.free(exprs),
             .block => |block| allocator.free(block.statements),
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
-            inline .call, .call_builtin => |call| allocator.free(call.args),
-            .null, .number, .get, .let, .@"if", .@"while" => {},
+            .call => |call| {
+                allocator.free(call.args);
+                allocator.free(call.arg_leases);
+            },
+            .call_builtin => |call_builtin| allocator.free(call_builtin.args),
+            .null, .number, .get, .let, .@"if", .@"while", .param => {},
         }
     }
-};
-
-const Param = struct {
-    name: []const u8,
-    lease: Lease,
 };
 
 const Lease = enum(u2) {
@@ -563,14 +566,13 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     try expect(c, .@"fn");
     try expect(c, .@"(");
 
-    var params: ArrayList(Param) = .{};
+    var params: ArrayList(ExprId) = .{};
     defer params.deinit(allocator);
 
     for (0..arg_count_max) |_| {
         if (peek(c) == .@")") break;
-        const name = try expectName(c);
-        const param_lease = parseLease(c) orelse .shared;
-        params.append(allocator, .{ .name = name, .lease = param_lease }) catch oom();
+        const param = try parseParam(c);
+        params.append(allocator, param) catch oom();
         if (!takeIf(c, .@",")) break;
     } else {
         return fail(
@@ -593,6 +595,13 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
             .lease_bitmap = .{ .bits = 0 }, // filled in later by `analyze`
         },
     });
+}
+
+fn parseParam(c: *Compiler) error{Error}!ExprId {
+    const start = c.token_next;
+    const name = try expectName(c);
+    const lease = parseLease(c) orelse .shared;
+    return pushExpr(c, start, .{ .param = .{ .name = name, .lease = lease } });
 }
 
 fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
@@ -947,21 +956,25 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
-            for (@"fn".params, 0..) |param, i| {
+            for (@"fn".params, 0..) |param_id, i| {
+                const param = c.exprs.items[param_id.id].param;
+                c.expr_to_lease.items[param_id.id] = param.lease;
                 @"fn".lease_bitmap.setParam(i, param.lease);
             }
             @"fn".lease_bitmap.setReturn(@"fn".return_lease);
 
-            for (@"fn".params) |param| {
-                // TODO Get decent error reporting out of this. A real name and expr_id.
+            for (@"fn".params) |param_id| {
+                const param = c.exprs.items[param_id.id].param;
                 var bs_param = BorrowSet.init(allocator);
-                c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
-                const lease: BorrowLease = switch (param.lease) {
-                    .owned => continue,
-                    .shared => .shared,
-                    .unique => .unique,
-                };
-                bs_param.putNoClobber("<caller>", .{ .lease = lease, .origin = expr_id }) catch oom();
+                add_caller: {
+                    const lease: BorrowLease = switch (param.lease) {
+                        .owned => break :add_caller,
+                        .shared => .shared,
+                        .unique => .unique,
+                    };
+                    bs_param.putNoClobber("<caller>", .{ .lease = lease, .origin = param_id }) catch oom();
+                }
+                c.scope.append(allocator, .{ .name = param.name, .expr_id = param_id, .borrow_set = bs_param }) catch oom();
             }
 
             var bs_body = try analyze(c, @"fn".body);
@@ -977,7 +990,8 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 );
             }
 
-            for (@"fn".params) |param| {
+            for (@"fn".params) |param_id| {
+                const param = c.exprs.items[param_id.id].param;
                 if (bs_body.get(param.name)) |borrow| {
                     switch (borrow.lease) {
                         .unique => {
@@ -1005,6 +1019,10 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             return BorrowSet.init(allocator);
+        },
+        .param => {
+            // Handled directly in @"fn" above.
+            unreachable;
         },
         .call => |*call| {
             const scope_start = c.scope.items.len;
@@ -1325,19 +1343,17 @@ const Value = packed struct {
     }
 
     fn deinit(value: *Value) void {
-        if (value.ownership == .owned) {
-            switch (value.kind()) {
-                .null, .number, .closure => {},
-                .tuple => for (value.asTuple().?) |*elem| elem.deinit(),
-            }
-            const len = switch (value.kind()) {
-                .null => return,
-                .number => 2,
-                .tuple => 2 + value.asTuple().?.len,
-                .closure => 2,
-            };
-            allocator.free(value.asPtr().?[0..len]);
+        switch (value.kind()) {
+            .null, .number, .closure => {},
+            .tuple => for (value.asTuple().?) |*elem| elem.deinit(),
         }
+        const len = switch (value.kind()) {
+            .null => return,
+            .number => 2,
+            .tuple => 2 + value.asTuple().?.len,
+            .closure => 2,
+        };
+        allocator.free(value.asPtr().?[0..len]);
         value.* = .initNull();
     }
 
@@ -1365,9 +1381,17 @@ const Value = packed struct {
     }
 };
 
+fn deinitIfOwned(c: *Compiler, expr_id: ExprId, value: Value) void {
+    if (c.expr_to_lease.items[expr_id.id] == .owned) {
+        var value_mut = value;
+        value_mut.deinit();
+    }
+}
+
 const Binding = struct {
     name: ?[]const u8,
     value: Value,
+    expr_id: ExprId,
 };
 
 fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
@@ -1379,15 +1403,15 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             return .initNumber(number);
         },
         .tuple => |exprs| {
-            var value = Value.initTuple(exprs.len);
-            defer value.deinit();
+            const value = Value.initTuple(exprs.len);
+            errdefer deinitIfOwned(c, expr_id, value);
 
             const tuple = value.asTuple().?;
             for (tuple, exprs) |*item, expr| {
                 item.* = try eval(c, expr);
             }
 
-            return value.take();
+            return value;
         },
         .get => |get| {
             const binding_index = resolve(c.bindings, get.name).?;
@@ -1395,49 +1419,46 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             return value.borrow();
         },
         .let => |let| {
-            var value = try eval(c, let.value);
-            defer value.deinit();
+            const value = try eval(c, let.value);
+            errdefer deinitIfOwned(c, let.value, value);
 
             c.bindings.append(allocator, .{
                 .name = let.name,
-                .value = value.take(),
+                .value = value,
+                .expr_id = let.value,
             }) catch oom();
 
             return Value.initNull();
         },
         .block => |block| {
             const bindings_start = c.bindings.items.len;
+            defer c.bindings.shrinkRetainingCapacity(bindings_start);
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
-                var value = try eval(c, statement);
-                defer value.deinit();
+                const value = try eval(c, statement);
+                defer deinitIfOwned(c, statement, value);
             }
 
-            var result = try eval(c, block.statements[block.statements.len - 1]);
-            defer result.deinit();
+            const result = try eval(c, block.statements[block.statements.len - 1]);
+            errdefer deinitIfOwned(c, expr_id, result);
 
-            while (c.bindings.items.len > bindings_start) {
-                var binding = c.bindings.pop().?;
-                binding.value.deinit();
-            }
-
-            return result.take();
+            return result;
         },
         .@"if" => |@"if"| {
-            var cond = try eval(c, @"if".cond);
-            defer cond.deinit();
+            const cond = try eval(c, @"if".cond);
+            defer deinitIfOwned(c, @"if".cond, cond);
 
             return eval(c, if (cond.kind() != .null) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                var cond = try eval(c, @"while".cond);
-                defer cond.deinit();
+                const cond = try eval(c, @"while".cond);
+                defer deinitIfOwned(c, @"while".cond, cond);
 
                 if (cond.kind() == .null) break;
 
-                var value = try eval(c, @"while".body);
-                defer value.deinit();
+                const body = try eval(c, @"while".body);
+                defer deinitIfOwned(c, @"while".body, body);
             }
 
             return Value.initNull();
@@ -1446,9 +1467,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             const fn_id = c.expr_to_fn.get(expr_id).?;
             return Value.initClosure(fn_id);
         },
+        .param => {
+            // Handled directly in .call below.
+            unreachable;
+        },
         .call => |call| {
-            var closure_value = try eval(c, call.closure);
-            defer closure_value.deinit();
+            const closure_value = try eval(c, call.closure);
+            defer deinitIfOwned(c, call.closure, closure_value);
 
             try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure_value.kind() });
             const closure = closure_value.asClosure().?;
@@ -1459,7 +1484,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             if (call.lease_bitmap.bits != fn_expr.lease_bitmap.bits) {
                 try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
 
-                for (call.args, call.arg_leases, fn_expr.params) |arg, arg_lease, param| {
+                for (call.args, call.arg_leases, fn_expr.params) |arg, arg_lease, param_id| {
+                    const param = c.exprs.items[param_id.id].param;
                     if (arg_lease != param.lease) {
                         return fail(
                             c,
@@ -1483,36 +1509,34 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             }
 
             const args = allocator.alloc(Value, call.args.len) catch oom();
+            defer allocator.free(args);
+
             for (args) |*arg| arg.* = Value.initNull();
-            defer {
-                for (args) |*arg| arg.deinit();
-                allocator.free(args);
-            }
+            defer for (call.args, args) |arg_expr, arg|
+                deinitIfOwned(c, arg_expr, arg);
 
             for (args, call.args) |*arg_value, arg_expr|
                 arg_value.* = try eval(c, arg_expr);
 
             const bindings_start = c.bindings.items.len;
-            defer {
-                while (c.bindings.items.len > bindings_start) {
-                    var binding = c.bindings.pop().?;
-                    binding.value.deinit();
-                }
-            }
+            defer c.bindings.shrinkRetainingCapacity(bindings_start);
 
-            for (fn_expr.params, args) |param, arg| {
-                c.bindings.append(allocator, .{ .name = param.name, .value = arg }) catch oom();
+            for (fn_expr.params, args) |param_id, arg| {
+                const param = c.exprs.items[param_id.id].param;
+                c.bindings.append(allocator, .{ .name = param.name, .value = arg, .expr_id = param_id }) catch oom();
             }
+            defer for (c.bindings.items[bindings_start..]) |binding|
+                deinitIfOwned(c, binding.expr_id, binding.value);
 
             return eval(c, fn_expr.body);
         },
         .call_builtin => |call_builtin| {
             const args = allocator.alloc(Value, call_builtin.args.len) catch oom();
+            defer allocator.free(args);
+
             for (args) |*arg| arg.* = Value.initNull();
-            defer {
-                for (args) |*arg| arg.deinit();
-                allocator.free(args);
-            }
+            defer for (call_builtin.args, args) |arg_expr, arg|
+                deinitIfOwned(c, arg_expr, arg);
 
             for (args, call_builtin.args) |*value, expr| {
                 value.* = try eval(c, expr);
@@ -1533,28 +1557,26 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
                     try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
-                    if (args[0].ownership == .owned and value_ptr.ownership == .owned) {
-                        return value_ptr.take();
-                    } else {
-                        return value_ptr.borrow();
-                    }
+                    const result_ptr = try getPtr(c, expr_id, args[0..2]);
+                    return if (c.expr_to_lease.items[call_builtin.args[0].id] == .owned)
+                        result_ptr.take()
+                    else
+                        result_ptr.*;
                 },
                 .set => {
                     try checkArgCount(c, expr_id, .{ .expected = 3, .actual = args.len });
                     try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
-                    const value_old = value_ptr.take();
-                    value_ptr.* = args[2].take();
-                    return value_old;
+                    const result_ptr = try getPtr(c, expr_id, args[0..2]);
+                    const result_old = result_ptr.*;
+                    result_ptr.* = args[2].take();
+                    return result_old;
                 },
                 .take => {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
                     try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    const value_ptr = try getPtr(c, expr_id, args[0..2]);
-                    return value_ptr.take();
+                    return (try getPtr(c, expr_id, args[0..2])).take();
                 },
                 .copy => {
                     try checkArgCount(c, expr_id, .{ .expected = 1, .actual = args.len });
