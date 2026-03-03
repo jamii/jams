@@ -131,8 +131,8 @@ Sorry, no closures in part 1.
   copy(x)
 }
 
-Error at 3:9
-Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
+Error at 6:5
+This argument is unique but the callee expected a shared parameter.
 ```
 
 ```test
@@ -158,7 +158,8 @@ Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
   copy(x)
 }
 
-[1]
+Error at 6:5
+This argument is shared but the callee expected a unique parameter.
 ```
 
 ```test
@@ -171,7 +172,8 @@ Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
   copy(x)
 }
 
-[0]
+Error at 6:5
+This argument is unique but the callee expected a shared parameter.
 ```
 
 ```test
@@ -184,7 +186,8 @@ Can't uniquely borrow `x` because it borrows non-uniquely from `<params>`
   copy(y)
 }
 
-[0]
+Error at 6:5
+This argument is unique but the callee expected a shared parameter.
 ```
 
 ```test
@@ -365,7 +368,7 @@ This value can't be stored inside a tuple because it borrows from `a`.
 }
 
 Error at 2:11
-The return value of this function borrows from `x`, but the function is declared to return an owned value.
+This function is declared to return a owned value, but it returns a shared value
 ```
 
 ```test
@@ -423,7 +426,7 @@ Expected 1 arguments but found 0 arguments
 }
 
 Error at 2:11
-The return value of this function borrows from `a`, but the function is declared to return an owned value.
+This function is declared to return a owned value, but it returns a shared value
 ```
 
 ```test
@@ -476,7 +479,8 @@ The value returned from this block borrows from `x`, but `x` will be destroyed a
   copy(f(x))
 }
 
-42
+Error at 6:8
+The caller expected a owned return value but the callee provided a shared return value.
 ```
 
 ```test
@@ -489,4 +493,67 @@ The value returned from this block borrows from `x`, but `x` will be destroyed a
 }
 
 42
+```
+
+```test
+{
+  let f = fn (a)& {
+    get(a, 0)
+  };
+  let x = [42];
+  copy(f(x)&)
+}
+
+42
+```
+
+```test
+fn (a)& {
+  get(a, 0)
+}
+
+fn(.{ .id = 0 })
+```
+
+```test
+fn (a!)& {
+  get(a, 0)
+}
+
+fn(.{ .id = 0 })
+```
+
+```test
+fn (a^)& {
+  get(a, 0)
+}
+
+Error at 1:1
+This function returns a value which borrows from `a`, but `a` is owned.
+```
+
+```test
+fn (a)! {
+  get(a!, 0)
+}
+
+Error at 1:1
+This function returns a value which borrows uniquely from `a`, but `a` is not declared to be unique.
+```
+
+```test
+fn (a!)! {
+  get(a!, 0)
+}
+
+fn(.{ .id = 0 })
+```
+
+```test
+fn (a^)! {
+  get(a!, 0)
+}
+
+Error at 1:1
+This function returns a value which borrows uniquely from `a`, but `a` is not declared to be unique.
 ```

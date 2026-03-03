@@ -289,13 +289,14 @@ const Expr = union(enum) {
         params: []Param,
         return_lease: Lease,
         body: ExprId,
-        lease_bitmap: u64,
+        lease_bitmap: LeaseBitmap,
     },
     call: struct {
         closure: ExprId,
         args: []ExprId,
+        arg_leases: []Lease,
         return_lease: Lease,
-        lease_bitmap: u64,
+        lease_bitmap: LeaseBitmap,
     },
     call_builtin: struct {
         builtin: Builtin,
@@ -318,10 +319,10 @@ const Param = struct {
     lease: Lease,
 };
 
-const Lease = enum {
-    owned,
-    unique,
-    shared,
+const Lease = enum(u2) {
+    owned = 1,
+    unique = 2,
+    shared = 3,
 };
 
 const Builtin = enum {
@@ -391,13 +392,15 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
 fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
     const args = try parseArgs(c);
+    const arg_leases = allocator.alloc(Lease, args.len) catch oom();
     const return_lease = parseLease(c) orelse .owned;
     return pushExpr(c, start, .{
         .call = .{
             .closure = closure,
             .args = args,
+            .arg_leases = arg_leases, // filled in later by `analyze`
             .return_lease = return_lease,
-            .lease_bitmap = 0, // filled in later by `analyze`
+            .lease_bitmap = .{ .bits = 0 }, // filled in later by `analyze`
         },
     });
 }
@@ -580,7 +583,7 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
             .params = params.toOwnedSlice(allocator) catch oom(),
             .return_lease = return_lease,
             .body = body,
-            .lease_bitmap = 0, // filled in later by `analyze`
+            .lease_bitmap = .{ .bits = 0 }, // filled in later by `analyze`
         },
     });
 }
@@ -720,6 +723,20 @@ const BorrowSet = struct {
             .borrowed = bs.borrowed.clone() catch oom(),
         };
     }
+
+    fn lease(bs: BorrowSet) Lease {
+        var result: Lease = .owned;
+        var iter = bs.borrowed.iterator();
+        while (iter.next()) |kv| {
+            switch (kv.value_ptr.lease) {
+                .shared => result = .shared,
+                .unique => if (result != .shared) {
+                    result = .unique;
+                },
+            }
+        }
+        return result;
+    }
 };
 
 const Borrow = struct {
@@ -731,6 +748,19 @@ const Borrow = struct {
 const BorrowLease = enum {
     unique,
     shared,
+};
+
+const LeaseBitmap = struct {
+    bits: u64,
+
+    fn setParam(lb: *LeaseBitmap, i: usize, lease: Lease) void {
+        assert(i < arg_count_max);
+        lb.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * i);
+    }
+
+    fn setReturn(lb: *LeaseBitmap, lease: Lease) void {
+        lb.bits |= @as(u64, @intFromEnum(lease)) << @intCast(2 * arg_count_max);
+    }
 };
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
@@ -910,7 +940,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             return BorrowSet.init();
         },
-        .@"fn" => |@"fn"| {
+        .@"fn" => |*@"fn"| {
             const scope_start = c.scope.items.len;
             defer resetScope(c, scope_start);
 
@@ -927,50 +957,63 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
+            for (@"fn".params, 0..) |param, i| {
+                @"fn".lease_bitmap.setParam(i, param.lease);
+            }
+            @"fn".lease_bitmap.setReturn(@"fn".return_lease);
+
             for (@"fn".params) |param| {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
                 var bs_param = BorrowSet.init();
+                c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
                 const lease: BorrowLease = switch (param.lease) {
                     .owned => continue,
                     .shared => .shared,
                     .unique => .unique,
                 };
-                bs_param.borrowed.putNoClobber("<params>", .{ .lease = lease, .origin = expr_id }) catch oom();
-                c.scope.append(allocator, .{ .name = param.name, .expr_id = expr_id, .borrow_set = bs_param }) catch oom();
+                bs_param.borrowed.putNoClobber("<caller>", .{ .lease = lease, .origin = expr_id }) catch oom();
             }
 
             var bs_body = try analyze(c, @"fn".body);
             defer bs_body.deinit();
 
-            {
-                var iter = bs_body.borrowed.iterator();
-                if (iter.next()) |kv| {
-                    const name = kv.key_ptr.*;
-                    const borrow = kv.value_ptr.*;
-                    switch (@"fn".return_lease) {
-                        .owned => {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "The return value of this function borrows from `{s}`, but the function is declared to return an owned value.",
-                                .{name},
-                            );
-                        },
+            const return_lease = bs_body.lease();
+            if (@"fn".return_lease != return_lease) {
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "This function is declared to return a {s} value, but it returns a {s} value",
+                    .{ @tagName(@"fn".return_lease), @tagName(return_lease) },
+                );
+            }
+
+            for (@"fn".params) |param| {
+                if (bs_body.borrowed.get(param.name)) |borrow| {
+                    switch (borrow.lease) {
                         .unique => {
-                            if (borrow.lease == .shared)
+                            if (param.lease != .unique) {
                                 return fail(
                                     c,
                                     .{ .expr_id = expr_id },
-                                    "The return value of this function borrows non-uniquely from `{s}`, but the function is declared to return a unique borrow.",
-                                    .{name},
+                                    "This function returns a value which borrows uniquely from `{s}`, but `{s}` is not declared to be unique.",
+                                    .{ param.name, param.name },
                                 );
+                            }
                         },
-                        .shared => {},
+                        .shared => {
+                            if (param.lease == .owned) {
+                                return fail(
+                                    c,
+                                    .{ .expr_id = expr_id },
+                                    "This function returns a value which borrows from `{s}`, but `{s}` is owned.",
+                                    .{ param.name, param.name },
+                                );
+                            }
+                        },
                     }
                 }
             }
 
-            // This `fn` is owned.
             return BorrowSet.init();
         },
         .call => |*call| {
@@ -979,9 +1022,13 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             _ = try analyzeAndAddToScope(c, call.closure);
 
-            for (call.args) |arg| {
-                _ = try analyzeAndAddToScope(c, arg);
+            for (call.args, 0..) |arg, i| {
+                const bs_arg = try analyzeAndAddToScope(c, arg);
+                const lease = bs_arg.lease();
+                call.arg_leases[i] = lease;
+                call.lease_bitmap.setParam(i, lease);
             }
+            call.lease_bitmap.setReturn(call.return_lease);
 
             switch (call.return_lease) {
                 .owned => {
@@ -1073,7 +1120,6 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         }
                     }
 
-                    // The result is owned.
                     return BorrowSet.init();
                 },
                 .take => {
@@ -1098,7 +1144,6 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                         }
                     }
 
-                    // The result is owned.
                     return BorrowSet.init();
                 },
             }
@@ -1427,7 +1472,32 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
             const @"fn" = &c.fns.items[closure.fn_id.id];
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
-            try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
+
+            if (call.lease_bitmap.bits != fn_expr.lease_bitmap.bits) {
+                try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
+
+                for (call.args, call.arg_leases, fn_expr.params) |arg, arg_lease, param| {
+                    if (arg_lease != param.lease) {
+                        return fail(
+                            c,
+                            .{ .expr_id = arg },
+                            "This argument is {s} but the callee expected a {s} parameter.",
+                            .{ @tagName(arg_lease), @tagName(param.lease) },
+                        );
+                    }
+                }
+
+                if (call.return_lease != fn_expr.return_lease) {
+                    return fail(
+                        c,
+                        .{ .expr_id = expr_id },
+                        "The caller expected a {s} return value but the callee provided a {s} return value.",
+                        .{ @tagName(call.return_lease), @tagName(fn_expr.return_lease) },
+                    );
+                }
+
+                unreachable;
+            }
 
             const args = allocator.alloc(Value, call.args.len) catch oom();
             for (args) |*arg| arg.* = Value.initNull();
