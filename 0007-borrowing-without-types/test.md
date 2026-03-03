@@ -51,7 +51,7 @@ null
     let k = if null { i! } else { j! };
     set(k!, 0, 2);
   };
-  copy([i,j])
+  [copy(i), copy(j)]
 }
 
 [[0], [2]]
@@ -68,7 +68,7 @@ null
     };
     f();
   };
-  copy([i,j])
+  [copy(i), copy(j)]
 }
 
 Error at 6:25
@@ -276,7 +276,7 @@ Can't uniquely borrow `a` here because it is already borrowed by `b` at 3:11
 }
 
 Error at 4:12
-This value can't be stored inside a tuple because it uniquely borrows from `a`.
+This value can't be stored inside a tuple because it borrows from `a`.
 ```
 
 ```test
@@ -288,7 +288,7 @@ This value can't be stored inside a tuple because it uniquely borrows from `a`.
 }
 
 Error at 4:12
-This value can't be stored inside a tuple because it uniquely borrows from `a`.
+This value can't be stored inside a tuple because it borrows from `a`.
 ```
 
 ```test
@@ -303,7 +303,7 @@ This value can't be stored inside a tuple because it uniquely borrows from `a`.
 }
 
 Error at 4:12
-This value can't be stored inside a tuple because it uniquely borrows from `a`.
+This value can't be stored inside a tuple because it borrows from `a`.
 ```
 
 ```test
@@ -342,8 +342,8 @@ take([2], 0)
   get([2, a], 0)
 }
 
-Error at 3:3
-The value returned from this block borrows from `a`, but `a` will be destroyed at the end of this block.
+Error at 3:11
+This value can't be stored inside a tuple because it borrows from `a`.
 ```
 
 ```test
@@ -352,7 +352,8 @@ The value returned from this block borrows from `a`, but `a` will be destroyed a
   copy(get([2, a], 0))
 }
 
-2
+Error at 3:16
+This value can't be stored inside a tuple because it borrows from `a`.
 ```
 
 ```test

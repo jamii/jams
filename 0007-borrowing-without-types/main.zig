@@ -717,11 +717,10 @@ fn resolve(list: anytype, name: []const u8) ?usize {
 }
 
 const BorrowSet = struct {
-    owned: ?ExprId,
     borrowed: std.hash_map.StringHashMap(Borrow),
 
-    fn init(owned: ?ExprId) BorrowSet {
-        return .{ .owned = owned, .borrowed = .init(allocator) };
+    fn init() BorrowSet {
+        return .{ .borrowed = .init(allocator) };
     }
 
     fn deinit(bs: *BorrowSet) void {
@@ -730,7 +729,6 @@ const BorrowSet = struct {
 
     fn clone(bs: BorrowSet) BorrowSet {
         return .{
-            .owned = bs.owned,
             .borrowed = bs.borrowed.clone() catch oom(),
         };
     }
@@ -742,18 +740,10 @@ const Borrow = struct {
     origin: ExprId,
 };
 
-fn addBorrowSet(bs_old: *BorrowSet, bs_new: BorrowSet) void {
-    if (bs_old.owned == null) bs_old.owned = bs_new.owned;
-    var iter = bs_new.borrowed.iterator();
-    while (iter.next()) |kv| {
-        bs_old.borrowed.put(kv.key_ptr.*, kv.value_ptr.*) catch oom();
-    }
-}
-
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
     switch (c.exprs.items[expr_id.id]) {
         .null, .number => {
-            return BorrowSet.init(expr_id);
+            return BorrowSet.init();
         },
         .tuple => |tuple| {
             const scope_start = c.scope.items.len;
@@ -764,24 +754,16 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 var iter = bs_elem.borrowed.iterator();
                 while (iter.next()) |kv| {
                     const name = kv.key_ptr.*;
-                    const borrow = kv.value_ptr.*;
-                    if (borrow.kind == .unique) {
-                        return fail(
-                            c,
-                            .{ .expr_id = elem },
-                            "This value can't be stored inside a tuple because it uniquely borrows from `{s}`.",
-                            .{name},
-                        );
-                    }
+                    return fail(
+                        c,
+                        .{ .expr_id = elem },
+                        "This value can't be stored inside a tuple because it borrows from `{s}`.",
+                        .{name},
+                    );
                 }
             }
 
-            // This tuple is an owned value, which borrows from all the names it's elems borrow from.
-            var bs = BorrowSet.init(expr_id);
-            for (c.scope.items[scope_start..]) |scope_item| {
-                addBorrowSet(&bs, scope_item.borrow_set);
-            }
-            return bs;
+            return BorrowSet.init();
         },
         .get => |get| {
             // Find the corresponding `let`.
@@ -838,7 +820,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             // This expression borrows from `get.name`.
-            var bs = BorrowSet.init(null);
+            var bs = BorrowSet.init();
             bs.borrowed.putNoClobber(get.name, .{ .kind = get.kind, .origin = expr_id }) catch oom();
             return bs;
         },
@@ -854,13 +836,13 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 .borrow_set = bs,
             }) catch oom();
 
-            return BorrowSet.init(expr_id);
+            return BorrowSet.init();
         },
         .block => |block| {
             const scope_start = c.scope.items.len;
             defer resetScope(c, scope_start);
 
-            var bs = BorrowSet.init(expr_id);
+            var bs = BorrowSet.init();
             errdefer bs.deinit();
 
             for (block.statements) |statement| {
@@ -872,7 +854,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             if (block.return_null) {
                 bs.deinit();
-                bs = .init(expr_id);
+                bs = .init();
             }
 
             for (c.scope.items[scope_start..]) |scope_item| {
@@ -898,7 +880,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var bs_else = try analyze(c, @"if".@"else");
             defer bs_else.deinit();
 
-            var bs = BorrowSet.init(bs_then.owned orelse bs_else.owned);
+            var bs = BorrowSet.init();
             errdefer bs.deinit();
 
             // This `if` borrows from everything borrowed in the `then` and `else` branches.
@@ -927,7 +909,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var bs_body = try analyze(c, @"while".body);
             bs_body.deinit();
 
-            return BorrowSet.init(expr_id);
+            return BorrowSet.init();
         },
         .@"fn" => |@"fn"| {
             const scope_start = c.scope.items.len;
@@ -954,7 +936,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             for (@"fn".params) |param| {
                 // TODO Get decent error reporting out of this. A real name and expr_id.
-                var bs_param = BorrowSet.init(null);
+                var bs_param = BorrowSet.init();
                 const kind: GetKind = switch (param.kind) {
                     .mixed, .shared => .shared,
                     .unique => .unique,
@@ -995,7 +977,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             }
 
             // This `fn` is owned.
-            return BorrowSet.init(expr_id);
+            return BorrowSet.init();
         },
         .call => |*call| {
             const scope_start = c.scope.items.len;
@@ -1014,7 +996,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
             switch (call.kind) {
                 .mixed => {
-                    var bs = BorrowSet.init(expr_id);
+                    var bs = BorrowSet.init();
                     for (c.scope.items[scope_start..]) |scope_item| {
                         var iter = scope_item.borrow_set.borrowed.iterator();
                         while (iter.next()) |kv| {
@@ -1029,7 +1011,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     return bs;
                 },
                 .unique => {
-                    var bs = BorrowSet.init(expr_id);
+                    var bs = BorrowSet.init();
                     for (c.scope.items[scope_start..]) |scope_item| {
                         var iter = scope_item.borrow_set.borrowed.iterator();
                         while (iter.next()) |kv| {
@@ -1043,7 +1025,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     return bs;
                 },
                 .owned => {
-                    return BorrowSet.init(expr_id);
+                    return BorrowSet.init();
                 },
             }
         },
@@ -1056,7 +1038,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     for (call_builtin.args) |arg|
                         _ = try analyzeAndAddToScope(c, arg);
 
-                    return BorrowSet.init(expr_id);
+                    return BorrowSet.init();
                 },
                 .get => {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
@@ -1103,7 +1085,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     }
 
                     // The result is owned.
-                    return BorrowSet.init(expr_id);
+                    return BorrowSet.init();
                 },
                 .take => {
                     try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
@@ -1128,7 +1110,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                     }
 
                     // The result is owned.
-                    return BorrowSet.init(expr_id);
+                    return BorrowSet.init();
                 },
             }
         },
