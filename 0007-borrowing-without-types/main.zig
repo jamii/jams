@@ -1193,11 +1193,6 @@ fn failAlreadyDefined(c: *Compiler, expr_id: ExprId, let_id: ExprId, name: []con
 
 // --- EVAL ---
 
-const Ownership = enum(u1) {
-    owned = 0,
-    borrowed = 1,
-};
-
 const Kind = enum(u64) {
     null = 0,
     number = 1,
@@ -1210,26 +1205,7 @@ const Closure = struct {
 };
 
 const Value = packed struct {
-    ownership: Ownership,
-    ptr: u63,
-
-    fn asPtr(value: Value) ?[*]u64 {
-        return @ptrFromInt(value.ptr);
-    }
-
-    fn initPtr(ptr: ?[*]u64) Value {
-        return .{
-            .ownership = .owned,
-            .ptr = @intCast(@intFromPtr(ptr)),
-        };
-    }
-
-    fn borrow(value: Value) Value {
-        return .{
-            .ownership = .borrowed,
-            .ptr = value.ptr,
-        };
-    }
+    ptr: ?[*]u64,
 
     fn take(value: *Value) Value {
         const taken = value.*;
@@ -1238,7 +1214,7 @@ const Value = packed struct {
     }
 
     fn kind(value: Value) Kind {
-        return if (value.asPtr()) |ptr|
+        return if (value.ptr) |ptr|
             @enumFromInt(ptr[0])
         else
             .null;
@@ -1246,45 +1222,45 @@ const Value = packed struct {
 
     fn asNumber(value: Value) ?i64 {
         if (value.kind() != .number) return null;
-        return @bitCast(value.asPtr().?[1]);
+        return @bitCast(value.ptr.?[1]);
     }
 
     fn asTuple(value: Value) ?[]Value {
         if (value.kind() != .tuple) return null;
-        const len = value.asPtr().?[1];
-        return @ptrCast(value.asPtr().?[2..][0..len]);
+        const len = value.ptr.?[1];
+        return @ptrCast(value.ptr.?[2..][0..len]);
     }
 
     fn asClosure(value: Value) ?Closure {
         if (value.kind() != .closure) return null;
-        const fn_id = FnId{ .id = value.asPtr().?[1] };
+        const fn_id = FnId{ .id = value.ptr.?[1] };
         return .{ .fn_id = fn_id };
     }
 
     fn initNull() Value {
-        return .initPtr(null);
+        return .{ .ptr = null };
     }
 
     fn initNumber(i: i64) Value {
         const ptr = allocator.alloc(u64, 2) catch oom();
         ptr[0] = @intFromEnum(Kind.number);
         ptr[1] = @bitCast(i);
-        return .initPtr(@ptrCast(ptr));
+        return .{ .ptr = @ptrCast(ptr) };
     }
 
     fn initTuple(len: u64) Value {
         const ptr = allocator.alloc(u64, 2 + len) catch oom();
         ptr[0] = @intFromEnum(Kind.tuple);
         ptr[1] = len;
-        @memset(ptr[2..][0..len], @bitCast(Value.initPtr(null)));
-        return .initPtr(@ptrCast(ptr));
+        @memset(ptr[2..][0..len], @bitCast(Value{ .ptr = null }));
+        return .{ .ptr = @ptrCast(ptr) };
     }
 
     fn initClosure(fn_id: FnId) Value {
         const ptr = allocator.alloc(u64, 2) catch oom();
         ptr[0] = @intFromEnum(Kind.closure);
         ptr[1] = @bitCast(fn_id);
-        return .initPtr(@ptrCast(ptr));
+        return .{ .ptr = @ptrCast(ptr) };
     }
 
     fn initBool(b: bool) Value {
@@ -1353,7 +1329,7 @@ const Value = packed struct {
             .tuple => 2 + value.asTuple().?.len,
             .closure => 2,
         };
-        allocator.free(value.asPtr().?[0..len]);
+        allocator.free(value.ptr.?[0..len]);
         value.* = .initNull();
     }
 
@@ -1415,8 +1391,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
         },
         .get => |get| {
             const binding_index = resolve(c.bindings, get.name).?;
-            const value = c.bindings.items[binding_index].value;
-            return value.borrow();
+            return c.bindings.items[binding_index].value;
         },
         .let => |let| {
             const value = try eval(c, let.value);
