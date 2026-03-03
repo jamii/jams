@@ -26,6 +26,7 @@ const Compiler = struct {
     // analyze
     fns: ArrayList(Fn),
     expr_to_fn: std.AutoHashMap(ExprId, FnId),
+    expr_to_lease: ArrayList(Lease),
     scope: ArrayList(ScopeItem),
     fn_id_current: ?FnId,
 
@@ -48,6 +49,7 @@ const Compiler = struct {
 
             .fns = .{},
             .expr_to_fn = .init(allocator),
+            .expr_to_lease = .{},
             .scope = .{},
             .fn_id_current = null,
 
@@ -64,6 +66,7 @@ const Compiler = struct {
         c.bindings.deinit(allocator);
 
         c.scope.deinit(allocator);
+        c.expr_to_lease.deinit(allocator);
         c.expr_to_fn.deinit();
         c.fns.deinit(allocator);
 
@@ -78,6 +81,7 @@ const Compiler = struct {
     pub fn run(c: *Compiler) ![]const u8 {
         try tokenize(c);
         c.expr_top = try parse(c);
+        c.expr_to_lease.appendNTimes(allocator, .shared, c.exprs.items.len) catch oom();
         var bs = try analyze(c, c.expr_top.?);
         bs.deinit();
         const value = try eval(c, c.expr_top.?);
@@ -752,6 +756,12 @@ const LeaseBitmap = struct {
 };
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
+    const bs = try analyzeInner(c, expr_id);
+    c.expr_to_lease.items[expr_id.id] = leaseFromBorrowSet(bs);
+    return bs;
+}
+
+fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
     switch (c.exprs.items[expr_id.id]) {
         .null, .number => {
             return BorrowSet.init(allocator);
