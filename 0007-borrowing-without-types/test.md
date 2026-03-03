@@ -71,7 +71,8 @@ null
   copy([i,j])
 }
 
-[[0], [2]]
+Error at 6:25
+Sorry, no closures in part 1.
 ```
 
 ```test
@@ -84,8 +85,8 @@ null
   }
 }
 
-Error at 4:3
-The value returned from this block borrows from `i`, but `i` will be destroyed at the end of this block.
+Error at 5:23
+Sorry, no closures in part 1.
 ```
 
 ```test
@@ -101,7 +102,8 @@ The value returned from this block borrows from `i`, but `i` will be destroyed a
   [g(), g()]
 }
 
-[1, 2]
+Error at 5:23
+Sorry, no closures in part 1.
 ```
 
 ```test
@@ -115,7 +117,8 @@ The value returned from this block borrows from `i`, but `i` will be destroyed a
   })
 }
 
-fn<.{ .id = 0 }>[[0], [1]]
+Error at 5:23
+Sorry, no closures in part 1.
 ```
 
 ```test

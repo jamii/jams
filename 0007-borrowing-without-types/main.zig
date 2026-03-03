@@ -65,7 +65,6 @@ const Compiler = struct {
 
         c.scope.deinit(allocator);
         c.expr_to_fn.deinit();
-        for (c.fns.items) |*@"fn"| @"fn".deinit();
         c.fns.deinit(allocator);
 
         c.expr_to_tokens.deinit(allocator);
@@ -689,20 +688,8 @@ const FnId = packed struct { id: usize };
 const Fn = struct {
     parent: ?FnId,
     fn_expr_id: ExprId,
-    captures: ArrayList(Capture),
-    capture_name_to_index: std.hash_map.StringHashMap(usize),
     scope_start: usize,
     kind_bitmap: u64,
-
-    fn deinit(@"fn": *Fn) void {
-        @"fn".capture_name_to_index.deinit();
-        @"fn".captures.deinit(allocator);
-    }
-};
-
-const Capture = struct {
-    name: []const u8,
-    borrow: Borrow,
 };
 
 const ScopeItem = struct {
@@ -801,24 +788,12 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             const scope_index = resolve(c.scope, get.name) orelse
                 return failNotDefined(c, expr_id, get.name);
 
-            // Update captures of any enclosing functions.
-            var fn_id_next = c.fn_id_current;
-            while (fn_id_next) |fn_id| {
+            // Check if that `let` is in the current function.
+            if (c.fn_id_current) |fn_id| {
                 const @"fn" = &c.fns.items[fn_id.id];
                 if (scope_index < @"fn".scope_start) {
-                    if (@"fn".capture_name_to_index.get(get.name)) |capture_index| {
-                        if (get.kind == .unique)
-                            @"fn".captures.items[capture_index].borrow.kind = .unique;
-                    } else {
-                        const capture_index = @"fn".captures.items.len;
-                        @"fn".capture_name_to_index.put(get.name, capture_index) catch oom();
-                        @"fn".captures.append(allocator, .{
-                            .name = get.name,
-                            .borrow = .{ .kind = get.kind, .origin = expr_id },
-                        }) catch oom();
-                    }
+                    return fail(c, .{ .expr_id = expr_id }, "Sorry, no closures in part 1.", .{});
                 }
-                fn_id_next = @"fn".parent;
             }
 
             // Check if any other names already borrow `get.name`.
@@ -972,8 +947,6 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             c.fns.append(allocator, .{
                 .parent = parent,
                 .fn_expr_id = expr_id,
-                .captures = .{},
-                .capture_name_to_index = .init(allocator),
                 .scope_start = scope_start,
                 .kind_bitmap = kind_bitmap,
             }) catch oom();
@@ -1021,12 +994,8 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
                 }
             }
 
-            // This `fn` is owned, and borrows from any name that it captures.
-            var bs = BorrowSet.init(expr_id);
-            for (c.fns.items[fn_id.id].captures.items) |capture| {
-                bs.borrowed.putNoClobber(capture.name, capture.borrow) catch oom();
-            }
-            return bs;
+            // This `fn` is owned.
+            return BorrowSet.init(expr_id);
         },
         .call => |*call| {
             const scope_start = c.scope.items.len;
@@ -1214,7 +1183,6 @@ const Kind = enum(u64) {
 
 const Closure = struct {
     fn_id: FnId,
-    capture_values: []Value,
 };
 
 const Value = packed struct {
@@ -1266,9 +1234,7 @@ const Value = packed struct {
     fn asClosure(value: Value) ?Closure {
         if (value.kind() != .closure) return null;
         const fn_id = FnId{ .id = value.asPtr().?[1] };
-        const capture_count = value.asPtr().?[2];
-        const capture_values: []Value = @ptrCast(value.asPtr().?[3..][0..capture_count]);
-        return .{ .fn_id = fn_id, .capture_values = capture_values };
+        return .{ .fn_id = fn_id };
     }
 
     fn initNull() Value {
@@ -1290,12 +1256,10 @@ const Value = packed struct {
         return .initPtr(@ptrCast(ptr));
     }
 
-    fn initClosure(fn_id: FnId, closure_len: u64) Value {
-        const ptr = allocator.alloc(u64, 3 + closure_len) catch oom();
+    fn initClosure(fn_id: FnId) Value {
+        const ptr = allocator.alloc(u64, 2) catch oom();
         ptr[0] = @intFromEnum(Kind.closure);
         ptr[1] = @bitCast(fn_id);
-        ptr[2] = closure_len;
-        @memset(ptr[3..][0..closure_len], @bitCast(Value.initPtr(null)));
         return .initPtr(@ptrCast(ptr));
     }
 
@@ -1327,19 +1291,7 @@ const Value = packed struct {
             .closure => {
                 const a_closure = a.asClosure().?;
                 const b_closure = b.asClosure().?;
-                switch (std.math.order(a_closure.fn_id.id, b_closure.fn_id.id)) {
-                    .lt => return .lt,
-                    .gt => return .gt,
-                    .eq => {},
-                }
-                for (0..@min(a_closure.capture_values.len, b_closure.capture_values.len)) |i| {
-                    switch (Value.order(a_closure.capture_values[i], b_closure.capture_values[i])) {
-                        .lt => return .lt,
-                        .gt => return .gt,
-                        .eq => {},
-                    }
-                }
-                return std.math.order(a_closure.capture_values.len, b_closure.capture_values.len);
+                return std.math.order(a_closure.fn_id.id, b_closure.fn_id.id);
             },
         }
     }
@@ -1361,12 +1313,7 @@ const Value = packed struct {
                 return out;
             },
             .closure => {
-                const in = value.asClosure().?;
-                const out = Value.initClosure(in.fn_id, in.capture_values.len);
-                for (out.asClosure().?.capture_values, in.capture_values) |*out_elem, in_elem| {
-                    out_elem.* = in_elem.copy();
-                }
-                return out;
+                return Value.initClosure(value.asClosure().?.fn_id);
             },
         }
     }
@@ -1374,15 +1321,14 @@ const Value = packed struct {
     fn deinit(value: *Value) void {
         if (value.ownership == .owned) {
             switch (value.kind()) {
-                .null, .number => {},
+                .null, .number, .closure => {},
                 .tuple => for (value.asTuple().?) |*elem| elem.deinit(),
-                .closure => for (value.asClosure().?.capture_values) |*capture_value| capture_value.deinit(),
             }
             const len = switch (value.kind()) {
                 .null => return,
                 .number => 2,
                 .tuple => 2 + value.asTuple().?.len,
-                .closure => 3 + value.asClosure().?.capture_values.len,
+                .closure => 2,
             };
             allocator.free(value.asPtr().?[0..len]);
         }
@@ -1407,14 +1353,7 @@ const Value = packed struct {
                 try writer.print("]", .{});
             },
             .closure => {
-                const closure = value.asClosure().?;
-                try writer.print("fn<{}>[", .{closure.fn_id});
-                for (closure.capture_values, 0..) |capture_value, i| {
-                    if (i != 0)
-                        try writer.print(", ", .{});
-                    try writer.print("{f}", .{capture_value});
-                }
-                try writer.print("]", .{});
+                try writer.print("fn({})", .{value.asClosure().?.fn_id});
             },
         }
     }
@@ -1502,15 +1441,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
         },
         .@"fn" => {
             const fn_id = c.expr_to_fn.get(expr_id).?;
-            const @"fn" = &c.fns.items[fn_id.id];
 
-            var value = Value.initClosure(fn_id, @"fn".captures.items.len);
+            var value = Value.initClosure(fn_id);
             defer value.deinit();
-
-            for (@"fn".captures.items, value.asClosure().?.capture_values) |capture, *capture_value| {
-                const binding_index = resolve(c.bindings, capture.name).?;
-                capture_value.* = c.bindings.items[binding_index].value.borrow();
-            }
 
             return value.take();
         },
@@ -1552,10 +1485,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                     var binding = c.bindings.pop().?;
                     binding.value.deinit();
                 }
-            }
-
-            for (@"fn".captures.items, closure.capture_values) |capture, capture_value| {
-                c.bindings.append(allocator, .{ .name = capture.name, .value = capture_value.borrow() }) catch oom();
             }
 
             for (fn_expr.params, args) |param, arg| {
