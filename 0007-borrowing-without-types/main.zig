@@ -947,13 +947,12 @@ const TypeClosure = struct {
 };
 
 const Value = struct {
-    // `ptr` can only be null for zero-size types.
-    ptr: ?[*]u64,
+    ptr: [*]u64,
     type: *Type,
 
     fn getNumber(value: Value) i64 {
         _ = value.type.number;
-        return @bitCast(value.ptr.?[0]);
+        return @bitCast(value.ptr[0]);
     }
 
     fn getBool(value: Value) bool {
@@ -964,22 +963,22 @@ const Value = struct {
 
     fn setNumber(value: Value, number: i64) void {
         _ = value.type.number;
-        value.ptr.?[0] = @bitCast(number);
+        value.ptr[0] = @bitCast(number);
     }
 
     fn getTupleElem(value: Value, index: usize) Value {
         const tuple = value.type.tuple;
         return .{
-            .ptr = value.ptr.? + tuple.wordOffset(index),
+            .ptr = value.ptr + tuple.wordOffset(index),
             .type = tuple.elems[index],
         };
     }
 
     fn getRefElem(value: Value) Value {
         const ref = value.type.ref;
-        return .{ .ptr = @ptrFromInt(value.ptr.?[0]), .type = switch (ref.elem) {
+        return .{ .ptr = @ptrFromInt(value.ptr[0]), .type = switch (ref.elem) {
             .known => |known| known,
-            .any => @ptrFromInt(value.ptr.?[1]),
+            .any => @ptrFromInt(value.ptr[1]),
         } };
     }
 
@@ -989,7 +988,7 @@ const Value = struct {
             .known => |known| assert(Type.order(known, elem.type) == .eq),
             .any => {},
         }
-        value.ptr.?[0] = @intFromPtr(elem.ptr);
+        value.ptr[0] = @intFromPtr(elem.ptr);
     }
 
     fn allocHeap(@"type": Type) Value {
@@ -1003,7 +1002,7 @@ const Value = struct {
         assert(Type.order(args.to.type, args.from.type) == .eq);
         const size = args.from.type.wordSize();
         if (size > 0)
-            @memcpy(args.to.ptr.?[0..size], args.from.ptr.?[0..size]);
+            @memcpy(args.to.ptr[0..size], args.from.ptr[0..size]);
     }
 
     fn copyDeep(args: struct { from: Value, to: Value }) void {
@@ -1062,7 +1061,7 @@ const Value = struct {
 
     fn free(value: Value) void {
         value.freeRefs();
-        allocator.free(value.ptr.?[0..value.type.wordSize()]);
+        allocator.free(value.ptr[0..value.type.wordSize()]);
     }
 
     fn freeRefs(value: Value) void {
@@ -1116,8 +1115,8 @@ const StackItem = struct {
 };
 
 fn getStackOffset(c: *Compiler, value: Value) usize {
-    assert(@intFromPtr(value.ptr.?) >= @intFromPtr(c.stack_data.ptr));
-    const offset = @intFromPtr(value.ptr.?) - @intFromPtr(c.stack_data.ptr);
+    assert(@intFromPtr(value.ptr) >= @intFromPtr(c.stack_data.ptr));
+    const offset = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
     assert(offset < c.stack_data.len);
     return @divExact(offset, 8);
 }
@@ -1160,14 +1159,29 @@ fn stackPushEmptyTuple(c: *Compiler) void {
     c.stack.push(.{
         .name = null,
         .value = .{
-            .ptr = null,
+            .ptr = c.stack_data.ptr,
             .type = c.type_empty_tuple,
         },
     });
 }
 
-fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void {
+fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     var result = c.stack.pop();
+
+    const first_compacted_owner = &c.stack.items[stack_start].ref_count;
+    for (getOwnerSlice(c, result.value)) |owner_or_null| {
+        if (owner_or_null) |owner| {
+            if (@intFromPtr(owner) >= @intFromPtr(first_compacted_owner)) {
+                const item: *StackItem = @fieldParentPtr("ref_count", owner);
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "This value borrows from `{s}`, but `{s}` will be destroyed at the end of this block",
+                    .{ item.name.?, item.name.? },
+                );
+            }
+        }
+    }
 
     for (c.stack.items[stack_start..c.stack.len]) |item| freeOwnedRefs(c, item.value);
     c.stack.len = stack_start;
@@ -1303,7 +1317,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             }
 
             try eval(c, block.statements[block.statements.len - 1]);
-            compactStack(c, stack_start, stack_data_start);
+            try stackCompact(c, expr_id, stack_start, stack_data_start);
         },
         .@"if" => |@"if"| {
             const stack_data_start = c.stack_top;
@@ -1336,7 +1350,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             c.stack.push(.{
                 .name = null,
                 .value = .{
-                    .ptr = null,
+                    .ptr = c.stack_data.ptr,
                     .type = makeTypeClosure(c, fn_id),
                 },
             });
@@ -1368,7 +1382,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             try eval(c, fn_expr.body);
             // TODO We could avoid this extra compaction by passing stack_start/stack_data_start to the block in `fn_expr.body`.
-            compactStack(c, stack_start, stack_data_start);
+            try stackCompact(c, expr_id, stack_start, stack_data_start);
         },
         .call_builtin => |call_builtin| {
             const stack_start = c.stack.len;
@@ -1418,7 +1432,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 },
             }
 
-            compactStack(c, stack_start, stack_data_start);
+            try stackCompact(c, expr_id, stack_start, stack_data_start);
         },
     }
 }
