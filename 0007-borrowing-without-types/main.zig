@@ -33,10 +33,20 @@ const Compiler = struct {
 
     // eval
     bindings: ArrayList(Binding),
+    stack: []u64,
+    stack_top: usize,
+    type_number: *Type,
+    type_empty_tuple: *Type,
 
     error_message: ?[]u8,
 
     pub fn init(source: []const u8) Compiler {
+        const type_number = allocator.create(Type) catch oom();
+        type_number.* = .number;
+
+        const type_empty_tuple = allocator.create(Type) catch oom();
+        type_empty_tuple.* = .{ .tuple = .{ .elems = &.{} } };
+
         return .{
             .source = source,
 
@@ -56,6 +66,10 @@ const Compiler = struct {
             .fn_id_current = null,
 
             .bindings = .{},
+            .stack = allocator.alloc(u64, 1024 * 1024) catch oom(),
+            .stack_top = 0,
+            .type_number = type_number,
+            .type_empty_tuple = type_empty_tuple,
 
             .error_message = null,
         };
@@ -75,8 +89,11 @@ const Compiler = struct {
         c.expr_to_fn_lease_bitmap.deinit();
         c.scope.deinit(allocator);
 
-        for (c.bindings.items) |*binding| binding.value.deinit();
+        for (c.bindings.items) |*binding| binding.deinit();
         c.bindings.deinit(allocator);
+        allocator.free(c.stack);
+        allocator.destroy(c.type_number);
+        allocator.destroy(c.type_empty_tuple);
 
         if (c.error_message) |err| allocator.free(err);
     }
@@ -85,10 +102,18 @@ const Compiler = struct {
         try tokenize(c);
         c.expr_top = try parse(c);
         c.expr_to_lease.appendNTimes(allocator, .shared, c.exprs.items.len) catch oom();
-        var bs = try analyze(c, c.expr_top.?);
-        bs.deinit();
-        const value = try eval(c, c.expr_top.?);
-        return std.fmt.allocPrint(allocator, "{f}", .{value});
+        {
+            // TODO Re-enable analysis errors.
+            if (analyze(c, c.expr_top.?)) |bs_const| {
+                var bs = bs_const;
+                bs.deinit();
+            } else |_| {
+                c.error_message = null;
+            }
+        }
+        try eval(c, c.expr_top.?);
+        const result = bindingsPeek(c);
+        return std.fmt.allocPrint(allocator, "{f}", .{result.value});
     }
 };
 
@@ -161,7 +186,6 @@ const Token = enum {
     @"else",
     @"while",
     @"fn",
-    null,
 
     name,
     number,
@@ -218,7 +242,6 @@ pub fn tokenize(c: *Compiler) !void {
                     .@"else",
                     .@"while",
                     .@"fn",
-                    .null,
                 };
                 for (keywords) |keyword| {
                     if (std.mem.eql(u8, name, @tagName(keyword)))
@@ -268,7 +291,6 @@ fn failBadToken(c: *Compiler, pos: usize) error{Error} {
 const ExprId = packed struct { id: usize };
 
 const Expr = union(enum) {
-    null,
     number: i64,
     tuple: []ExprId,
     get: struct {
@@ -317,7 +339,7 @@ const Expr = union(enum) {
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
-            .null, .number, .get, .let, .@"if", .@"while", .param => {},
+            .number, .get, .let, .@"if", .@"while", .param => {},
         }
     }
 };
@@ -329,10 +351,10 @@ const Lease = enum(u2) {
 };
 
 const Builtin = enum {
-    get,
-    set,
-    take,
-    copy,
+    //get,
+    //set,
+    //take,
+    //copy,
     @"+",
     @"<",
 };
@@ -434,7 +456,6 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
 
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
     return switch (peek(c)) {
-        .null => parseNull(c),
         .number => parseNumber(c),
         .@"[" => parseList(c),
         .name => parseGet(c),
@@ -445,12 +466,6 @@ fn parseExprBase(c: *Compiler) error{Error}!ExprId {
         .get, .set, .take, .copy => parseCallBuiltin(c),
         else => failExpected(c, "an expression"),
     };
-}
-
-fn parseNull(c: *Compiler) error{Error}!ExprId {
-    const start = c.token_next;
-    try expect(c, .null);
-    return pushExpr(c, start, .null);
 }
 
 fn parseNumber(c: *Compiler) error{Error}!ExprId {
@@ -507,15 +522,15 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
     var statements: ArrayList(ExprId) = .{};
     defer statements.deinit(allocator);
 
-    const return_null = while (true) {
-        if (peek(c) == .@"}") break true;
+    const return_last = while (true) {
+        if (peek(c) == .@"}") break false;
         const statement = if (peek(c) == .let) try parseLet(c) else try parseExprLoose(c);
         statements.append(allocator, statement) catch oom();
-        if (!takeIf(c, .@";")) break false;
+        if (!takeIf(c, .@";")) break true;
     };
 
-    if (return_null or statements.items.len == 0) {
-        const statement = pushExpr(c, c.token_next, .null);
+    if (!return_last or statements.items.len == 0) {
+        const statement = pushExpr(c, c.token_next, .{ .tuple = &.{} });
         statements.append(allocator, statement) catch oom();
     }
 
@@ -601,10 +616,10 @@ fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
 
     const builtin: Builtin = switch (peek(c)) {
-        .get => .get,
-        .set => .set,
-        .take => .take,
-        .copy => .copy,
+        //.get => .get,
+        //.set => .set,
+        //.take => .take,
+        //.copy => .copy,
         else => return failExpected(c, "a builtin function"),
     };
     _ = take(c);
@@ -765,7 +780,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
 
 fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
     switch (c.exprs.items[expr_id.id]) {
-        .null, .number => {
+        .number => {
             return BorrowSet.init(allocator);
         },
         .tuple => |tuple| {
@@ -1074,79 +1089,9 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             defer resetScope(c, scope_start);
 
             switch (call_builtin.builtin) {
-                .@"+", .@"<", .copy => {
+                .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         _ = try analyzeAndAddToScope(c, arg);
-
-                    return BorrowSet.init(allocator);
-                },
-                .get => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
-                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
-                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
-
-                    return bs_tuple.clone() catch oom();
-                },
-                .set => {
-                    try checkArgCount(c, expr_id, .{ .expected = 3, .actual = call_builtin.args.len });
-                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
-                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
-                    const bs_elem = try analyzeAndAddToScope(c, call_builtin.args[2]);
-
-                    // `tuple` must not contain any shared borrows.
-                    {
-                        var iter = bs_tuple.iterator();
-                        while (iter.next()) |kv| {
-                            const name = kv.key_ptr.*;
-                            const borrow = kv.value_ptr.*;
-                            if (borrow.lease == .shared) {
-                                return fail(
-                                    c,
-                                    .{ .expr_id = call_builtin.args[0] },
-                                    "Can't set an elem on this tuple because it borrows non-uniquely from `{s}`.",
-                                    .{name},
-                                );
-                            }
-                        }
-                    }
-
-                    // 'elem' must not borrow from anything.
-                    {
-                        var iter = bs_elem.iterator();
-                        if (iter.next()) |kv| {
-                            const name = kv.key_ptr.*;
-                            return fail(
-                                c,
-                                .{ .expr_id = call_builtin.args[2] },
-                                "Can't set this elem because it borrows from `{s}`.",
-                                .{name},
-                            );
-                        }
-                    }
-
-                    return BorrowSet.init(allocator);
-                },
-                .take => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = call_builtin.args.len });
-                    const bs_tuple = try analyzeAndAddToScope(c, call_builtin.args[0]);
-                    _ = try analyzeAndAddToScope(c, call_builtin.args[1]);
-
-                    // `tuple` must not contain any shared borrows.
-                    {
-                        var iter = bs_tuple.iterator();
-                        while (iter.next()) |kv| {
-                            const name = kv.key_ptr.*;
-                            const borrow = kv.value_ptr.*;
-                            if (borrow.lease == .shared) {
-                                return fail(
-                                    c,
-                                    .{ .expr_id = call_builtin.args[0] },
-                                    "Can't take an elem from this tuple because it borrows non-uniquely from `{s}`.",
-                                    .{name},
-                                );
-                            }
-                        }
-                    }
 
                     return BorrowSet.init(allocator);
                 },
@@ -1189,266 +1134,428 @@ fn failAlreadyDefined(c: *Compiler, expr_id: ExprId, let_id: ExprId, name: []con
 
 // --- EVAL ---
 
-const Kind = enum(u64) {
-    null = 0,
-    number = 1,
-    tuple = 2,
-    closure = 3,
-};
+const Type = union(enum) {
+    number,
+    tuple: TypeTuple,
+    ref: TypeRef,
+    closure: TypeClosure,
 
-const Closure = struct {
-    fn_id: FnId,
-};
-
-const Value = packed struct {
-    ptr: ?[*]u64,
-
-    fn take(value: *Value) Value {
-        const taken = value.*;
-        value.* = .initNull();
-        return taken;
+    fn wordSize(@"type": Type) usize {
+        switch (@"type") {
+            .number => return 1,
+            .tuple => |tuple| {
+                var size: usize = 0;
+                for (tuple.elems) |elem| {
+                    size += elem.wordSize();
+                }
+                return size;
+            },
+            .ref => |ref| {
+                return switch (ref.elem) {
+                    .known => 1,
+                    .any => 2,
+                };
+            },
+            .closure => return 0,
+        }
     }
 
-    fn kind(value: Value) Kind {
-        return if (value.ptr) |ptr|
-            @enumFromInt(ptr[0])
-        else
-            .null;
-    }
-
-    fn asNumber(value: Value) ?i64 {
-        if (value.kind() != .number) return null;
-        return @bitCast(value.ptr.?[1]);
-    }
-
-    fn asTuple(value: Value) ?[]Value {
-        if (value.kind() != .tuple) return null;
-        const len = value.ptr.?[1];
-        return @ptrCast(value.ptr.?[2..][0..len]);
-    }
-
-    fn asClosure(value: Value) ?Closure {
-        if (value.kind() != .closure) return null;
-        const fn_id = FnId{ .id = value.ptr.?[1] };
-        return .{ .fn_id = fn_id };
-    }
-
-    fn initNull() Value {
-        return .{ .ptr = null };
-    }
-
-    fn initNumber(i: i64) Value {
-        const ptr = allocator.alloc(u64, 2) catch oom();
-        ptr[0] = @intFromEnum(Kind.number);
-        ptr[1] = @bitCast(i);
-        return .{ .ptr = @ptrCast(ptr) };
-    }
-
-    fn initTuple(len: u64) Value {
-        const ptr = allocator.alloc(u64, 2 + len) catch oom();
-        ptr[0] = @intFromEnum(Kind.tuple);
-        ptr[1] = len;
-        @memset(ptr[2..][0..len], @bitCast(Value{ .ptr = null }));
-        return .{ .ptr = @ptrCast(ptr) };
-    }
-
-    fn initClosure(fn_id: FnId) Value {
-        const ptr = allocator.alloc(u64, 2) catch oom();
-        ptr[0] = @intFromEnum(Kind.closure);
-        ptr[1] = @bitCast(fn_id);
-        return .{ .ptr = @ptrCast(ptr) };
-    }
-
-    fn initBool(b: bool) Value {
-        return if (b) Value.initTuple(0) else Value.initNull();
-    }
-
-    fn order(a: Value, b: Value) std.math.Order {
-        switch (std.math.order(@intFromEnum(a.kind()), @intFromEnum(b.kind()))) {
+    fn order(a: *Type, b: *Type) std.math.Order {
+        switch (std.math.order(@intFromEnum(a.*), @intFromEnum(b.*))) {
             .lt => return .lt,
             .gt => return .gt,
             .eq => {},
         }
-        switch (a.kind()) {
-            .null => return .eq,
-            .number => return std.math.order(a.asNumber().?, b.asNumber().?),
+        switch (a.*) {
+            .number => return .eq,
             .tuple => {
-                const a_tuple = a.asTuple().?;
-                const b_tuple = b.asTuple().?;
-                for (0..@min(a_tuple.len, b_tuple.len)) |i| {
-                    switch (Value.order(a_tuple[i], b_tuple[i])) {
+                for (0..@min(a.tuple.elems.len, b.tuple.elems.len)) |i| {
+                    switch (Type.order(a.tuple.elems[i], b.tuple.elems[i])) {
                         .lt => return .lt,
                         .gt => return .gt,
                         .eq => {},
                     }
                 }
-                return std.math.order(a_tuple.len, b_tuple.len);
+                return std.math.order(a.tuple.elems.len, b.tuple.elems.len);
             },
-            .closure => {
-                const a_closure = a.asClosure().?;
-                const b_closure = b.asClosure().?;
-                return std.math.order(a_closure.fn_id.id, b_closure.fn_id.id);
-            },
-        }
-    }
-
-    pub fn copy(value: Value) Value {
-        switch (value.kind()) {
-            .null => {
-                return value;
-            },
-            .number => {
-                return .initNumber(value.asNumber().?);
-            },
-            .tuple => {
-                const in = value.asTuple().?;
-                const out = Value.initTuple(in.len);
-                for (out.asTuple().?, in) |*out_elem, in_elem| {
-                    out_elem.* = in_elem.copy();
+            .ref => {
+                switch (std.math.order(@intFromEnum(a.ref.elem), @intFromEnum(b.ref.elem))) {
+                    .lt => return .lt,
+                    .gt => return .gt,
+                    .eq => {},
                 }
-                return out;
+                switch (a.ref.elem) {
+                    .any => return .eq,
+                    .known => return Type.order(a.ref.elem.known, b.ref.elem.known),
+                }
+            },
+            .closure => return .eq,
+        }
+    }
+};
+
+const TypeTuple = struct {
+    elems: []*Type,
+
+    fn wordOffset(tuple: TypeTuple, index: usize) usize {
+        var offset: usize = 0;
+        for (tuple.elems[0..index]) |elem| {
+            offset += elem.wordSize();
+        }
+        return offset;
+    }
+};
+
+const TypeRef = struct {
+    elem: union(enum) {
+        known: *Type,
+        any,
+    },
+};
+
+const TypeClosure = struct {
+    fn_id: FnId,
+};
+
+const Value = struct {
+    // `ptr` can only be null for zero-size types.
+    ptr: ?[*]u64,
+    type: *Type,
+
+    fn getNumber(value: Value) i64 {
+        _ = value.type.number;
+        return @bitCast(value.ptr.?[0]);
+    }
+
+    fn getBool(value: Value) bool {
+        // Zero is falsey. Everything else is truthy.
+        if (value.type.* != .number) return true;
+        return value.getNumber() != 0;
+    }
+
+    fn setNumber(value: Value, number: i64) void {
+        _ = value.type.number;
+        value.ptr.?[0] = @bitCast(number);
+    }
+
+    fn getTupleElem(value: Value, index: usize) Value {
+        const tuple = value.type.tuple;
+        return .{
+            .ptr = value.ptr.? + tuple.wordOffset(index),
+            .type = tuple.elems[index],
+        };
+    }
+
+    fn getRefElem(value: Value) Value {
+        const ref = value.type.ref;
+        return .{ .ptr = @ptrFromInt(value.ptr.?[0]), .type = switch (ref.elem) {
+            .known => |known| known,
+            .any => @ptrFromInt(value.ptr.?[1]),
+        } };
+    }
+
+    fn setRefElem(value: Value, elem: Value) Value {
+        const ref = value.type.ref;
+        switch (ref.type) {
+            .known => |known| assert(Type.order(known, elem.type) == .eq),
+            .any => {},
+        }
+        value.ptr.?[0] = @intFromPtr(elem.ptr);
+    }
+
+    fn allocHeap(@"type": Type) Value {
+        return .{
+            .ptr = allocator.alloc(u8, @"type".sizeOf()) catch oom(),
+            .type = @"type",
+        };
+    }
+
+    fn copyShallow(args: struct { from: Value, to: Value }) void {
+        assert(Type.order(args.to.type, args.from.type) == .eq);
+        const size = args.from.type.sizeOf();
+        if (size != 0)
+            @memcpy(args.to.ptr[0..], args.from.ptr[0..]);
+    }
+
+    fn copyDeep(args: struct { from: Value, to: Value }) void {
+        assert(Type.order(args.to.type, args.from.type) == .eq);
+        copyShallow(.{ .from = args.from, .to = args.to });
+        cloneRefs(args.to);
+    }
+
+    fn cloneRefs(value: Value) void {
+        switch (value.type) {
+            .number => {},
+            .tuple => |tuple| {
+                for (0..tuple.elems.len) |i| {
+                    cloneRefs(value.getTupleElem(i));
+                }
+            },
+            .ref => {
+                setRefElem(value, getRefElem(value).clone());
+            },
+            .closure => {},
+        }
+    }
+
+    fn clone(value: Value) Value {
+        const cloned = allocHeap(value.type);
+        copyDeep(.{ .from = value, .to = cloned });
+        return cloned;
+    }
+
+    fn order(a: Value, b: Value) std.math.Order {
+        switch (Type.order(a.type, b.type)) {
+            .lt => return .lt,
+            .gt => return .gt,
+            .eq => {},
+        }
+        switch (a.type.*) {
+            .number => return std.math.order(a.getNumber(), b.getNumber()),
+            .tuple => |tuple| {
+                for (0..tuple.elems.len) |i| {
+                    switch (Value.order(a.getTupleElem(i), b.getTupleElem(i))) {
+                        .lt => return .lt,
+                        .gt => return .gt,
+                        .eq => {},
+                    }
+                }
+                return .eq;
+            },
+            .ref => {
+                return Value.order(a.getRefElem(), b.getRefElem());
             },
             .closure => {
-                return Value.initClosure(value.asClosure().?.fn_id);
+                return .eq;
             },
         }
     }
 
-    fn deinit(value: *Value) void {
-        switch (value.kind()) {
-            .null, .number, .closure => {},
-            .tuple => for (value.asTuple().?) |*elem| elem.deinit(),
+    fn free(value: Value) void {
+        value.freeRefs();
+        allocator.free(value.ptr.?[0..value.type.wordSize()]);
+    }
+
+    fn freeRefs(value: Value) void {
+        switch (value.type.*) {
+            .number => {},
+            .tuple => |tuple| {
+                for (0..tuple.elems.len) |i| {
+                    freeRefs(value.getTupleElem(i));
+                }
+            },
+            .ref => {
+                getRefElem(value).free();
+            },
+            .closure => {},
         }
-        const len = switch (value.kind()) {
-            .null => return,
-            .number => 2,
-            .tuple => 2 + value.asTuple().?.len,
-            .closure => 2,
-        };
-        allocator.free(value.ptr.?[0..len]);
-        value.* = .initNull();
     }
 
     pub fn format(value: Value, writer: *std.io.Writer) std.io.Writer.Error!void {
-        switch (value.kind()) {
-            .null => {
-                try writer.print("null", .{});
-            },
+        switch (value.type.*) {
             .number => {
-                try writer.print("{}", .{value.asNumber().?});
+                try writer.print("{}", .{value.getNumber()});
             },
-            .tuple => {
+            .tuple => |tuple| {
                 try writer.print("[", .{});
-                for (value.asTuple().?, 0..) |item, i| {
+                for (0..tuple.elems.len) |i| {
                     if (i != 0)
                         try writer.print(", ", .{});
-                    try writer.print("{f}", .{item});
+                    try writer.print("{f}", .{value.getTupleElem(i)});
                 }
                 try writer.print("]", .{});
             },
-            .closure => {
-                try writer.print("fn({})", .{value.asClosure().?.fn_id});
+            .ref => {
+                try writer.print("ref({f})", .{value.getRefElem()});
+            },
+            .closure => |closure| {
+                try writer.print("fn({})", .{closure.fn_id});
             },
         }
     }
 };
 
-fn deinitIfOwned(c: *Compiler, expr_id: ExprId, value: Value) void {
-    if (c.expr_to_lease.items[expr_id.id] == .owned) {
-        var value_mut = value;
-        value_mut.deinit();
-    }
-}
-
 const Binding = struct {
     name: ?[]const u8,
+    // This value always points to `c.stack`.
     value: Value,
-    expr_id: ExprId,
+    lease: Lease,
+
+    fn deinit(binding: Binding) void {
+        if (binding.lease == .owned)
+            // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
+            binding.value.freeRefs();
+    }
 };
 
-fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
-    switch (c.exprs.items[expr_id.id]) {
-        .null => {
-            return .initNull();
+fn bindingsPushEmptyTuple(c: *Compiler) void {
+    c.bindings.append(allocator, .{
+        .name = null,
+        .value = .{
+            .ptr = null,
+            .type = c.type_empty_tuple,
         },
+        .lease = .owned,
+    }) catch oom();
+}
+
+fn bindingsPeek(c: *Compiler) *Binding {
+    return &c.bindings.items[c.bindings.items.len - 1];
+}
+
+fn compactStack(c: *Compiler, bindings_start: usize, stack_start: usize) void {
+    var result = c.bindings.pop().?;
+
+    for (c.bindings.items[bindings_start..]) |binding| binding.deinit();
+    c.bindings.shrinkRetainingCapacity(bindings_start);
+
+    const size = result.value.type.wordSize();
+    if (size > 0) {
+        const ptr = c.stack[stack_start..][0..size];
+        std.mem.copyBackwards(u64, ptr, result.value.ptr.?[0..size]);
+        c.stack_top = stack_start;
+        result.value.ptr = @ptrCast(ptr);
+    }
+
+    c.bindings.append(allocator, result) catch oom();
+}
+
+fn stackPush(c: *Compiler, @"type": *Type) Value {
+    const ptr = &c.stack[c.stack_top];
+    c.stack_top += @"type".wordSize();
+    return .{
+        .ptr = @ptrCast(ptr),
+        .type = @"type",
+    };
+}
+
+// TODO Memoize this.
+fn makeTypeTuple(c: *Compiler, bindings: []Binding) *Type {
+    _ = c;
+    const result = allocator.create(Type) catch oom();
+    const elems = allocator.alloc(*Type, bindings.len) catch oom();
+    for (elems, bindings) |*elem, binding| elem.* = binding.value.type;
+    result.* = .{ .tuple = .{ .elems = elems } };
+    return result;
+}
+
+// TODO Memoize this.
+fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
+    _ = c;
+    const result = allocator.create(Type) catch oom();
+    result.* = .{ .closure = .{ .fn_id = fn_id } };
+    return result;
+}
+
+fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
+    switch (c.exprs.items[expr_id.id]) {
         .number => |number| {
-            return .initNumber(number);
+            const value = stackPush(c, c.type_number);
+            value.setNumber(number);
+            c.bindings.append(allocator, .{
+                .name = null,
+                .value = value,
+                .lease = .owned,
+            }) catch oom();
         },
         .tuple => |exprs| {
-            const value = Value.initTuple(exprs.len);
-            errdefer deinitIfOwned(c, expr_id, value);
-
-            const tuple = value.asTuple().?;
-            for (tuple, exprs) |*item, expr| {
-                item.* = try eval(c, expr);
+            if (exprs.len == 0) {
+                bindingsPushEmptyTuple(c);
+                return;
             }
 
-            return value;
+            const bindings_start = c.bindings.items.len;
+
+            for (exprs) |expr| {
+                try eval(c, expr);
+            }
+
+            const @"type" = makeTypeTuple(c, c.bindings.items[c.bindings.items.len - exprs.len ..]);
+
+            // All the elems are now contiguous on `c.stack` so we can just point at the first elem.
+            c.bindings.shrinkRetainingCapacity(bindings_start + 1);
+            const result = bindingsPeek(c);
+            result.value.type = @"type";
+            result.lease = .owned;
         },
         .get => |get| {
             const binding_index = resolve(c.bindings, get.name).?;
-            return c.bindings.items[binding_index].value;
+            const value = c.bindings.items[binding_index].value;
+            c.bindings.append(allocator, .{
+                .name = null,
+                .value = value,
+                .lease = get.lease,
+            }) catch oom();
         },
         .let => |let| {
-            const value = try eval(c, let.value);
-            errdefer deinitIfOwned(c, let.value, value);
-
+            try eval(c, let.value);
+            const binding = c.bindings.pop().?;
             c.bindings.append(allocator, .{
                 .name = let.name,
-                .value = value,
-                .expr_id = let.value,
+                .value = binding.value,
+                .lease = binding.lease,
             }) catch oom();
-
-            return Value.initNull();
+            bindingsPushEmptyTuple(c);
         },
         .block => |block| {
             const bindings_start = c.bindings.items.len;
-            defer c.bindings.shrinkRetainingCapacity(bindings_start);
+            const stack_start = c.stack_top;
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
-                const value = try eval(c, statement);
-                defer deinitIfOwned(c, statement, value);
+                try eval(c, statement);
+                c.bindings.pop().?.deinit();
             }
 
-            const result = try eval(c, block.statements[block.statements.len - 1]);
-            errdefer deinitIfOwned(c, expr_id, result);
-
-            return result;
+            try eval(c, block.statements[block.statements.len - 1]);
+            compactStack(c, bindings_start, stack_start);
         },
         .@"if" => |@"if"| {
-            const cond = try eval(c, @"if".cond);
-            defer deinitIfOwned(c, @"if".cond, cond);
+            const stack_start = c.stack_top;
+            try eval(c, @"if".cond);
+            const binding = c.bindings.pop().?;
+            const cond = binding.value.getBool();
+            binding.deinit();
+            c.stack_top = stack_start;
 
-            return eval(c, if (cond.kind() != .null) @"if".then else @"if".@"else");
+            try eval(c, if (cond) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                const cond = try eval(c, @"while".cond);
-                defer deinitIfOwned(c, @"while".cond, cond);
+                const stack_start = c.stack_top;
+                try eval(c, @"while".cond);
+                const binding = c.bindings.pop().?;
+                const cond = binding.value.getBool();
+                binding.deinit();
+                c.stack_top = stack_start;
 
-                if (cond.kind() == .null) break;
+                if (!cond) break;
 
-                const body = try eval(c, @"while".body);
-                defer deinitIfOwned(c, @"while".body, body);
+                try eval(c, @"while".body);
+                c.bindings.pop().?.deinit();
             }
-
-            return Value.initNull();
+            bindingsPushEmptyTuple(c);
         },
         .@"fn" => {
             const fn_id = c.expr_to_fn.get(expr_id).?;
-            return Value.initClosure(fn_id);
+            c.bindings.append(allocator, .{
+                .name = null,
+                .value = .{
+                    .ptr = null,
+                    .type = makeTypeClosure(c, fn_id),
+                },
+                .lease = .owned,
+            }) catch oom();
         },
         .param => {
             // Handled directly in .call below.
             unreachable;
         },
         .call => |call| {
-            const closure_value = try eval(c, call.closure);
-            defer deinitIfOwned(c, call.closure, closure_value);
+            try eval(c, call.closure);
+            const closure = bindingsPeek(c);
 
-            try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure_value.kind() });
-            const closure = closure_value.asClosure().?;
-            const @"fn" = &c.fns.items[closure.fn_id.id];
+            try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure.value.type });
+            const @"fn" = &c.fns.items[closure.value.type.closure.fn_id.id];
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
@@ -1480,98 +1587,76 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!Value {
                 unreachable;
             }
 
-            const args = allocator.alloc(Value, call.args.len) catch oom();
-            defer allocator.free(args);
-
-            for (args) |*arg| arg.* = Value.initNull();
-            defer for (call.args, args) |arg_expr, arg|
-                deinitIfOwned(c, arg_expr, arg);
-
-            for (args, call.args) |*arg_value, arg_expr|
-                arg_value.* = try eval(c, arg_expr);
-
             const bindings_start = c.bindings.items.len;
-            defer c.bindings.shrinkRetainingCapacity(bindings_start);
+            const stack_start = c.stack_top;
 
-            for (fn_expr.params, args) |param_id, arg| {
+            for (call.args) |arg_expr|
+                try eval(c, arg_expr);
+
+            for (fn_expr.params, 0..) |param_id, i| {
                 const param = c.exprs.items[param_id.id].param;
-                c.bindings.append(allocator, .{ .name = param.name, .value = arg, .expr_id = param_id }) catch oom();
+                const binding = &c.bindings.items[c.bindings.items.len - 1 - i];
+                binding.name = param.name;
+                binding.lease = param.lease;
             }
-            defer for (c.bindings.items[bindings_start..]) |binding|
-                deinitIfOwned(c, binding.expr_id, binding.value);
 
-            return eval(c, fn_expr.body);
+            try eval(c, fn_expr.body);
+            // TODO We could avoid this extra compaction by passing bindings_start/stack_start to the block in `fn_expr.body`.
+            compactStack(c, bindings_start, stack_start);
         },
         .call_builtin => |call_builtin| {
-            const args = allocator.alloc(Value, call_builtin.args.len) catch oom();
-            defer allocator.free(args);
+            const bindings_start = c.bindings.items.len;
+            const stack_start = c.stack_top;
 
-            for (args) |*arg| arg.* = Value.initNull();
-            defer for (call_builtin.args, args) |arg_expr, arg|
-                deinitIfOwned(c, arg_expr, arg);
+            try checkArgCount(c, expr_id, .{
+                .expected = switch (call_builtin.builtin) {
+                    .@"+", .@"<" => 2,
+                },
+                .actual = call_builtin.args.len,
+            });
 
-            for (args, call_builtin.args) |*value, expr| {
-                value.* = try eval(c, expr);
-            }
+            for (call_builtin.args) |expr|
+                try eval(c, expr);
 
             switch (call_builtin.builtin) {
                 .@"+" => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
-                    try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = args[0].kind() });
-                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    return Value.initNumber(args[0].asNumber().? +% args[1].asNumber().?);
+                    const arg1 = c.bindings.pop().?;
+                    defer arg1.deinit();
+
+                    const arg0 = c.bindings.pop().?;
+                    defer arg0.deinit();
+
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
+                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
+
+                    const result = stackPush(c, c.type_number);
+                    result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
+                    c.bindings.append(allocator, .{
+                        .name = null,
+                        .value = result,
+                        .lease = .owned,
+                    }) catch oom();
                 },
                 .@"<" => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
-                    return Value.initBool(Value.order(args[0], args[1]) == .lt);
-                },
-                .get => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
-                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
-                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    const result_ptr = try getPtr(c, expr_id, args[0..2]);
-                    return if (c.expr_to_lease.items[call_builtin.args[0].id] == .owned)
-                        result_ptr.take()
-                    else
-                        result_ptr.*;
-                },
-                .set => {
-                    try checkArgCount(c, expr_id, .{ .expected = 3, .actual = args.len });
-                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
-                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    const result_ptr = try getPtr(c, expr_id, args[0..2]);
-                    const result_old = result_ptr.*;
-                    result_ptr.* = args[2].take();
-                    return result_old;
-                },
-                .take => {
-                    try checkArgCount(c, expr_id, .{ .expected = 2, .actual = args.len });
-                    try checkKind(c, call_builtin.args[0], .{ .expected = .tuple, .actual = args[0].kind() });
-                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = args[1].kind() });
-                    return (try getPtr(c, expr_id, args[0..2])).take();
-                },
-                .copy => {
-                    try checkArgCount(c, expr_id, .{ .expected = 1, .actual = args.len });
-                    return args[0].copy();
+                    const arg1 = c.bindings.pop().?;
+                    defer arg1.deinit();
+
+                    const arg0 = c.bindings.pop().?;
+                    defer arg0.deinit();
+
+                    const result = stackPush(c, c.type_number);
+                    result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
+                    c.bindings.append(allocator, .{
+                        .name = null,
+                        .value = result,
+                        .lease = .owned,
+                    }) catch oom();
                 },
             }
+
+            compactStack(c, bindings_start, stack_start);
         },
     }
-}
-
-fn getPtr(c: *Compiler, expr_id: ExprId, args: *[2]Value) error{Error}!*Value {
-    const tuple = args[0].asTuple().?;
-    const index = args[1].asNumber().?;
-
-    if (index < 0 or index >= tuple.len)
-        return fail(
-            c,
-            .{ .expr_id = expr_id },
-            "Index {f} is out of bounds for tuple {f}",
-            .{ args[1], args[0] },
-        );
-
-    return &tuple[@intCast(index)];
 }
 
 fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
@@ -1584,13 +1669,13 @@ fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, 
         );
 }
 
-fn checkKind(c: *Compiler, expr_id: ExprId, opts: struct { expected: Kind, actual: Kind }) error{Error}!void {
-    if (opts.expected != opts.actual)
+fn checkKind(c: *Compiler, expr_id: ExprId, opts: struct { expected: std.meta.Tag(Type), actual: *Type }) error{Error}!void {
+    if (opts.expected != opts.actual.*)
         return fail(
             c,
             .{ .expr_id = expr_id },
             "Expected a {s} but found a {s}",
-            .{ @tagName(opts.expected), @tagName(opts.actual) },
+            .{ @tagName(opts.expected), @tagName(opts.actual.*) },
         );
 }
 
