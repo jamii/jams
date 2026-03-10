@@ -35,8 +35,9 @@ const Compiler = struct {
 
     // eval
     stack: Stack(StackItem),
-    stack_data: Stack(u64),
-    stack_owner: Stack(?*i64),
+    stack_top: usize,
+    stack_data: []u64,
+    stack_owner: []?*i64,
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -66,8 +67,9 @@ const Compiler = struct {
             .fn_id_current = null,
 
             .stack = .init(1024),
-            .stack_data = .init(1024 * 1024),
-            .stack_owner = .init(1024 * 1024),
+            .stack_top = 0,
+            .stack_data = allocator.alloc(u64, 1024 * 1024) catch oom(),
+            .stack_owner = allocator.alloc(?*i64, 1024 * 1024) catch oom(),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -89,8 +91,8 @@ const Compiler = struct {
 
         for (c.stack.items[0..c.stack.len]) |*item| freeOwnedRefs(c, item.value);
         c.stack.deinit();
-        c.stack_data.deinit();
-        c.stack_owner.deinit();
+        allocator.free(c.stack_data);
+        allocator.free(c.stack_owner);
         allocator.destroy(c.type_number);
         allocator.destroy(c.type_empty_tuple);
 
@@ -1115,16 +1117,16 @@ const StackItem = struct {
 };
 
 fn getStackOffset(c: *Compiler, value: Value) usize {
-    assert(@intFromPtr(value.ptr.?) >= @intFromPtr(c.stack_data.items.ptr));
-    const offset = @intFromPtr(value.ptr.?) - @intFromPtr(c.stack_data.items.ptr);
-    assert(offset < c.stack_data.items.len);
+    assert(@intFromPtr(value.ptr.?) >= @intFromPtr(c.stack_data.ptr));
+    const offset = @intFromPtr(value.ptr.?) - @intFromPtr(c.stack_data.ptr);
+    assert(offset < c.stack_data.len);
     return @divExact(offset, 8);
 }
 
 fn getRefCountPtr(c: *Compiler, ref: Value) ?*i64 {
     assert(ref.type.* == .ref);
     const offset = getStackOffset(c, ref);
-    return c.stack_owner.items[offset];
+    return c.stack_owner[offset];
 }
 
 fn freeOwnedRefs(c: *Compiler, value: Value) void {
@@ -1171,32 +1173,30 @@ fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void 
         const offset = getStackOffset(c, result.value);
         std.mem.copyBackwards(
             u64,
-            c.stack_data.items[stack_data_start..][0..size],
-            c.stack_data.items[offset..][0..size],
+            c.stack_data[stack_data_start..][0..size],
+            c.stack_data[offset..][0..size],
         );
         std.mem.copyBackwards(
             ?*i64,
-            c.stack_owner.items[stack_data_start..][0..size],
-            c.stack_owner.items[offset..][0..size],
+            c.stack_owner[stack_data_start..][0..size],
+            c.stack_owner[offset..][0..size],
         );
-        result.value.ptr = @ptrCast(c.stack_data.items[stack_data_start..]);
+        result.value.ptr = @ptrCast(c.stack_data[stack_data_start..]);
     }
 
-    @memset(c.stack_data.items[stack_data_start + size .. c.stack_data.len], undefined);
-    c.stack_data.len = stack_data_start + size;
-
-    @memset(c.stack_owner.items[stack_data_start + size .. c.stack_owner.len], undefined);
-    c.stack_owner.len = stack_data_start + size;
+    @memset(c.stack_data[stack_data_start + size .. c.stack_top], undefined);
+    @memset(c.stack_owner[stack_data_start + size .. c.stack_top], undefined);
+    c.stack_top = stack_data_start + size;
 
     c.stack.push(result);
 }
 
 fn stackDataPush(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
-    const ptr = &c.stack_data.items[c.stack_data.len];
-    c.stack_data.len += size;
-    @memset(c.stack_owner.items[c.stack_owner.len..][0..size], null);
-    c.stack_owner.len += size;
+    const ptr = &c.stack_data[c.stack_top];
+    @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
+    @memset(c.stack_owner[c.stack_top..][0..size], null);
+    c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
         .type = @"type",
@@ -1273,7 +1273,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         .block => |block| {
             const stack_start = c.stack.len;
-            const stack_data_start = c.stack_data.len;
+            const stack_data_start = c.stack_top;
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
                 try eval(c, statement);
@@ -1284,23 +1284,23 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             compactStack(c, stack_start, stack_data_start);
         },
         .@"if" => |@"if"| {
-            const stack_data_start = c.stack_data.len;
+            const stack_data_start = c.stack_top;
             try eval(c, @"if".cond);
             const item = c.stack.pop();
             const cond = item.value.getBool();
             freeOwnedRefs(c, item.value);
-            c.stack_data.len = stack_data_start;
+            c.stack_top = stack_data_start;
 
             try eval(c, if (cond) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                const stack_data_start = c.stack_data.len;
+                const stack_data_start = c.stack_top;
                 try eval(c, @"while".cond);
                 const item = c.stack.pop();
                 const cond = item.value.getBool();
                 freeOwnedRefs(c, item.value);
-                c.stack_data.len = stack_data_start;
+                c.stack_top = stack_data_start;
 
                 if (!cond) break;
 
@@ -1334,7 +1334,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
             const stack_start = c.stack.len;
-            const stack_data_start = c.stack_data.len;
+            const stack_data_start = c.stack_top;
 
             for (call.args) |arg_expr|
                 try eval(c, arg_expr);
@@ -1351,7 +1351,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         .call_builtin => |call_builtin| {
             const stack_start = c.stack.len;
-            const stack_data_start = c.stack_data.len;
+            const stack_data_start = c.stack_top;
 
             try checkArgCount(c, expr_id, .{
                 .expected = switch (call_builtin.builtin) {
