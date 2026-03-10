@@ -36,7 +36,7 @@ const Compiler = struct {
     // eval
     stack: Stack(StackItem),
     stack_data: Stack(u64),
-    stack_ref_count_ptr: Stack(?*i64),
+    stack_owner: Stack(?*i64),
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -67,7 +67,7 @@ const Compiler = struct {
 
             .stack = .init(1024),
             .stack_data = .init(1024 * 1024),
-            .stack_ref_count_ptr = .init(1024 * 1024),
+            .stack_owner = .init(1024 * 1024),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -90,7 +90,7 @@ const Compiler = struct {
         for (c.stack.items[0..c.stack.len]) |*item| freeOwnedRefs(c, item.value);
         c.stack.deinit();
         c.stack_data.deinit();
-        c.stack_ref_count_ptr.deinit();
+        c.stack_owner.deinit();
         allocator.destroy(c.type_number);
         allocator.destroy(c.type_empty_tuple);
 
@@ -1124,7 +1124,7 @@ fn getStackOffset(c: *Compiler, value: Value) usize {
 fn getRefCountPtr(c: *Compiler, ref: Value) ?*i64 {
     assert(ref.type.* == .ref);
     const offset = getStackOffset(c, ref);
-    return c.stack_ref_count_ptr.items[offset];
+    return c.stack_owner.items[offset];
 }
 
 fn freeOwnedRefs(c: *Compiler, value: Value) void {
@@ -1176,8 +1176,8 @@ fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void 
         );
         std.mem.copyBackwards(
             ?*i64,
-            c.stack_ref_count_ptr.items[stack_data_start..][0..size],
-            c.stack_ref_count_ptr.items[offset..][0..size],
+            c.stack_owner.items[stack_data_start..][0..size],
+            c.stack_owner.items[offset..][0..size],
         );
         result.value.ptr = @ptrCast(c.stack_data.items[stack_data_start..]);
     }
@@ -1185,8 +1185,8 @@ fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void 
     @memset(c.stack_data.items[stack_data_start + size .. c.stack_data.len], undefined);
     c.stack_data.len = stack_data_start + size;
 
-    @memset(c.stack_ref_count_ptr.items[stack_data_start + size .. c.stack_ref_count_ptr.len], undefined);
-    c.stack_ref_count_ptr.len = stack_data_start + size;
+    @memset(c.stack_owner.items[stack_data_start + size .. c.stack_owner.len], undefined);
+    c.stack_owner.len = stack_data_start + size;
 
     c.stack.push(result);
 }
@@ -1195,8 +1195,8 @@ fn stackDataPush(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
     const ptr = &c.stack_data.items[c.stack_data.len];
     c.stack_data.len += size;
-    @memset(c.stack_ref_count_ptr.items[c.stack_ref_count_ptr.len..][0..size], null);
-    c.stack_ref_count_ptr.len += size;
+    @memset(c.stack_owner.items[c.stack_owner.len..][0..size], null);
+    c.stack_owner.len += size;
     return .{
         .ptr = @ptrCast(ptr),
         .type = @"type",
