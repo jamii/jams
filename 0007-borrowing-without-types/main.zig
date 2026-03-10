@@ -85,7 +85,7 @@ const Compiler = struct {
         c.expr_to_fn.deinit();
         c.scope.deinit();
 
-        for (c.stack.items[0..c.stack.len]) |*binding| binding.deinit();
+        for (c.stack.items[0..c.stack.len]) |*item| item.deinit();
         c.stack.deinit();
         c.stack_data.deinit();
         allocator.destroy(c.type_number);
@@ -1104,11 +1104,15 @@ const StackItem = struct {
     // This value always points to `c.stack_data`.
     value: Value,
     lease: Lease,
+    // < -1 exclusive
+    // = -1 moved
+    // = 0 available
+    // > 0 shared
+    ref_count: i64 = 0,
 
-    fn deinit(binding: StackItem) void {
-        if (binding.lease == .owned)
-            // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
-            binding.value.freeRefs();
+    fn deinit(item: StackItem) void {
+        // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
+        item.value.freeRefs();
     }
 };
 
@@ -1150,11 +1154,11 @@ fn stackDataPush(c: *Compiler, @"type": *Type) Value {
 }
 
 // TODO Memoize this.
-fn makeTypeTuple(c: *Compiler, bindings: []StackItem) *Type {
+fn makeTypeTuple(c: *Compiler, items: []StackItem) *Type {
     _ = c;
     const result = allocator.create(Type) catch oom();
-    const elems = allocator.alloc(*Type, bindings.len) catch oom();
-    for (elems, bindings) |*elem, binding| elem.* = binding.value.type;
+    const elems = allocator.alloc(*Type, items.len) catch oom();
+    for (elems, items) |*elem, item| elem.* = item.value.type;
     result.* = .{ .tuple = .{ .elems = elems } };
     return result;
 }
