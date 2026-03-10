@@ -370,7 +370,7 @@ const Expr = union(enum) {
 
 const Lease = enum(u2) {
     owned = 1,
-    unique = 2,
+    borrowed = 2,
     shared = 3,
 };
 
@@ -655,7 +655,7 @@ fn parseLease(c: *Compiler) ?Lease {
     return if (takeIf(c, .@"^"))
         .owned
     else if (takeIf(c, .@"!"))
-        .unique
+        .borrowed
     else if (takeIf(c, .@"&"))
         .shared
     else
@@ -1107,12 +1107,14 @@ const StackItem = struct {
     name: ?[]const u8,
     // `value.ptr` must point to `c.stack_data`.
     value: Value,
-    // < -1 exclusive
-    // = -1 moved
+    // = ref_count_moved moved
+    // < 0 borrowed
     // = 0 available
     // > 0 shared
     ref_count: i64 = 0,
 };
+
+const ref_count_moved = std.math.minInt(i64);
 
 fn getStackOffset(c: *Compiler, value: Value) usize {
     assert(@intFromPtr(value.ptr) >= @intFromPtr(c.stack_data.ptr));
@@ -1142,9 +1144,12 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
             }
         },
         .ref => {
-            if (getOwner(c, value).* == null)
+            if (getOwner(c, value).*) |owner| {
+                if (owner.* > 0) owner.* -= 1 else owner.* += 1;
+            } else {
                 // The owner must be `value` itself.
                 value.getRefElem().free();
+            }
         },
         .closure => {},
     }
@@ -1279,6 +1284,82 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const owner = &c.stack.items[c.stack.len - get.stack_reverse_index];
             switch (get.lease) {
                 .owned => {
+                    if (owner.ref_count != 0) {
+                        if (owner.ref_count == ref_count_moved) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move `{s}` because it has already been moved into TODO",
+                                .{get.name},
+                            );
+                        } else if (owner.ref_count < 0) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move `{s}` because it is borrowed by TODO",
+                                .{get.name},
+                            );
+                        } else {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move `{s}` because it is shared with TODO",
+                                .{get.name},
+                            );
+                        }
+                    }
+                    owner.ref_count = ref_count_moved;
+                },
+                .borrowed => {
+                    if (owner.ref_count != 0) {
+                        if (owner.ref_count == ref_count_moved) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it has been moved into TODO",
+                                .{get.name},
+                            );
+                        } else if (owner.ref_count < 0) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it is already borrowed by TODO",
+                                .{get.name},
+                            );
+                        } else {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it is shared with TODO",
+                                .{get.name},
+                            );
+                        }
+                    }
+                    owner.ref_count -= 1;
+                },
+                .shared => {
+                    if (owner.ref_count < 0) {
+                        if (owner.ref_count == ref_count_moved) {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't share `{s}` because it has been moved into TODO",
+                                .{get.name},
+                            );
+                        } else {
+                            return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't share `{s}` because it is borrowed by TODO",
+                                .{get.name},
+                            );
+                        }
+                    }
+                    owner.ref_count += 1;
+                },
+            }
+            switch (get.lease) {
+                .owned => {
                     const value = stackAlloc(c, owner.value.type);
                     Value.copyShallow(.{ .to = value, .from = owner.value });
                     std.mem.copyForwards(?*i64, getOwnerSlice(c, value), getOwnerSlice(c, owner.value));
@@ -1287,7 +1368,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         .value = value,
                     });
                 },
-                .shared, .unique => {
+                .shared, .borrowed => {
                     const ref = stackAlloc(c, makeTypeRef(c, owner.value.type));
                     ref.setRefElem(owner.value);
                     getOwner(c, ref).* = &owner.ref_count;
