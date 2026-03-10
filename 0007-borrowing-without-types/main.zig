@@ -10,7 +10,7 @@ fn oom() noreturn {
     std.debug.panic("OOM", .{});
 }
 
-fn p(args: anytype) void {
+fn pp(args: anytype) void {
     std.debug.print("{any}\n", .{args});
 }
 
@@ -36,6 +36,7 @@ const Compiler = struct {
     // eval
     stack: Stack(StackItem),
     stack_data: Stack(u64),
+    stack_ref_count_ptr: Stack(?*i64),
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -66,6 +67,7 @@ const Compiler = struct {
 
             .stack = .init(1024),
             .stack_data = .init(1024 * 1024),
+            .stack_ref_count_ptr = .init(1024 * 1024),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -85,9 +87,10 @@ const Compiler = struct {
         c.expr_to_fn.deinit();
         c.scope.deinit();
 
-        for (c.stack.items[0..c.stack.len]) |*item| item.deinit();
+        for (c.stack.items[0..c.stack.len]) |*item| freeOwnedRefs(c, item.value);
         c.stack.deinit();
         c.stack_data.deinit();
+        c.stack_ref_count_ptr.deinit();
         allocator.destroy(c.type_number);
         allocator.destroy(c.type_empty_tuple);
 
@@ -1016,7 +1019,7 @@ const Value = struct {
                 }
             },
             .ref => {
-                setRefElem(value, getRefElem(value).clone());
+                value.setRefElem(value.getRefElem().clone());
             },
             .closure => {},
         }
@@ -1069,7 +1072,7 @@ const Value = struct {
                 }
             },
             .ref => {
-                getRefElem(value).free();
+                value.getRefElem().free();
             },
             .closure => {},
         }
@@ -1101,7 +1104,7 @@ const Value = struct {
 
 const StackItem = struct {
     name: ?[]const u8,
-    // This value always points to `c.stack_data`.
+    // `value.ptr` must point to `c.stack_data`.
     value: Value,
     lease: Lease,
     // < -1 exclusive
@@ -1109,12 +1112,42 @@ const StackItem = struct {
     // = 0 available
     // > 0 shared
     ref_count: i64 = 0,
-
-    fn deinit(item: StackItem) void {
-        // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
-        item.value.freeRefs();
-    }
 };
+
+fn getStackOffset(c: *Compiler, value: Value) usize {
+    assert(@intFromPtr(value.ptr.?) >= @intFromPtr(c.stack_data.items.ptr));
+    const offset = @intFromPtr(value.ptr.?) - @intFromPtr(c.stack_data.items.ptr);
+    assert(offset < c.stack_data.items.len);
+    return @divExact(offset, 8);
+}
+
+fn getRefCountPtr(c: *Compiler, ref: Value) ?*i64 {
+    assert(ref.type.* == .ref);
+    const offset = getStackOffset(c, ref);
+    return c.stack_ref_count_ptr.items[offset];
+}
+
+fn freeOwnedRefs(c: *Compiler, value: Value) void {
+    switch (value.type.*) {
+        .number => {},
+        .tuple => |tuple| {
+            for (0..tuple.elems.len) |i| {
+                freeOwnedRefs(c, value.getTupleElem(i));
+            }
+        },
+        .ref => {
+            if (getRefCountPtr(c, value) == null)
+                // This must be an owned ref.
+                value.getRefElem().free();
+        },
+        .closure => {},
+    }
+}
+
+fn deinit(item: StackItem) void {
+    // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
+    item.value.freeRefs();
+}
 
 fn stackPushEmptyTuple(c: *Compiler) void {
     c.stack.push(.{
@@ -1130,23 +1163,40 @@ fn stackPushEmptyTuple(c: *Compiler) void {
 fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void {
     var result = c.stack.pop();
 
-    for (c.stack.items[stack_start..c.stack.len]) |item| item.deinit();
+    for (c.stack.items[stack_start..c.stack.len]) |item| freeOwnedRefs(c, item.value);
     c.stack.len = stack_start;
 
     const size = result.value.type.wordSize();
     if (size > 0) {
-        const ptr = c.stack_data.items[stack_data_start..][0..size];
-        std.mem.copyBackwards(u64, ptr, result.value.ptr.?[0..size]);
-        c.stack_data.len = stack_data_start;
-        result.value.ptr = @ptrCast(ptr);
+        const offset = getStackOffset(c, result.value);
+        std.mem.copyBackwards(
+            u64,
+            c.stack_data.items[stack_data_start..][0..size],
+            c.stack_data.items[offset..][0..size],
+        );
+        std.mem.copyBackwards(
+            ?*i64,
+            c.stack_ref_count_ptr.items[stack_data_start..][0..size],
+            c.stack_ref_count_ptr.items[offset..][0..size],
+        );
+        result.value.ptr = @ptrCast(c.stack_data.items[stack_data_start..]);
     }
+
+    @memset(c.stack_data.items[stack_data_start + size .. c.stack_data.len], undefined);
+    c.stack_data.len = stack_data_start + size;
+
+    @memset(c.stack_ref_count_ptr.items[stack_data_start + size .. c.stack_ref_count_ptr.len], undefined);
+    c.stack_ref_count_ptr.len = stack_data_start + size;
 
     c.stack.push(result);
 }
 
 fn stackDataPush(c: *Compiler, @"type": *Type) Value {
+    const size = @"type".wordSize();
     const ptr = &c.stack_data.items[c.stack_data.len];
-    c.stack_data.len += @"type".wordSize();
+    c.stack_data.len += size;
+    @memset(c.stack_ref_count_ptr.items[c.stack_ref_count_ptr.len..][0..size], null);
+    c.stack_ref_count_ptr.len += size;
     return .{
         .ptr = @ptrCast(ptr),
         .type = @"type",
@@ -1227,7 +1277,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
                 try eval(c, statement);
-                c.stack.pop().deinit();
+                freeOwnedRefs(c, c.stack.pop().value);
             }
 
             try eval(c, block.statements[block.statements.len - 1]);
@@ -1238,7 +1288,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             try eval(c, @"if".cond);
             const item = c.stack.pop();
             const cond = item.value.getBool();
-            item.deinit();
+            freeOwnedRefs(c, item.value);
             c.stack_data.len = stack_data_start;
 
             try eval(c, if (cond) @"if".then else @"if".@"else");
@@ -1249,13 +1299,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 try eval(c, @"while".cond);
                 const item = c.stack.pop();
                 const cond = item.value.getBool();
-                item.deinit();
+                freeOwnedRefs(c, item.value);
                 c.stack_data.len = stack_data_start;
 
                 if (!cond) break;
 
                 try eval(c, @"while".body);
-                c.stack.pop().deinit();
+                freeOwnedRefs(c, c.stack.pop().value);
             }
             stackPushEmptyTuple(c);
         },
@@ -1316,10 +1366,10 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             switch (call_builtin.builtin) {
                 .@"+" => {
                     const arg1 = c.stack.pop();
-                    defer arg1.deinit();
+                    defer freeOwnedRefs(c, arg1.value);
 
                     const arg0 = c.stack.pop();
-                    defer arg0.deinit();
+                    defer freeOwnedRefs(c, arg0.value);
 
                     try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
@@ -1334,10 +1384,10 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 },
                 .@"<" => {
                     const arg1 = c.stack.pop();
-                    defer arg1.deinit();
+                    defer freeOwnedRefs(c, arg1.value);
 
                     const arg0 = c.stack.pop();
-                    defer arg0.deinit();
+                    defer freeOwnedRefs(c, arg0.value);
 
                     const result = stackDataPush(c, c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
