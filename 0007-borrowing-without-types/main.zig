@@ -1461,7 +1461,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             const @"type" = makeTypeTuple(c, c.bindings.items[c.bindings.items.len - exprs.len ..]);
 
-            // All the elems are now contiguous on `c.stack` so we can just point at the first elem.
+            // All the elems are now contiguous on the stack so we can just point at the first elem.
             c.bindings.shrinkRetainingCapacity(bindings_start + 1);
             const result = bindingsPeek(c);
             result.value.type = @"type";
@@ -1470,6 +1470,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         .get => |get| {
             const binding_index = resolve(c.bindings, get.name).?;
             const value = c.bindings.items[binding_index].value;
+            // TODO If we don't copy on the stack then values for tuple will not be contiguous.
             c.bindings.append(allocator, .{
                 .name = null,
                 .value = value,
