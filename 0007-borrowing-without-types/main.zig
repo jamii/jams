@@ -983,9 +983,9 @@ const Value = struct {
         } };
     }
 
-    fn setRefElem(value: Value, elem: Value) Value {
+    fn setRefElem(value: Value, elem: Value) void {
         const ref = value.type.ref;
-        switch (ref.type) {
+        switch (ref.elem) {
             .known => |known| assert(Type.order(known, elem.type) == .eq),
             .any => {},
         }
@@ -994,16 +994,16 @@ const Value = struct {
 
     fn allocHeap(@"type": Type) Value {
         return .{
-            .ptr = allocator.alloc(u8, @"type".sizeOf()) catch oom(),
+            .ptr = allocator.alloc(u8, @"type".wordSize()) catch oom(),
             .type = @"type",
         };
     }
 
     fn copyShallow(args: struct { from: Value, to: Value }) void {
         assert(Type.order(args.to.type, args.from.type) == .eq);
-        const size = args.from.type.sizeOf();
-        if (size != 0)
-            @memcpy(args.to.ptr[0..], args.from.ptr[0..]);
+        const size = args.from.type.wordSize();
+        if (size > 0)
+            @memcpy(args.to.ptr.?[0..size], args.from.ptr.?[0..size]);
     }
 
     fn copyDeep(args: struct { from: Value, to: Value }) void {
@@ -1108,7 +1108,6 @@ const StackItem = struct {
     name: ?[]const u8,
     // `value.ptr` must point to `c.stack_data`.
     value: Value,
-    lease: Lease,
     // < -1 exclusive
     // = -1 moved
     // = 0 available
@@ -1123,10 +1122,16 @@ fn getStackOffset(c: *Compiler, value: Value) usize {
     return @divExact(offset, 8);
 }
 
-fn getRefCountPtr(c: *Compiler, ref: Value) ?*i64 {
+fn getOwner(c: *Compiler, ref: Value) *?*i64 {
     assert(ref.type.* == .ref);
     const offset = getStackOffset(c, ref);
-    return c.stack_owner[offset];
+    return &c.stack_owner[offset];
+}
+
+fn getOwnerSlice(c: *Compiler, value: Value) []?*i64 {
+    const offset = getStackOffset(c, value);
+    const size = value.type.wordSize();
+    return c.stack_owner[offset..][0..size];
 }
 
 fn freeOwnedRefs(c: *Compiler, value: Value) void {
@@ -1138,8 +1143,8 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
             }
         },
         .ref => {
-            if (getRefCountPtr(c, value) == null)
-                // This must be an owned ref.
+            if (getOwner(c, value).* == null)
+                // The owner must be `value` itself.
                 value.getRefElem().free();
         },
         .closure => {},
@@ -1158,7 +1163,6 @@ fn stackPushEmptyTuple(c: *Compiler) void {
             .ptr = null,
             .type = c.type_empty_tuple,
         },
-        .lease = .owned,
     });
 }
 
@@ -1191,7 +1195,7 @@ fn compactStack(c: *Compiler, stack_start: usize, stack_data_start: usize) void 
     c.stack.push(result);
 }
 
-fn stackDataPush(c: *Compiler, @"type": *Type) Value {
+fn stackAlloc(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
     const ptr = &c.stack_data[c.stack_top];
     @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
@@ -1214,6 +1218,14 @@ fn makeTypeTuple(c: *Compiler, items: []StackItem) *Type {
 }
 
 // TODO Memoize this.
+fn makeTypeRef(c: *Compiler, elem: *Type) *Type {
+    _ = c;
+    const result = allocator.create(Type) catch oom();
+    result.* = .{ .ref = .{ .elem = .{ .known = elem } } };
+    return result;
+}
+
+// TODO Memoize this.
 fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
     _ = c;
     const result = allocator.create(Type) catch oom();
@@ -1224,12 +1236,11 @@ fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
 fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .number => |number| {
-            const value = stackDataPush(c, c.type_number);
+            const value = stackAlloc(c, c.type_number);
             value.setNumber(number);
             c.stack.push(.{
                 .name = null,
                 .value = value,
-                .lease = .owned,
             });
         },
         .tuple => |exprs| {
@@ -1240,26 +1251,38 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             const stack_start = c.stack.len;
 
-            for (exprs) |expr| {
+            for (exprs) |expr|
                 try eval(c, expr);
-            }
 
-            const @"type" = makeTypeTuple(c, c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
+            const type_tuple = makeTypeTuple(c, c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
 
             // All the elems are now contiguous on the stack so we can just point at the first elem.
             c.stack.len = stack_start + 1;
             const result = c.stack.peek();
-            result.value.type = @"type";
-            result.lease = .owned;
+            result.value.type = type_tuple;
         },
         .get => |get| {
-            const value = c.stack.items[c.stack.len - get.stack_reverse_index].value;
-            // TODO If we don't copy on the stack then values for tuple will not be contiguous.
-            c.stack.push(.{
-                .name = null,
-                .value = value,
-                .lease = get.lease,
-            });
+            const owner = &c.stack.items[c.stack.len - get.stack_reverse_index];
+            switch (get.lease) {
+                .owned => {
+                    const value = stackAlloc(c, owner.value.type);
+                    Value.copyShallow(.{ .to = value, .from = owner.value });
+                    std.mem.copyForwards(?*i64, getOwnerSlice(c, value), getOwnerSlice(c, owner.value));
+                    c.stack.push(.{
+                        .name = null,
+                        .value = value,
+                    });
+                },
+                .shared, .unique => {
+                    const ref = stackAlloc(c, makeTypeRef(c, owner.value.type));
+                    ref.setRefElem(owner.value);
+                    getOwner(c, ref).* = &owner.ref_count;
+                    c.stack.push(.{
+                        .name = null,
+                        .value = ref,
+                    });
+                },
+            }
         },
         .let => |let| {
             try eval(c, let.value);
@@ -1267,7 +1290,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             c.stack.push(.{
                 .name = let.name,
                 .value = item.value,
-                .lease = item.lease,
             });
             stackPushEmptyTuple(c);
         },
@@ -1317,7 +1339,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     .ptr = null,
                     .type = makeTypeClosure(c, fn_id),
                 },
-                .lease = .owned,
             });
         },
         .param => {
@@ -1374,12 +1395,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
 
-                    const result = stackDataPush(c, c.type_number);
+                    const result = stackAlloc(c, c.type_number);
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{
                         .name = null,
                         .value = result,
-                        .lease = .owned,
                     });
                 },
                 .@"<" => {
@@ -1389,12 +1409,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const arg0 = c.stack.pop();
                     defer freeOwnedRefs(c, arg0.value);
 
-                    const result = stackDataPush(c, c.type_number);
+                    const result = stackAlloc(c, c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{
                         .name = null,
                         .value = result,
-                        .lease = .owned,
                     });
                 },
             }
