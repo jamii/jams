@@ -26,7 +26,6 @@ const Compiler = struct {
     // analyze
     fns: ArrayList(Fn),
     expr_to_fn: std.AutoHashMap(ExprId, FnId),
-    expr_to_lease: ArrayList(Lease),
     expr_to_fn_lease_bitmap: std.AutoHashMap(ExprId, FnLeaseBitmap),
     scope: ArrayList(ScopeItem),
     fn_id_current: ?FnId,
@@ -60,7 +59,6 @@ const Compiler = struct {
 
             .fns = .{},
             .expr_to_fn = .init(allocator),
-            .expr_to_lease = .{},
             .expr_to_fn_lease_bitmap = .init(allocator),
             .scope = .{},
             .fn_id_current = null,
@@ -85,7 +83,6 @@ const Compiler = struct {
 
         c.fns.deinit(allocator);
         c.expr_to_fn.deinit();
-        c.expr_to_lease.deinit(allocator);
         c.expr_to_fn_lease_bitmap.deinit();
         c.scope.deinit(allocator);
 
@@ -101,7 +98,6 @@ const Compiler = struct {
     pub fn run(c: *Compiler) ![]const u8 {
         try tokenize(c);
         c.expr_top = try parse(c);
-        c.expr_to_lease.appendNTimes(allocator, .shared, c.exprs.items.len) catch oom();
         {
             // TODO Re-enable analysis errors.
             if (analyze(c, c.expr_top.?)) |bs_const| {
@@ -773,12 +769,6 @@ const FnLeaseBitmap = struct {
 };
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
-    const bs = try analyzeInner(c, expr_id);
-    c.expr_to_lease.items[expr_id.id] = leaseFromBorrowSet(bs);
-    return bs;
-}
-
-fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
     switch (c.exprs.items[expr_id.id]) {
         .number => {
             return BorrowSet.init(allocator);
@@ -967,7 +957,6 @@ fn analyzeInner(c: *Compiler, expr_id: ExprId) error{Error}!BorrowSet {
             var fn_lease_bitmap = FnLeaseBitmap{ .bits = 0 };
             for (@"fn".params, 0..) |param_id, i| {
                 const param = c.exprs.items[param_id.id].param;
-                c.expr_to_lease.items[param_id.id] = param.lease;
                 fn_lease_bitmap.setParam(i, param.lease);
             }
             fn_lease_bitmap.setReturn(@"fn".return_lease);
@@ -1562,15 +1551,15 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             if (c.expr_to_fn_lease_bitmap.get(expr_id).?.bits != c.expr_to_fn_lease_bitmap.get(@"fn".fn_expr_id).?.bits) {
                 try checkArgCount(c, expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
 
-                for (call.args, fn_expr.params) |arg, param_id| {
-                    const arg_lease = c.expr_to_lease.items[arg.id];
+                for (call.args, fn_expr.params, 0..) |arg, param_id, i| {
+                    const binding = &c.bindings.items[c.bindings.items.len - 1 - i];
                     const param = c.exprs.items[param_id.id].param;
-                    if (arg_lease != param.lease) {
+                    if (binding.lease != param.lease) {
                         return fail(
                             c,
                             .{ .expr_id = arg },
                             "This argument is {s} but the callee expected a {s} parameter.",
-                            .{ @tagName(arg_lease), @tagName(param.lease) },
+                            .{ @tagName(binding.lease), @tagName(param.lease) },
                         );
                     }
                 }
