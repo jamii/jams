@@ -31,8 +31,7 @@ const Compiler = struct {
 
     // eval
     bindings: ArrayList(Binding),
-    stack: []u64,
-    stack_top: usize,
+    stack_data: Stack(u64),
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -62,8 +61,7 @@ const Compiler = struct {
             .fn_id_current = null,
 
             .bindings = .{},
-            .stack = allocator.alloc(u64, 1024 * 1024) catch oom(),
-            .stack_top = 0,
+            .stack_data = .init(1024 * 1024),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -85,7 +83,7 @@ const Compiler = struct {
 
         for (c.bindings.items) |*binding| binding.deinit();
         c.bindings.deinit(allocator);
-        allocator.free(c.stack);
+        c.stack_data.deinit();
         allocator.destroy(c.type_number);
         allocator.destroy(c.type_empty_tuple);
 
@@ -101,6 +99,36 @@ const Compiler = struct {
         return std.fmt.allocPrint(allocator, "{f}", .{result.value});
     }
 };
+
+fn Stack(comptime Elem: type) type {
+    return struct {
+        elems: []Elem,
+        top: usize,
+
+        const Self = @This();
+
+        fn init(count: usize) Self {
+            return .{
+                .elems = allocator.alloc(Elem, count) catch oom(),
+                .top = 0,
+            };
+        }
+
+        fn deinit(self: Self) void {
+            allocator.free(self.elems);
+        }
+
+        fn push(self: *Self, elem: Elem) void {
+            self.elems[self.top] = elem;
+            self.top += 1;
+        }
+
+        fn pop(self: *Self) Elem {
+            self.top -= 1;
+            return self.elems[self.top];
+        }
+    };
+}
 
 const SourceLocation = union(enum) {
     pos: usize,
@@ -1032,7 +1060,7 @@ const Value = struct {
 
 const Binding = struct {
     name: ?[]const u8,
-    // This value always points to `c.stack`.
+    // This value always points to `c.stack_data`.
     value: Value,
     lease: Lease,
 
@@ -1066,18 +1094,18 @@ fn compactStack(c: *Compiler, bindings_start: usize, stack_start: usize) void {
 
     const size = result.value.type.wordSize();
     if (size > 0) {
-        const ptr = c.stack[stack_start..][0..size];
+        const ptr = c.stack_data.elems[stack_start..][0..size];
         std.mem.copyBackwards(u64, ptr, result.value.ptr.?[0..size]);
-        c.stack_top = stack_start;
+        c.stack_data.top = stack_start;
         result.value.ptr = @ptrCast(ptr);
     }
 
     c.bindings.append(allocator, result) catch oom();
 }
 
-fn stackPush(c: *Compiler, @"type": *Type) Value {
-    const ptr = &c.stack[c.stack_top];
-    c.stack_top += @"type".wordSize();
+fn stackDataPush(c: *Compiler, @"type": *Type) Value {
+    const ptr = &c.stack_data.elems[c.stack_data.top];
+    c.stack_data.top += @"type".wordSize();
     return .{
         .ptr = @ptrCast(ptr),
         .type = @"type",
@@ -1105,7 +1133,7 @@ fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
 fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .number => |number| {
-            const value = stackPush(c, c.type_number);
+            const value = stackDataPush(c, c.type_number);
             value.setNumber(number);
             c.bindings.append(allocator, .{
                 .name = null,
@@ -1155,7 +1183,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         .block => |block| {
             const bindings_start = c.bindings.items.len;
-            const stack_start = c.stack_top;
+            const stack_start = c.stack_data.top;
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
                 try eval(c, statement);
@@ -1166,23 +1194,23 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             compactStack(c, bindings_start, stack_start);
         },
         .@"if" => |@"if"| {
-            const stack_start = c.stack_top;
+            const stack_start = c.stack_data.top;
             try eval(c, @"if".cond);
             const binding = c.bindings.pop().?;
             const cond = binding.value.getBool();
             binding.deinit();
-            c.stack_top = stack_start;
+            c.stack_data.top = stack_start;
 
             try eval(c, if (cond) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                const stack_start = c.stack_top;
+                const stack_start = c.stack_data.top;
                 try eval(c, @"while".cond);
                 const binding = c.bindings.pop().?;
                 const cond = binding.value.getBool();
                 binding.deinit();
-                c.stack_top = stack_start;
+                c.stack_data.top = stack_start;
 
                 if (!cond) break;
 
@@ -1216,7 +1244,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
             const bindings_start = c.bindings.items.len;
-            const stack_start = c.stack_top;
+            const stack_start = c.stack_data.top;
 
             for (call.args) |arg_expr|
                 try eval(c, arg_expr);
@@ -1233,7 +1261,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         .call_builtin => |call_builtin| {
             const bindings_start = c.bindings.items.len;
-            const stack_start = c.stack_top;
+            const stack_start = c.stack_data.top;
 
             try checkArgCount(c, expr_id, .{
                 .expected = switch (call_builtin.builtin) {
@@ -1256,7 +1284,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
 
-                    const result = stackPush(c, c.type_number);
+                    const result = stackDataPush(c, c.type_number);
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.bindings.append(allocator, .{
                         .name = null,
@@ -1271,7 +1299,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const arg0 = c.bindings.pop().?;
                     defer arg0.deinit();
 
-                    const result = stackPush(c, c.type_number);
+                    const result = stackDataPush(c, c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.bindings.append(allocator, .{
                         .name = null,
