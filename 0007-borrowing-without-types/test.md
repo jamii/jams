@@ -150,8 +150,7 @@ Can't borrow `x` because it is already borrowed by TODO
   let z = x;
 }
 
-Error at 4:11
-Can't share `x` because it is borrowed by TODO
+[]
 ```
 
 ```test
@@ -174,7 +173,7 @@ Can't share `x` because it is borrowed by TODO
 }
 
 Error at 5:11
-Can't share `y` because it has been moved into TODO
+Can't share `y` because it has been moved
 ```
 
 ```test
@@ -218,7 +217,7 @@ Expected a closure but found a ref
 }
 
 Error at 3:3
-Can't assign to a borrowed ref
+Can't assign through a shared ref
 ```
 
 ```test
@@ -248,8 +247,8 @@ Expected a ref but found a number
   x! = x
 }
 
-Error at 3:8
-Can't share `x` because it is borrowed by TODO
+Error at 3:3
+Can't assign through this ref because the same location is shared by TODO
 ```
 
 ```test
@@ -259,7 +258,7 @@ Can't share `x` because it is borrowed by TODO
 }
 
 Error at 3:8
-Can't move `x` because it is borrowed by TODO
+Can't move out of `x` because it is borrowed by TODO
 ```
 
 ```test
@@ -269,7 +268,17 @@ Can't move `x` because it is borrowed by TODO
 }
 
 Error at 3:10
-Can't share `x` because it is borrowed by TODO
+Expected a number but found a ref
+```
+
+```test
+{
+  let x = 1;
+  x! = { x; 2 };
+  2
+}
+
+2
 ```
 
 ```test

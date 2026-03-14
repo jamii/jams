@@ -37,7 +37,7 @@ const Compiler = struct {
     stack: Stack(StackItem),
     stack_top: usize,
     stack_data: []u64,
-    stack_owner: []?*i64,
+    stack_owner: []Owner,
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -66,10 +66,10 @@ const Compiler = struct {
             .scope = .init(1024),
             .fn_id_current = null,
 
-            .stack = .init(1024),
+            .stack = .init(stack_size),
             .stack_top = 0,
-            .stack_data = allocator.alloc(u64, 1024 * 1024) catch oom(),
-            .stack_owner = allocator.alloc(?*i64, 1024 * 1024) catch oom(),
+            .stack_data = allocator.alloc(u64, stack_size) catch oom(),
+            .stack_owner = allocator.alloc(Owner, stack_size) catch oom(),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -89,7 +89,7 @@ const Compiler = struct {
         c.expr_to_fn.deinit();
         c.scope.deinit();
 
-        for (c.stack.items[0..c.stack.len]) |*item| freeOwnedRefs(c, item.value);
+        for (c.stack.items[0..c.stack.len]) |item| drop(c, item);
         c.stack.deinit();
         allocator.free(c.stack_data);
         allocator.free(c.stack_owner);
@@ -108,6 +108,10 @@ const Compiler = struct {
         return std.fmt.allocPrint(allocator, "{f}", .{result.value});
     }
 };
+
+const stack_size = 1024 * 1024;
+
+const StackIndex = std.math.IntFittingRange(0, stack_size);
 
 fn Stack(comptime Item: type) type {
     return struct {
@@ -322,7 +326,7 @@ const Expr = union(enum) {
     get: struct {
         name: []const u8,
         lease: Lease,
-        stack_reverse_index: usize,
+        stack_reverse_index: StackIndex,
     },
     let: struct {
         name: []const u8,
@@ -774,7 +778,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 }
             }
 
-            get.stack_reverse_index = c.scope.len - scope_index;
+            get.stack_reverse_index = @intCast(c.scope.len - scope_index);
         },
         .let => |let| {
             try analyze(c, let.value);
@@ -1143,32 +1147,47 @@ const StackItem = struct {
     name: ?[]const u8,
     // `value.ptr` must point to `c.stack_data`.
     value: Value,
-    // if moved: `ref_count = ref_count_moved`
-    // if borrowed: `ref_count < 0`
-    // if available: `ref_count == 0`
-    // if shared: `ref_count > 0`
-    ref_count: i64 = 0,
+    ref_counts: RefCounts = .{
+        .initialized = true,
+        .borrowed = 0,
+        .shared = 0,
+    },
 };
 
-const ref_count_moved = std.math.minInt(i64);
+const RefCounts = packed struct {
+    initialized: bool,
+    // All borrows/shares live on the stack, so ref counts can never be larger than size of the stack.
+    borrowed: StackIndex,
+    shared: StackIndex,
+};
 
-fn getStackOffset(c: *Compiler, value: Value) ?usize {
+const Owner = packed struct {
+    lease: Lease,
+    // Meaningless if `lease == .owned`.
+    stack_index: StackIndex,
+};
+
+fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
     if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
-    const offset = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
-    if (offset >= c.stack_data.len) return null;
-    return @divExact(offset, 8);
+    const index = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
+    if (index >= c.stack_data.len) return null;
+    return @intCast(@divExact(index, 8));
 }
 
-fn getOwner(c: *Compiler, ref: Value) *?*i64 {
+fn getOwner(c: *Compiler, ref: Value) *Owner {
     assert(ref.type.* == .ref);
-    const offset = getStackOffset(c, ref).?;
-    return &c.stack_owner[offset];
+    const index = getStackIndex(c, ref).?;
+    return &c.stack_owner[index];
 }
 
-fn getOwnerSlice(c: *Compiler, value: Value) []?*i64 {
-    const offset = getStackOffset(c, value).?;
+fn getOwnerSlice(c: *Compiler, value: Value) []Owner {
+    const index = getStackIndex(c, value).?;
     const size = value.type.wordSize();
-    return c.stack_owner[offset..][0..size];
+    return c.stack_owner[index..][0..size];
+}
+
+fn drop(c: *Compiler, item: StackItem) void {
+    if (item.ref_counts.initialized) freeOwnedRefs(c, item.value);
 }
 
 fn freeOwnedRefs(c: *Compiler, value: Value) void {
@@ -1180,11 +1199,11 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
             }
         },
         .ref => {
-            if (getOwner(c, value).*) |owner| {
-                if (owner.* > 0) owner.* -= 1 else owner.* += 1;
-            } else {
-                // The owner must be `value` itself.
-                value.getRefElem().free();
+            const owner = getOwner(c, value);
+            switch (owner.lease) {
+                .owned => value.getRefElem().free(),
+                .borrowed => c.stack.items[owner.stack_index].ref_counts.borrowed -= 1,
+                .shared => c.stack.items[owner.stack_index].ref_counts.shared -= 1,
             }
         },
         .closure => {},
@@ -1209,11 +1228,10 @@ fn stackPushEmptyTuple(c: *Compiler) void {
 fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     var result = c.stack.pop();
 
-    const first_compacted_owner = &c.stack.items[stack_start].ref_count;
-    for (getOwnerSlice(c, result.value)) |owner_or_null| {
-        if (owner_or_null) |owner| {
-            if (@intFromPtr(owner) >= @intFromPtr(first_compacted_owner)) {
-                const item: *StackItem = @fieldParentPtr("ref_count", owner);
+    for (getOwnerSlice(c, result.value)) |owner| {
+        if (owner.lease != .owned) {
+            if (owner.stack_index >= stack_start) {
+                const item = &c.stack.items[owner.stack_index];
                 return fail(
                     c,
                     .{ .expr_id = expr_id },
@@ -1224,21 +1242,21 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
         }
     }
 
-    for (c.stack.items[stack_start..c.stack.len]) |item| freeOwnedRefs(c, item.value);
+    for (c.stack.items[stack_start..c.stack.len]) |item| drop(c, item);
     c.stack.len = stack_start;
 
     const size = result.value.type.wordSize();
     if (size > 0) {
-        const offset = getStackOffset(c, result.value).?;
+        const index = getStackIndex(c, result.value).?;
         std.mem.copyBackwards(
             u64,
             c.stack_data[stack_data_start..][0..size],
-            c.stack_data[offset..][0..size],
+            c.stack_data[index..][0..size],
         );
         std.mem.copyBackwards(
-            ?*i64,
+            Owner,
             c.stack_owner[stack_data_start..][0..size],
-            c.stack_owner[offset..][0..size],
+            c.stack_owner[index..][0..size],
         );
         result.value.ptr = @ptrCast(c.stack_data[stack_data_start..]);
     }
@@ -1254,7 +1272,7 @@ fn stackAlloc(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
     const ptr = &c.stack_data[c.stack_top];
     @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
-    @memset(c.stack_owner[c.stack_top..][0..size], null);
+    @memset(c.stack_owner[c.stack_top..][0..size], .{ .lease = .owned, .stack_index = 0 });
     c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
@@ -1314,94 +1332,80 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             result.value.type = type_tuple;
         },
         .get => |get| {
-            const owner = &c.stack.items[c.stack.len - get.stack_reverse_index];
+            const item = &c.stack.items[c.stack.len - get.stack_reverse_index];
             switch (get.lease) {
                 .owned => {
-                    if (owner.ref_count != 0) {
-                        if (owner.ref_count == ref_count_moved) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't move `{s}` because it has already been moved into TODO",
-                                .{get.name},
-                            );
-                        } else if (owner.ref_count < 0) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't move `{s}` because it is borrowed by TODO",
-                                .{get.name},
-                            );
-                        } else {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't move `{s}` because it is shared with TODO",
-                                .{get.name},
-                            );
-                        }
+                    if (item.ref_counts.initialized == false) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't move out of `{s}` because it has already been moved",
+                            .{get.name},
+                        );
                     }
-                    owner.ref_count = ref_count_moved;
+                    if (item.ref_counts.borrowed > 0) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't move out of `{s}` because it is borrowed by TODO",
+                            .{get.name},
+                        );
+                    }
+                    if (item.ref_counts.shared > 0) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't move out of `{s}` because it is shared by TODO",
+                            .{get.name},
+                        );
+                    }
+                    item.ref_counts.initialized = false;
                 },
                 .borrowed => {
-                    if (owner.ref_count != 0) {
-                        if (owner.ref_count == ref_count_moved) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't borrow `{s}` because it has been moved into TODO",
-                                .{get.name},
-                            );
-                        } else if (owner.ref_count < 0) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't borrow `{s}` because it is already borrowed by TODO",
-                                .{get.name},
-                            );
-                        } else {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't borrow `{s}` because it is shared with TODO",
-                                .{get.name},
-                            );
-                        }
+                    if (item.ref_counts.initialized == false) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't borrow `{s}` because it has been moved",
+                            .{get.name},
+                        );
                     }
-                    owner.ref_count -= 1;
+                    if (item.ref_counts.borrowed > 0) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't borrow `{s}` because it is already borrowed by TODO",
+                            .{get.name},
+                        );
+                    }
+                    item.ref_counts.borrowed += 1;
                 },
                 .shared => {
-                    if (owner.ref_count < 0) {
-                        if (owner.ref_count == ref_count_moved) {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't share `{s}` because it has been moved into TODO",
-                                .{get.name},
-                            );
-                        } else {
-                            return fail(
-                                c,
-                                .{ .expr_id = expr_id },
-                                "Can't share `{s}` because it is borrowed by TODO",
-                                .{get.name},
-                            );
-                        }
+                    if (item.ref_counts.initialized == false) {
+                        return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't share `{s}` because it has been moved",
+                            .{get.name},
+                        );
                     }
-                    owner.ref_count += 1;
+                    item.ref_counts.shared += 1;
                 },
             }
             switch (get.lease) {
                 .owned => {
-                    const value = stackAlloc(c, owner.value.type);
-                    Value.copyShallow(.{ .to = value, .from = owner.value });
-                    std.mem.copyForwards(?*i64, getOwnerSlice(c, value), getOwnerSlice(c, owner.value));
+                    const value = stackAlloc(c, item.value.type);
+                    Value.copyShallow(.{ .to = value, .from = item.value });
+                    std.mem.copyForwards(Owner, getOwnerSlice(c, value), getOwnerSlice(c, item.value));
                     c.stack.push(.{ .name = null, .value = value });
                 },
                 .shared, .borrowed => {
-                    const ref = stackAlloc(c, makeTypeRef(c, owner.value.type));
-                    ref.setRefElem(owner.value);
-                    getOwner(c, ref).* = &owner.ref_count;
+                    const ref = stackAlloc(c, makeTypeRef(c, item.value.type));
+                    ref.setRefElem(item.value);
+                    getOwner(c, ref).* = .{
+                        .lease = get.lease,
+                        .stack_index = @intCast(c.stack.len - get.stack_reverse_index),
+                    };
                     c.stack.push(.{ .name = null, .value = ref });
                 },
             }
@@ -1418,7 +1422,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
                 try eval(c, statement);
-                freeOwnedRefs(c, c.stack.pop().value);
+                drop(c, c.stack.pop());
             }
 
             try eval(c, block.statements[block.statements.len - 1]);
@@ -1429,7 +1433,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             try eval(c, @"if".cond);
             const item = c.stack.pop();
             const cond = item.value.getBool();
-            freeOwnedRefs(c, item.value);
+            drop(c, item);
             c.stack_top = stack_data_start;
 
             try eval(c, if (cond) @"if".then else @"if".@"else");
@@ -1440,13 +1444,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 try eval(c, @"while".cond);
                 const item = c.stack.pop();
                 const cond = item.value.getBool();
-                freeOwnedRefs(c, item.value);
+                drop(c, item);
                 c.stack_top = stack_data_start;
 
                 if (!cond) break;
 
                 try eval(c, @"while".body);
-                freeOwnedRefs(c, c.stack.pop().value);
+                drop(c, c.stack.pop());
             }
             stackPushEmptyTuple(c);
         },
@@ -1506,33 +1510,38 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             switch (call_builtin.builtin) {
                 .@"=" => {
                     const arg1 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg1.value);
+                    errdefer drop(c, arg1);
 
                     const arg0 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg0.value);
+                    defer drop(c, arg0);
 
                     try checkKind(c, call_builtin.args[0], .{ .expected = .ref, .actual = arg0.value.type });
 
                     const ref_owner = getOwner(c, arg0.value).*;
-                    if (ref_owner == null) {
+                    switch (ref_owner.lease) {
+                        .owned => return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't assign through an owned ref",
+                            .{},
+                        ),
+                        .shared => return fail(
+                            c,
+                            .{ .expr_id = expr_id },
+                            "Can't assign through a shared ref",
+                            .{},
+                        ),
+                        .borrowed => {},
+                    }
+
+                    const owning_item = &c.stack.items[ref_owner.stack_index];
+                    if (owning_item.ref_counts.shared > 0)
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't assign to an owned ref",
+                            "Can't assign through this ref because the same location is shared by TODO",
                             .{},
                         );
-                    }
-                    if (ref_owner.?.* > 0) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't assign to a borrowed ref",
-                            .{},
-                        );
-                    }
-                    // We shouldn't be able to get hold of a ref whose owner is available or moved.
-                    assert(ref_owner.?.* != 0);
-                    assert(ref_owner.?.* != ref_count_moved);
 
                     const reffed = arg0.value.getRefElem();
                     if (Type.order(reffed.type, arg1.value.type) != .eq) {
@@ -1544,11 +1553,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         );
                     }
 
-                    const reffed_is_stack_allocated = getStackOffset(c, reffed) != null;
+                    const reffed_is_stack_allocated = getStackIndex(c, reffed) != null;
 
                     const elem_owners = getOwnerSlice(c, arg1.value);
                     for (elem_owners) |elem_owner| {
-                        if (elem_owner != null and !reffed_is_stack_allocated) {
+                        if (elem_owner.lease != .owned and !reffed_is_stack_allocated) {
                             // TODO This check wouldn't be needed if refs had distinct types.
                             return fail(
                                 c,
@@ -1557,9 +1566,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                 .{},
                             );
                         }
-                        if (elem_owner != null and @intFromPtr(elem_owner.?) > @intFromPtr(ref_owner.?)) {
-                            const ref_item: *StackItem = @fieldParentPtr("ref_count", ref_owner.?);
-                            const elem_item: *StackItem = @fieldParentPtr("ref_count", elem_owner.?);
+                        if (elem_owner.lease != .owned and elem_owner.stack_index > ref_owner.stack_index) {
+                            const ref_item = &c.stack.items[ref_owner.stack_index];
+                            const elem_item = &c.stack.items[elem_owner.stack_index];
                             return fail(
                                 c,
                                 .{ .expr_id = expr_id },
@@ -1572,21 +1581,21 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const result = stackAlloc(c, reffed.type);
 
                     Value.copyShallow(.{ .to = result, .from = reffed });
-                    std.mem.copyBackwards(?*i64, getOwnerSlice(c, result), getOwnerSlice(c, reffed));
+                    std.mem.copyBackwards(Owner, getOwnerSlice(c, result), getOwnerSlice(c, reffed));
 
                     Value.copyShallow(.{ .to = reffed, .from = arg1.value });
                     if (reffed_is_stack_allocated) {
-                        std.mem.copyBackwards(?*i64, getOwnerSlice(c, reffed), getOwnerSlice(c, arg1.value));
+                        std.mem.copyBackwards(Owner, getOwnerSlice(c, reffed), getOwnerSlice(c, arg1.value));
                     }
 
                     c.stack.push(.{ .name = null, .value = result });
                 },
                 .@"+" => {
                     const arg1 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg1.value);
+                    defer drop(c, arg1);
 
                     const arg0 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg0.value);
+                    defer drop(c, arg0);
 
                     try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
@@ -1597,10 +1606,10 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 },
                 .@"<" => {
                     const arg1 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg1.value);
+                    defer drop(c, arg1);
 
                     const arg0 = c.stack.pop();
-                    defer freeOwnedRefs(c, arg0.value);
+                    defer drop(c, arg0);
 
                     const result = stackAlloc(c, c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
