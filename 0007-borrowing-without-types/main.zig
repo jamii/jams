@@ -328,6 +328,7 @@ const Expr = union(enum) {
     get: struct {
         name: []const u8,
         stack_reverse_index: StackIndex,
+        allow_moved: bool,
     },
     move: ExprId,
     borrow: ExprId,
@@ -566,8 +567,9 @@ fn parseGet(c: *Compiler) error{Error}!ExprId {
     return pushExpr(c, start, .{
         .get = .{
             .name = name,
-            // This is filled in later by `analyze`.
+            // These are filled in later by `analyze`.
             .stack_reverse_index = 0,
+            .allow_moved = false,
         },
     });
 }
@@ -895,6 +897,9 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
             switch (call_builtin.builtin) {
                 .@"=" => {
                     try analyze(c, call_builtin.args[1]);
+                    const arg0 = &c.exprs.items[call_builtin.args[0].id];
+                    if (arg0.* == .get)
+                        arg0.get.allow_moved = true;
                     try analyzePath(c, call_builtin.args[0]);
                 },
                 .@"+", .@"<" => {
@@ -1216,6 +1221,11 @@ const RefCount = packed struct {
         unreachable;
     }
 
+    fn setAvailable(ref_count: *RefCount) void {
+        assert(ref_count.count == moved);
+        ref_count.count = available;
+    }
+
     fn isMoved(ref_count: RefCount) bool {
         return ref_count.count == moved;
     }
@@ -1426,6 +1436,14 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
             const item = &c.stack.items[stack_index];
+            if (!get.allow_moved and item.ref_count.isMoved()) {
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "Can't refer to `{s}` because it has been moved",
+                    .{item.name.?},
+                );
+            }
             return .{
                 .value = item.value,
                 .provenance = .{
@@ -1737,10 +1755,14 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         ),
                     }
 
-                    const lender = c.stack.items[path.provenance.lender];
+                    const lender = &c.stack.items[path.provenance.lender];
                     switch (lender.ref_count.state()) {
-                        .moved => unreachable,
-                        .available => {},
+                        .moved => {
+                            lender.ref_count.setAvailable();
+                        },
+                        .available => {
+                            freeOwnedRefs(c, path.value);
+                        },
                         .shared => return fail(
                             c,
                             .{ .expr_id = expr_id },
@@ -1794,17 +1816,12 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         }
                     }
 
-                    const result = stackAlloc(c, path.value.type);
-
-                    Value.copyShallow(.{ .to = result, .from = path.value });
-                    std.mem.copyForwards(Provenance, getProvenanceSlice(c, result), getProvenanceSlice(c, path.value));
-
                     Value.copyShallow(.{ .to = path.value, .from = arg1.value });
                     if (path_is_stack_allocated) {
                         std.mem.copyBackwards(Provenance, getProvenanceSlice(c, path.value), getProvenanceSlice(c, arg1.value));
                     }
 
-                    c.stack.push(.{ .name = null, .value = result });
+                    stackPushEmptyTuple(c);
                 },
                 .@"+" => {
                     for (call_builtin.args) |expr|

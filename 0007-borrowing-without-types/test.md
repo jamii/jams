@@ -155,11 +155,52 @@ Can't share `b` because it is borrowed by TODO
 ```test
 {
   let a = 1;
-  let b = 2;
-  let c = a&;
-  let d = { c = b& };
-  [c*, d*]
+  a^;
+  a
+}
+
+Error at 4:3
+Can't refer to `a` because it has been moved
+```
+
+```test
+{
+  let a = 1;
+  a = a^;
+  a
+}
+
+1
+```
+
+```test
+{
+  let a = 1;
+  a = {a^ + 1};
+  a
+}
+
+2
+```
+
+```test
+{
+  let a = 1;
+  let b = a^;
+  a = 2;
+  [a, b]
 }
 
 [2, 1]
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  b = b*!;
+}
+
+Error at 4:3
+Can't assign to `b` because it is borrowed by TODO
 ```
