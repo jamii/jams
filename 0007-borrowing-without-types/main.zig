@@ -1147,18 +1147,61 @@ const StackItem = struct {
     name: ?[]const u8,
     // `value.ptr` must point to `c.stack_data`.
     value: Value,
-    ref_counts: RefCounts = .{
-        .initialized = true,
-        .borrowed = 0,
-        .shared = 0,
-    },
+    ref_count: RefCount = .{ .count = RefCount.available },
 };
 
-const RefCounts = packed struct {
-    initialized: bool,
-    // All borrows/shares live on the stack, so ref counts can never be larger than size of the stack.
-    borrowed: StackIndex,
-    shared: StackIndex,
+const RefCount = packed struct {
+    count: i64,
+
+    const available = 0;
+    const moved = std.math.minInt(i64);
+
+    const State = enum { moved, borrowed, available, shared };
+
+    fn state(ref_count: RefCount) State {
+        if (ref_count.count == moved) return .moved;
+        if (ref_count.count < available) return .borrowed;
+        if (ref_count.count == available) return .available;
+        if (ref_count.count > available) return .shared;
+        unreachable;
+    }
+
+    fn isMoved(ref_count: RefCount) bool {
+        return ref_count.count == moved;
+    }
+
+    fn move(ref_count: *RefCount) bool {
+        if (ref_count.count != available) return false;
+        ref_count.count = moved;
+        return true;
+    }
+
+    fn addBorrow(ref_count: *RefCount) bool {
+        if (ref_count.count != available) return false;
+        ref_count.count -= 1;
+        return true;
+    }
+
+    fn addShare(ref_count: *RefCount) bool {
+        if (ref_count.count < available) return false;
+        ref_count.count += 1;
+        return true;
+    }
+
+    fn removeBorrow(ref_count: *RefCount) void {
+        assert(ref_count.count < available);
+        ref_count.count += 1;
+    }
+
+    fn removeShare(ref_count: *RefCount) void {
+        assert(ref_count.count > available);
+        ref_count.count -= 1;
+    }
+
+    fn splitBorrow(ref_count: *RefCount, split_count: usize) void {
+        assert(ref_count.count < available);
+        ref_count.count -= split_count;
+    }
 };
 
 const Owner = packed struct {
@@ -1187,7 +1230,7 @@ fn getOwnerSlice(c: *Compiler, value: Value) []Owner {
 }
 
 fn drop(c: *Compiler, item: StackItem) void {
-    if (item.ref_counts.initialized) freeOwnedRefs(c, item.value);
+    if (!item.ref_count.isMoved()) freeOwnedRefs(c, item.value);
 }
 
 fn freeOwnedRefs(c: *Compiler, value: Value) void {
@@ -1202,8 +1245,8 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
             const owner = getOwner(c, value);
             switch (owner.lease) {
                 .owned => value.getRefElem().free(),
-                .borrowed => c.stack.items[owner.stack_index].ref_counts.borrowed -= 1,
-                .shared => c.stack.items[owner.stack_index].ref_counts.shared -= 1,
+                .borrowed => c.stack.items[owner.stack_index].ref_count.removeBorrow(),
+                .shared => c.stack.items[owner.stack_index].ref_count.removeShare(),
             }
         },
         .closure => {},
@@ -1335,61 +1378,73 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const item = &c.stack.items[c.stack.len - get.stack_reverse_index];
             switch (get.lease) {
                 .owned => {
-                    if (item.ref_counts.initialized == false) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it has already been moved",
-                            .{get.name},
-                        );
+                    if (!item.ref_count.move()) {
+                        switch (item.ref_count.state()) {
+                            .moved => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move out of `{s}` because it has already been moved",
+                                .{get.name},
+                            ),
+                            .borrowed => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move out of `{s}` because it is borrowed by TODO",
+                                .{get.name},
+                            ),
+                            .shared => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't move out of `{s}` because it is shared by TODO",
+                                .{get.name},
+                            ),
+                            .available => unreachable,
+                        }
                     }
-                    if (item.ref_counts.borrowed > 0) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is borrowed by TODO",
-                            .{get.name},
-                        );
-                    }
-                    if (item.ref_counts.shared > 0) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is shared by TODO",
-                            .{get.name},
-                        );
-                    }
-                    item.ref_counts.initialized = false;
                 },
                 .borrowed => {
-                    if (item.ref_counts.initialized == false) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it has been moved",
-                            .{get.name},
-                        );
+                    if (!item.ref_count.addBorrow()) {
+                        switch (item.ref_count.state()) {
+                            .moved => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it has been moved",
+                                .{get.name},
+                            ),
+                            .borrowed => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it is already borrowed by TODO",
+                                .{get.name},
+                            ),
+                            .shared => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't borrow `{s}` because it is shared by TODO",
+                                .{get.name},
+                            ),
+                            .available => unreachable,
+                        }
                     }
-                    if (item.ref_counts.borrowed > 0) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it is already borrowed by TODO",
-                            .{get.name},
-                        );
-                    }
-                    item.ref_counts.borrowed += 1;
                 },
                 .shared => {
-                    if (item.ref_counts.initialized == false) {
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't share `{s}` because it has been moved",
-                            .{get.name},
-                        );
+                    if (!item.ref_count.addShare()) {
+                        switch (item.ref_count.state()) {
+                            .moved => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't share `{s}` because it has been moved",
+                                .{get.name},
+                            ),
+                            .borrowed => return fail(
+                                c,
+                                .{ .expr_id = expr_id },
+                                "Can't share `{s}` because it is borrowed by TODO",
+                                .{get.name},
+                            ),
+                            .shared, .available => unreachable,
+                        }
                     }
-                    item.ref_counts.shared += 1;
                 },
             }
             switch (get.lease) {
@@ -1533,15 +1588,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         ),
                         .borrowed => {},
                     }
-
-                    const owning_item = &c.stack.items[ref_owner.stack_index];
-                    if (owning_item.ref_counts.shared > 0)
-                        return fail(
-                            c,
-                            .{ .expr_id = expr_id },
-                            "Can't assign through this ref because the same location is shared by TODO",
-                            .{},
-                        );
 
                     const reffed = arg0.value.getRefElem();
                     if (Type.order(reffed.type, arg1.value.type) != .eq) {
