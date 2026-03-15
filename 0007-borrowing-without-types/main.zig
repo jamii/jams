@@ -37,7 +37,7 @@ const Compiler = struct {
     stack: Stack(StackItem),
     stack_top: usize,
     stack_data: []u64,
-    stack_owner: []Owner,
+    stack_provenance: []Provenance,
     type_number: *Type,
     type_empty_tuple: *Type,
 
@@ -69,7 +69,7 @@ const Compiler = struct {
             .stack = .init(stack_size),
             .stack_top = 0,
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
-            .stack_owner = allocator.alloc(Owner, stack_size) catch oom(),
+            .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -92,7 +92,7 @@ const Compiler = struct {
         for (c.stack.items[0..c.stack.len]) |item| drop(c, item);
         c.stack.deinit();
         allocator.free(c.stack_data);
-        allocator.free(c.stack_owner);
+        allocator.free(c.stack_provenance);
         allocator.destroy(c.type_number);
         allocator.destroy(c.type_empty_tuple);
 
@@ -1206,7 +1206,7 @@ const RefCount = packed struct {
     }
 };
 
-const Owner = packed struct {
+const Provenance = packed struct {
     lease: Lease,
     // Meaningless if `lease == .owned`.
     stack_index: StackIndex,
@@ -1219,16 +1219,16 @@ fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
     return @intCast(@divExact(index, 8));
 }
 
-fn getOwner(c: *Compiler, ref: Value) *Owner {
+fn getProvenance(c: *Compiler, ref: Value) *Provenance {
     assert(ref.type.* == .ref);
     const index = getStackIndex(c, ref).?;
-    return &c.stack_owner[index];
+    return &c.stack_provenance[index];
 }
 
-fn getOwnerSlice(c: *Compiler, value: Value) []Owner {
+fn getProvenanceSlice(c: *Compiler, value: Value) []Provenance {
     const index = getStackIndex(c, value).?;
     const size = value.type.wordSize();
-    return c.stack_owner[index..][0..size];
+    return c.stack_provenance[index..][0..size];
 }
 
 fn drop(c: *Compiler, item: StackItem) void {
@@ -1244,11 +1244,11 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
             }
         },
         .ref => {
-            const owner = getOwner(c, value);
-            switch (owner.lease) {
+            const provenance = getProvenance(c, value);
+            switch (provenance.lease) {
                 .owned => value.getRefElem().free(),
-                .borrowed => c.stack.items[owner.stack_index].ref_count.removeBorrow(),
-                .shared => c.stack.items[owner.stack_index].ref_count.removeShare(),
+                .borrowed => c.stack.items[provenance.stack_index].ref_count.removeBorrow(),
+                .shared => c.stack.items[provenance.stack_index].ref_count.removeShare(),
             }
         },
         .closure => {},
@@ -1273,10 +1273,10 @@ fn stackPushEmptyTuple(c: *Compiler) void {
 fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     var result = c.stack.pop();
 
-    for (getOwnerSlice(c, result.value)) |owner| {
-        if (owner.lease != .owned) {
-            if (owner.stack_index >= stack_start) {
-                const item = &c.stack.items[owner.stack_index];
+    for (getProvenanceSlice(c, result.value)) |provenance| {
+        if (provenance.lease != .owned) {
+            if (provenance.stack_index >= stack_start) {
+                const item = &c.stack.items[provenance.stack_index];
                 return fail(
                     c,
                     .{ .expr_id = expr_id },
@@ -1299,15 +1299,15 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
             c.stack_data[index..][0..size],
         );
         std.mem.copyBackwards(
-            Owner,
-            c.stack_owner[stack_data_start..][0..size],
-            c.stack_owner[index..][0..size],
+            Provenance,
+            c.stack_provenance[stack_data_start..][0..size],
+            c.stack_provenance[index..][0..size],
         );
         result.value.ptr = @ptrCast(c.stack_data[stack_data_start..]);
     }
 
     @memset(c.stack_data[stack_data_start + size .. c.stack_top], undefined);
-    @memset(c.stack_owner[stack_data_start + size .. c.stack_top], undefined);
+    @memset(c.stack_provenance[stack_data_start + size .. c.stack_top], undefined);
     c.stack_top = stack_data_start + size;
 
     c.stack.push(result);
@@ -1317,7 +1317,7 @@ fn stackAlloc(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
     const ptr = &c.stack_data[c.stack_top];
     @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
-    @memset(c.stack_owner[c.stack_top..][0..size], .{ .lease = .owned, .stack_index = 0 });
+    @memset(c.stack_provenance[c.stack_top..][0..size], .{ .lease = .owned, .stack_index = 0 });
     c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
@@ -1453,13 +1453,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 .owned => {
                     const value = stackAlloc(c, item.value.type);
                     Value.copyShallow(.{ .to = value, .from = item.value });
-                    std.mem.copyForwards(Owner, getOwnerSlice(c, value), getOwnerSlice(c, item.value));
+                    std.mem.copyForwards(Provenance, getProvenanceSlice(c, value), getProvenanceSlice(c, item.value));
                     c.stack.push(.{ .name = null, .value = value });
                 },
                 .shared, .borrowed => {
                     const ref = stackAlloc(c, makeTypeRef(c, item.value.type));
                     ref.setRefElem(item.value);
-                    getOwner(c, ref).* = .{
+                    getProvenance(c, ref).* = .{
                         .lease = get.lease,
                         .stack_index = @intCast(c.stack.len - get.stack_reverse_index),
                     };
@@ -1574,8 +1574,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     try checkKind(c, call_builtin.args[0], .{ .expected = .ref, .actual = arg0.value.type });
 
-                    const ref_owner = getOwner(c, arg0.value).*;
-                    switch (ref_owner.lease) {
+                    const ref_provenance = getProvenance(c, arg0.value).*;
+                    switch (ref_provenance.lease) {
                         .owned => return fail(
                             c,
                             .{ .expr_id = expr_id },
@@ -1603,9 +1603,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     const reffed_is_stack_allocated = getStackIndex(c, reffed) != null;
 
-                    const elem_owners = getOwnerSlice(c, arg1.value);
-                    for (elem_owners) |elem_owner| {
-                        if (elem_owner.lease != .owned and !reffed_is_stack_allocated) {
+                    const elem_provenances = getProvenanceSlice(c, arg1.value);
+                    for (elem_provenances) |elem_provenance| {
+                        if (elem_provenance.lease != .owned and !reffed_is_stack_allocated) {
                             // TODO This check wouldn't be needed if refs had distinct types.
                             return fail(
                                 c,
@@ -1614,9 +1614,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                 .{},
                             );
                         }
-                        if (elem_owner.lease != .owned and elem_owner.stack_index > ref_owner.stack_index) {
-                            const ref_item = &c.stack.items[ref_owner.stack_index];
-                            const elem_item = &c.stack.items[elem_owner.stack_index];
+                        if (elem_provenance.lease != .owned and elem_provenance.stack_index > ref_provenance.stack_index) {
+                            const ref_item = &c.stack.items[ref_provenance.stack_index];
+                            const elem_item = &c.stack.items[elem_provenance.stack_index];
                             return fail(
                                 c,
                                 .{ .expr_id = expr_id },
@@ -1629,11 +1629,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const result = stackAlloc(c, reffed.type);
 
                     Value.copyShallow(.{ .to = result, .from = reffed });
-                    std.mem.copyBackwards(Owner, getOwnerSlice(c, result), getOwnerSlice(c, reffed));
+                    std.mem.copyBackwards(Provenance, getProvenanceSlice(c, result), getProvenanceSlice(c, reffed));
 
                     Value.copyShallow(.{ .to = reffed, .from = arg1.value });
                     if (reffed_is_stack_allocated) {
-                        std.mem.copyBackwards(Owner, getOwnerSlice(c, reffed), getOwnerSlice(c, arg1.value));
+                        std.mem.copyBackwards(Provenance, getProvenanceSlice(c, reffed), getProvenanceSlice(c, arg1.value));
                     }
 
                     c.stack.push(.{ .name = null, .value = result });
