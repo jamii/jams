@@ -1151,10 +1151,12 @@ const StackItem = struct {
 };
 
 const RefCount = packed struct {
-    count: i64,
+    count: Count,
+
+    const Count = std.math.IntFittingRange(-stack_size, stack_size);
 
     const available = 0;
-    const moved = std.math.minInt(i64);
+    const moved = std.math.minInt(Count);
 
     const State = enum { moved, borrowed, available, shared };
 
