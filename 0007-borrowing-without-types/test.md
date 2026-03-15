@@ -348,12 +348,20 @@ This value shares/borrows from `a`, but `a` will be destroyed at the end of this
 ```test
 {
   let a = 1;
-  {
-    let b = a!;
-    b!*
-  }
+  let b = {
+    let c = a!;
+    c!*
+  };
 }
 
-Error at 5:7
-Bad token
+Error at 3:11
+This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  b!**
+}
 ```

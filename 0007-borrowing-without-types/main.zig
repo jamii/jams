@@ -206,6 +206,7 @@ const Token = enum {
     @"^",
     @"!",
     @"&",
+    @"*",
 
     let,
     get,
@@ -244,6 +245,7 @@ pub fn tokenize(c: *Compiler) !void {
             '^' => .@"^",
             '!' => .@"!",
             '&' => .@"&",
+            '*' => .@"*",
             '/' => {
                 if (pos < source.len and source[pos] == '/') {
                     while (pos < source.len and source[pos] != '\n') {
@@ -373,15 +375,20 @@ const Expr = union(enum) {
 };
 
 const Lease = enum(u2) {
-    owned = 1,
-    borrowed = 2,
-    shared = 3,
+    owned = 0,
+    borrowed = 1,
+    shared = 2,
+
+    fn weakest(a: Lease, b: Lease) Lease {
+        return @enumFromInt(@max(@intFromEnum(a), @intFromEnum(b)));
+    }
 };
 
 const Builtin = enum {
     @"=",
     @"+",
     @"<",
+    deref,
 };
 
 fn parse(c: *Compiler) error{Error}!ExprId {
@@ -418,10 +425,12 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
                 _ = take(c);
 
                 const right = try parseExprTight(c);
-                expr = pushExpr(c, start, .{ .call_builtin = .{
-                    .builtin = op,
-                    .args = allocator.dupe(ExprId, &.{ expr, right }) catch oom(),
-                } });
+                expr = pushExpr(c, start, .{
+                    .call_builtin = .{
+                        .builtin = op,
+                        .args = allocator.dupe(ExprId, &.{ expr, right }) catch oom(),
+                    },
+                });
             },
             else => break,
         }
@@ -434,6 +443,7 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     while (true) {
         switch (peek(c)) {
             .@"(" => expr = try parseCall(c, expr),
+            .@"*" => expr = try parseDeref(c, expr),
             else => break,
         }
     }
@@ -476,6 +486,17 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@")");
 
     return args.toOwnedSlice(allocator) catch oom();
+}
+
+fn parseDeref(c: *Compiler, ref: ExprId) error{Error}!ExprId {
+    const start = c.token_next;
+    try expect(c, .@"*");
+    return pushExpr(c, start, .{
+        .call_builtin = .{
+            .builtin = .deref,
+            .args = allocator.dupe(ExprId, &.{ref}) catch oom(),
+        },
+    });
 }
 
 fn parseExprBase(c: *Compiler) error{Error}!ExprId {
@@ -1203,7 +1224,7 @@ const RefCount = packed struct {
 
 const Provenance = packed struct {
     lease: Lease,
-    // Both meaningless is lease == .owned
+    // Both meaningless if lease == .owned
     owner: StackIndex,
     lender: StackIndex,
 
@@ -1554,6 +1575,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             try checkArgCount(c, expr_id, .{
                 .expected = switch (call_builtin.builtin) {
+                    .deref => 1,
                     .@"=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1627,7 +1649,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const result = stackAlloc(c, reffed.type);
 
                     Value.copyShallow(.{ .to = result, .from = reffed });
-                    std.mem.copyBackwards(Provenance, getProvenanceSlice(c, result), getProvenanceSlice(c, reffed));
+                    std.mem.copyForwards(Provenance, getProvenanceSlice(c, result), getProvenanceSlice(c, reffed));
 
                     Value.copyShallow(.{ .to = reffed, .from = arg1.value });
                     if (reffed_is_stack_allocated) {
@@ -1659,6 +1681,26 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     const result = stackAlloc(c, c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
+                    c.stack.push(.{ .name = null, .value = result });
+                },
+                .deref => {
+                    const arg0 = c.stack.pop();
+                    defer drop(c, arg0);
+
+                    try checkKind(c, call_builtin.args[0], .{ .expected = .ref, .actual = arg0.value.type });
+
+                    const ref_provenance = getProvenance(c, arg0.value).*;
+                    const elem = arg0.value.getRefElem();
+                    const result = stackAlloc(c, elem.type);
+                    Value.copyShallow(.{ .to = result, .from = elem });
+                    for (getProvenanceSlice(c, result), getProvenanceSlice(c, elem)) |*result_provenance, elem_provenance| {
+                        if (elem_provenance.lease == .owned) continue;
+                        result_provenance.* = .{
+                            .lease = Lease.weakest(elem_provenance.lease, ref_provenance.lease),
+                            .owner = elem_provenance.owner,
+                            .lender = ref_provenance.lender,
+                        };
+                    }
                     c.stack.push(.{ .name = null, .value = result });
                 },
             }
