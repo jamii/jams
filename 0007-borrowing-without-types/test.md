@@ -13,10 +13,39 @@
 ```test
 {
   let x = 1;
+  x
+}
+
+1
+```
+
+```test
+{
+  let x = 1;
   x^
 }
 
 1
+```
+
+```test
+{
+  let x = 1;
+  x&
+}
+
+Error at 1:1
+This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
+```
+
+```test
+{
+  let x = 1;
+  x!
+}
+
+Error at 1:1
+This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
 ```
 
 ```test
@@ -30,338 +59,107 @@
 
 ```test
 {
-  let x = 1;
-  let y = 2;
-  x^
-}
-
-1
-```
-
-```test
-{
-  let x = 1;
-  let y = 2;
-  y^
+  let a = 1;
+  a = 2;
+  a
 }
 
 2
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = [4,5];
-  x^
-}
-
-[1, 2, 3]
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = [4,5];
-  y^
-}
-
-[4, 5]
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = [4,5];
-  x
-}
-
-Error at 1:1
-This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = [4,5];
-  y
-}
-
-Error at 1:1
-This value shares/borrows from `y`, but `y` will be destroyed at the end of this block
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = { x };
-  y
-}
-
-Error at 1:1
-This value shares/borrows from `y`, but `y` will be destroyed at the end of this block
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = { x };
-  y^
-}
-
-Error at 1:1
-This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-}
-
-[]
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-  let z = x!;
-}
-
-Error at 4:11
-Can't borrow `x` because it is already borrowed by TODO
-```
-
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-  let z = y!;
-}
-
-[]
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-  let z = x;
-}
-
-Error at 4:11
-Can't share `x` because it is borrowed by TODO
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-  y^;
-  let z = x;
-}
-
-[]
-```
-
-```test
-{
-  let x = [1,2,3];
-  let y = x!;
-  y^;
-  let z = y;
-}
-
-Error at 5:11
-Can't share `y` because it has been moved
-```
-
-```test
-{ 
-  let x = 1;
-  let y = x + 1;
-  x^;
-  y^
-}
-
-Error at 3:11
-Expected a number but found a ref
-```
-
-```test
-{
-  let f = fn (x) { x^ };
-  let y = 1;
-  f(y)
-}
-
-Error at 4:3
-Expected a closure but found a ref
-```
-
-```test
-{
-  let f = fn (x) { x };
-  let y = 1;
-  f(y)
-}
-
-Error at 4:3
-Expected a closure but found a ref
-```
-
-```test
-{
-  let x = 1;
-  x = 2
-}
-
-Error at 3:3
-Can't assign through a shared ref
-```
-
-```test
-{
-  let x = 1;
-  x^ = 2
-}
-
-Error at 3:3
-Expected a ref but found a number
-```
-
-```test
-{
-  let x = 1;
-  let y = x!;
-  y^ = 2;
-  x^
-}
-
-2
-```
-
-```test
-{
-  let x = 1;
-  x! = x
-}
-
-Error at 3:8
-Can't share `x` because it is borrowed by TODO
-```
-
-```test
-{
-  let x = 1;
-  x! = x^
-}
-
-Error at 3:8
-Can't move out of `x` because it is borrowed by TODO
-```
-
-```test
-{
-  let x = 1;
-  x! = { x + 1 }
-}
-
-Error at 3:10
-Can't share `x` because it is borrowed by TODO
-```
-
-```test
-{
-  let x = 1;
-  x! = { x; 2 };
-  2
-}
-
-Error at 3:10
-Can't share `x` because it is borrowed by TODO
-```
-
-```test
-{
-  let x = 1;
-  {
-    let y = 2;
-    x! = y^;
-  }
-}
-
-[]
-```
-
-```test
-{
-  let x = 1;
-  let y = x;
-  let z = 2;
-  y! = z;
-}
-
-Error at 5:3
-This value shares/borrows from `z`, which will be destroyed before `y` and so can't be owned by `y`
-```
-
-```test
-{
-  let x = 1;
-  let z = 2;
-  let y = x;
-  y! = z;
-}
-
-[]
-```
-
-```test
-{
-  let x = 1;
-  let y = x;
-  {
-    let z = 2;
-    y! = z;
-  }
-}
-
-Error at 6:5
-This value shares/borrows from `z`, which will be destroyed before `y` and so can't be owned by `y`
-```
-
-```test
-{
-  let a = 1;
-  let b = 2;
-  let c = a;
-  let d = {c! = b};
-  d^
-}
-
-Error at 1:1
-This value shares/borrows from `a`, but `a` will be destroyed at the end of this block
-```
-
-```test
-{
-  let a = 1;
-  let b = {
-    let c = a!;
-    c!*
-  };
-}
-
-Error at 3:11
-This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
 ```
 
 ```test
 {
   let a = 1;
   let b = a!;
-  b!**
+  b = 2;
+  a
 }
+
+Error at 4:3
+Can't assign a value of type `number` to a ref of type `ref(number)`
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  b* = 2;
+  a
+}
+
+2
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b*!;
+  c* = 2;
+  a
+}
+
+2
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b*!;
+  b* = 2;
+  a
+}
+
+Error at 5:3
+Can't assign to `b` because it is borrowed by TODO
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b*!;
+  c^;
+  b* = 2;
+  a
+}
+
+2
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b*!;
+  a&
+}
+
+Error at 5:4
+Can't share `a` because it is borrowed by TODO
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b*!;
+  b&
+}
+
+Error at 5:4
+Can't share `b` because it is borrowed by TODO
+```
+
+```test
+{
+  let a = 1;
+  let b = 2;
+  let c = a&;
+  let d = { c = b& };
+  [c*, d*]
+}
+
+[2, 1]
 ```
