@@ -1190,14 +1190,9 @@ const RefCount = packed struct {
         return true;
     }
 
-    fn removeBorrow(ref_count: *RefCount) void {
-        assert(ref_count.count < available);
-        ref_count.count += 1;
-    }
-
-    fn removeShare(ref_count: *RefCount) void {
-        assert(ref_count.count > available);
-        ref_count.count -= 1;
+    fn removeBorrowOrShare(ref_count: *RefCount) void {
+        assert(ref_count.count != moved and ref_count.count != available);
+        if (ref_count.count > available) ref_count.count -= 1 else ref_count.count += 1;
     }
 
     fn splitBorrow(ref_count: *RefCount, split_count: usize) void {
@@ -1208,8 +1203,15 @@ const RefCount = packed struct {
 
 const Provenance = packed struct {
     lease: Lease,
-    // Meaningless if `lease == .owned`.
-    stack_index: StackIndex,
+    // Both meaningless is lease == .owned
+    owner: StackIndex,
+    lender: StackIndex,
+
+    const owned = Provenance{
+        .lease = .owned,
+        .owner = 0,
+        .lender = 0,
+    };
 };
 
 fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
@@ -1245,10 +1247,10 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
         },
         .ref => {
             const provenance = getProvenance(c, value);
-            switch (provenance.lease) {
-                .owned => value.getRefElem().free(),
-                .borrowed => c.stack.items[provenance.stack_index].ref_count.removeBorrow(),
-                .shared => c.stack.items[provenance.stack_index].ref_count.removeShare(),
+            if (provenance.lease == .owned) {
+                value.getRefElem().free();
+            } else {
+                c.stack.items[provenance.lender].ref_count.removeBorrowOrShare();
             }
         },
         .closure => {},
@@ -1274,16 +1276,14 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
     var result = c.stack.pop();
 
     for (getProvenanceSlice(c, result.value)) |provenance| {
-        if (provenance.lease != .owned) {
-            if (provenance.stack_index >= stack_start) {
-                const item = &c.stack.items[provenance.stack_index];
-                return fail(
-                    c,
-                    .{ .expr_id = expr_id },
-                    "This value borrows from `{s}`, but `{s}` will be destroyed at the end of this block",
-                    .{ item.name.?, item.name.? },
-                );
-            }
+        if (provenance.lease != .owned and provenance.lender >= stack_start) {
+            const item = &c.stack.items[provenance.lender];
+            return fail(
+                c,
+                .{ .expr_id = expr_id },
+                "This value shares/borrows from `{s}`, but `{s}` will be destroyed at the end of this block",
+                .{ item.name.?, item.name.? },
+            );
         }
     }
 
@@ -1317,7 +1317,7 @@ fn stackAlloc(c: *Compiler, @"type": *Type) Value {
     const size = @"type".wordSize();
     const ptr = &c.stack_data[c.stack_top];
     @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
-    @memset(c.stack_provenance[c.stack_top..][0..size], .{ .lease = .owned, .stack_index = 0 });
+    @memset(c.stack_provenance[c.stack_top..][0..size], .owned);
     c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
@@ -1459,10 +1459,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 .shared, .borrowed => {
                     const ref = stackAlloc(c, makeTypeRef(c, item.value.type));
                     ref.setRefElem(item.value);
-                    getProvenance(c, ref).* = .{
-                        .lease = get.lease,
-                        .stack_index = @intCast(c.stack.len - get.stack_reverse_index),
-                    };
+                    const owner: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
+                    getProvenance(c, ref).* = .{ .lease = get.lease, .owner = owner, .lender = owner };
                     c.stack.push(.{ .name = null, .value = ref });
                 },
             }
@@ -1582,13 +1580,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                             "Can't assign through an owned ref",
                             .{},
                         ),
+                        .borrowed => {},
                         .shared => return fail(
                             c,
                             .{ .expr_id = expr_id },
                             "Can't assign through a shared ref",
                             .{},
                         ),
-                        .borrowed => {},
                     }
 
                     const reffed = arg0.value.getRefElem();
@@ -1614,13 +1612,13 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                 .{},
                             );
                         }
-                        if (elem_provenance.lease != .owned and elem_provenance.stack_index > ref_provenance.stack_index) {
-                            const ref_item = &c.stack.items[ref_provenance.stack_index];
-                            const elem_item = &c.stack.items[elem_provenance.stack_index];
+                        if (elem_provenance.lease != .owned and elem_provenance.lender > ref_provenance.owner) {
+                            const ref_item = &c.stack.items[ref_provenance.owner];
+                            const elem_item = &c.stack.items[elem_provenance.lender];
                             return fail(
                                 c,
                                 .{ .expr_id = expr_id },
-                                "This value borrows/shares from `{s}`, which will be destroyed before `{s}` and so can't be owned by `{s}`",
+                                "This value shares/borrows from `{s}`, which will be destroyed before `{s}` and so can't be owned by `{s}`",
                                 .{ elem_item.name.?, ref_item.name.?, ref_item.name.? },
                             );
                         }

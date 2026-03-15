@@ -76,7 +76,7 @@
 }
 
 Error at 1:1
-This value borrows from `x`, but `x` will be destroyed at the end of this block
+This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
 ```
 
 ```test
@@ -87,7 +87,7 @@ This value borrows from `x`, but `x` will be destroyed at the end of this block
 }
 
 Error at 1:1
-This value borrows from `y`, but `y` will be destroyed at the end of this block
+This value shares/borrows from `y`, but `y` will be destroyed at the end of this block
 ```
 
 ```test
@@ -98,7 +98,7 @@ This value borrows from `y`, but `y` will be destroyed at the end of this block
 }
 
 Error at 1:1
-This value borrows from `y`, but `y` will be destroyed at the end of this block
+This value shares/borrows from `y`, but `y` will be destroyed at the end of this block
 ```
 
 ```test
@@ -109,7 +109,7 @@ This value borrows from `y`, but `y` will be destroyed at the end of this block
 }
 
 Error at 1:1
-This value borrows from `x`, but `x` will be destroyed at the end of this block
+This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
 ```
 
 ```test
@@ -304,7 +304,7 @@ Can't share `x` because it is borrowed by TODO
 }
 
 Error at 5:3
-This value borrows/shares from `z`, which will be destroyed before `y` and so can't be owned by `y`
+This value shares/borrows from `z`, which will be destroyed before `y` and so can't be owned by `y`
 ```
 
 ```test
@@ -329,7 +329,7 @@ This value borrows/shares from `z`, which will be destroyed before `y` and so ca
 }
 
 Error at 6:5
-This value borrows/shares from `z`, which will be destroyed before `y` and so can't be owned by `y`
+This value shares/borrows from `z`, which will be destroyed before `y` and so can't be owned by `y`
 ```
 
 ```test
@@ -342,5 +342,18 @@ This value borrows/shares from `z`, which will be destroyed before `y` and so ca
 }
 
 Error at 1:1
-This value borrows from `a`, but `a` will be destroyed at the end of this block
+This value shares/borrows from `a`, but `a` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a!;
+    b!*
+  }
+}
+
+Error at 5:7
+Bad token
 ```
