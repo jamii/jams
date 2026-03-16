@@ -204,3 +204,15 @@ Can't refer to `a` because it has been moved
 Error at 4:3
 Can't assign to `b` because it is borrowed by TODO
 ```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  let c = b^;
+  b = c*!;
+}
+
+Error at 5:3
+This value shares/borrows from `c`, which will be destroyed before `b` and so can't be owned by `b`
+```

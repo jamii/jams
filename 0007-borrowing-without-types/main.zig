@@ -89,7 +89,12 @@ const Compiler = struct {
         c.expr_to_fn.deinit();
         c.scope.deinit();
 
-        for (c.stack.items[0..c.stack.len]) |item| drop(c, item);
+        {
+            var i: usize = c.stack.len;
+            while (i > 0) : (i -= 1) {
+                drop(c, c.stack.items[i - 1]);
+            }
+        }
         c.stack.deinit();
         allocator.free(c.stack_data);
         allocator.free(c.stack_provenance);
@@ -1257,11 +1262,6 @@ const RefCount = packed struct {
         assert(ref_count.state() == .shared);
         ref_count.count -= 1;
     }
-
-    fn splitBorrow(ref_count: *RefCount, split_count: usize) void {
-        assert(ref_count.state() == .borrowed);
-        ref_count.count -= split_count;
-    }
 };
 
 const Provenance = packed struct {
@@ -1330,11 +1330,6 @@ fn freeOwnedRefs(c: *Compiler, value: Value) void {
         },
         .closure => {},
     }
-}
-
-fn deinit(item: StackItem) void {
-    // If this value is owned on the stack, then any refs contained in it must be owned heap refs.
-    item.value.freeRefs();
 }
 
 fn stackPushEmptyTuple(c: *Compiler) void {
@@ -1756,13 +1751,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     }
 
                     const lender = &c.stack.items[path.provenance.lender];
-                    switch (lender.ref_count.state()) {
-                        .moved => {
-                            lender.ref_count.setAvailable();
-                        },
-                        .available => {
-                            freeOwnedRefs(c, path.value);
-                        },
+                    const lender_state = lender.ref_count.state();
+                    switch (lender_state) {
+                        .moved, .available => {},
                         .shared => return fail(
                             c,
                             .{ .expr_id = expr_id },
@@ -1814,6 +1805,12 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                 }
                             },
                         }
+                    }
+
+                    switch (lender_state) {
+                        .moved => lender.ref_count.setAvailable(),
+                        .available => freeOwnedRefs(c, path.value),
+                        .shared, .borrowed => unreachable,
                     }
 
                     Value.copyShallow(.{ .to = path.value, .from = arg1.value });
