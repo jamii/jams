@@ -136,7 +136,7 @@ Can't assign to `b` because it is borrowed by TODO
   a&
 }
 
-Error at 5:4
+Error at 5:3
 Can't share `a` because it is borrowed by TODO
 ```
 
@@ -148,7 +148,7 @@ Can't share `a` because it is borrowed by TODO
   b&
 }
 
-Error at 5:4
+Error at 5:3
 Can't share `b` because it is borrowed by TODO
 ```
 
@@ -215,4 +215,69 @@ Can't assign to `b` because it is borrowed by TODO
 
 Error at 5:3
 This value shares/borrows from `c`, which will be destroyed before `b` and so can't be owned by `b`
+```
+
+```test
+{
+  let a = [3,6,9];
+  a[1]
+}
+
+6
+```
+
+```test
+{
+  let a = [3,6,9];
+  a[1] = 11;
+  a
+}
+
+[3, 11, 9]
+```
+
+```test
+{
+  let a = [3,6,9];
+  let b = a[1]!;
+  b = 11;
+  a
+}
+
+Error at 4:3
+Can't assign a value of type `number` to a ref of type `ref(number)`
+```
+
+```test
+{
+  let a = [3,6,9];
+  let b = a[1]!;
+  b* = 11;
+  a
+}
+
+[3, 11, 9]
+```
+
+```test
+{
+  let a = [3,6,9];
+  let b = [a[2]!];
+  b[0]* = 11;
+  a
+}
+
+[3, 6, 11]
+```
+
+```test
+{
+  let a = [3,6,9];
+  let b = [a[2]!];
+  b[0] = a[1]!;
+  a
+}
+
+Error at 4:10
+Can't borrow `a` because it is already borrowed by TODO
 ```

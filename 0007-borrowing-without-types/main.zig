@@ -370,6 +370,10 @@ const Expr = union(enum) {
         builtin: Builtin,
         args: []ExprId,
     },
+    tuple_get: struct {
+        tuple: ExprId,
+        index: ExprId,
+    },
 
     fn deinit(expr: Expr) void {
         switch (expr) {
@@ -378,7 +382,7 @@ const Expr = union(enum) {
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
-            .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .param => {},
+            .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .param, .tuple_get => {},
         }
     }
 };
@@ -441,6 +445,7 @@ fn parseExprTight(c: *Compiler) error{Error}!ExprId {
     while (true) {
         switch (peek(c)) {
             .@"(" => expr = try parseCall(c, expr),
+            .@"[" => expr = try parseTupleGet(c, expr),
             .@"^" => expr = try parseMove(c, expr),
             .@"!" => expr = try parseBorrow(c, expr),
             .@"&" => expr = try parseShare(c, expr),
@@ -489,26 +494,39 @@ fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     return args.toOwnedSlice(allocator) catch oom();
 }
 
+fn parseTupleGet(c: *Compiler, tuple: ExprId) error{Error}!ExprId {
+    const start = c.expr_to_tokens.items[tuple.id][0];
+    try expect(c, .@"[");
+    const index = try parseExprLoose(c);
+    try expect(c, .@"]");
+    return pushExpr(c, start, .{
+        .tuple_get = .{
+            .tuple = tuple,
+            .index = index,
+        },
+    });
+}
+
 fn parseMove(c: *Compiler, path: ExprId) error{Error}!ExprId {
-    const start = c.token_next;
+    const start = c.expr_to_tokens.items[path.id][0];
     try expect(c, .@"^");
     return pushExpr(c, start, .{ .move = path });
 }
 
 fn parseBorrow(c: *Compiler, path: ExprId) error{Error}!ExprId {
-    const start = c.token_next;
+    const start = c.expr_to_tokens.items[path.id][0];
     try expect(c, .@"!");
     return pushExpr(c, start, .{ .borrow = path });
 }
 
 fn parseShare(c: *Compiler, path: ExprId) error{Error}!ExprId {
-    const start = c.token_next;
+    const start = c.expr_to_tokens.items[path.id][0];
     try expect(c, .@"&");
     return pushExpr(c, start, .{ .share = path });
 }
 
 fn parseDeref(c: *Compiler, ref: ExprId) error{Error}!ExprId {
-    const start = c.token_next;
+    const start = c.expr_to_tokens.items[ref.id][0];
     try expect(c, .@"*");
     return pushExpr(c, start, .{ .deref = ref });
 }
@@ -798,6 +816,12 @@ fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
         .deref => |path| {
             try analyzePath(c, path);
         },
+        .tuple_get => |tuple_get| {
+            try analyzePath(c, tuple_get.tuple);
+
+            try analyze(c, tuple_get.index);
+            _ = c.scope.pop();
+        },
         else => |other| {
             return fail(c, .{ .expr_id = expr_id }, "Not a valid path: {s}", .{@tagName(other)});
         },
@@ -806,7 +830,7 @@ fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get, .deref => {
+        .get, .deref, .tuple_get => {
             try analyzePath(c, expr_id);
         },
         .move, .borrow, .share => |child| {
@@ -1485,13 +1509,37 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
                 },
             };
         },
+        .tuple_get => |tuple_get| {
+            const tuple = try evalPath(c, tuple_get.tuple);
+            try eval(c, tuple_get.index);
+
+            const index = c.stack.pop();
+            errdefer drop(c, index);
+
+            try checkKind(c, tuple_get.tuple, .{ .expected = .tuple, .actual = tuple.value.type });
+            try checkKind(c, tuple_get.index, .{ .expected = .number, .actual = index.value.type });
+
+            const i = index.value.getNumber();
+            if (i < 0 or i >= tuple.value.type.tuple.elems.len)
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "Index {f} is out of bounds for tuple {f}",
+                    .{ index.value, tuple.value },
+                );
+
+            return .{
+                .value = tuple.value.getTupleElem(@intCast(i)),
+                .provenance = tuple.provenance,
+            };
+        },
         else => unreachable,
     }
 }
 
 fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get, .deref => {
+        .get, .deref, .tuple_get => {
             const path = try evalPath(c, expr_id);
             for (getProvenanceSlice(c, path.value)) |ref_provenance| {
                 switch (ref_provenance.lease) {
