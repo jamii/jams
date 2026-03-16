@@ -281,3 +281,28 @@ Can't assign a value of type `number` to a ref of type `ref(number)`
 Error at 4:10
 Can't borrow `a` because it is already borrowed by TODO
 ```
+
+```test
+{
+  let a = [3,6,9];
+  let b = [a[0]&, a[1]&, a[2]&];
+  let c = b[1]^;
+  c^;
+  a
+}
+
+[3, 6, 9]
+```
+
+```test
+{
+  let a = [3,6,9];
+  let b = [2,4,8];
+  let c = [a[0]&, b[1]!, a[2]&];
+  let d = c[1]^;
+  d* = 11;
+  b
+}
+
+[2, 11, 8]
+```

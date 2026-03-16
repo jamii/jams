@@ -89,12 +89,7 @@ const Compiler = struct {
         c.expr_to_fn.deinit();
         c.scope.deinit();
 
-        {
-            var i: usize = c.stack.len;
-            while (i > 0) : (i -= 1) {
-                drop(c, c.stack.items[i - 1]);
-            }
-        }
+        while (c.stack.len > 0) c.stack.pop().deinit(c);
         c.stack.deinit();
         allocator.free(c.stack_data);
         allocator.free(c.stack_provenance);
@@ -105,10 +100,12 @@ const Compiler = struct {
     }
 
     pub fn run(c: *Compiler) ![]const u8 {
+        //std.debug.print("{s}\n\n", .{c.source});
         try tokenize(c);
         c.expr_len = try parse(c);
         try analyze(c, c.expr_len.?);
         try eval(c, c.expr_len.?);
+        assert(c.stack.len == 1);
         const result = c.stack.peek();
         return std.fmt.allocPrint(allocator, "{f}", .{result.value});
     }
@@ -1181,21 +1178,43 @@ const Value = struct {
         }
     }
 
-    fn free(value: Value) void {
-        value.freeRefs();
-        allocator.free(value.ptr[0..value.type.wordSize()]);
-    }
-
-    fn freeRefs(value: Value) void {
+    fn freeRefs(value: Value, c: *Compiler) void {
         switch (value.type.*) {
             .number => {},
             .tuple => |tuple| {
                 for (0..tuple.elems.len) |i| {
-                    freeRefs(value.getTupleElem(i));
+                    value.getTupleElem(i).freeRefs(c);
                 }
             },
             .ref => {
-                value.getRefElem().free();
+                if (value.ptr[0] != 0) {
+                    const provenance = getProvenance(c, value);
+                    switch (provenance.lease) {
+                        .not_a_ref => unreachable,
+                        .owned => {
+                            value.getRefElem().freeRefs(c);
+                            allocator.free(value.ptr[0..value.type.wordSize()]);
+                        },
+                        .borrowed => c.stack.items[provenance.lender].ref_count.dropBorrow(),
+                        .shared => c.stack.items[provenance.lender].ref_count.dropShare(),
+                    }
+                    value.ptr[0] = 0;
+                }
+            },
+            .closure => {},
+        }
+    }
+
+    fn setRefsToNull(value: Value) void {
+        switch (value.type.*) {
+            .number => {},
+            .tuple => |tuple| {
+                for (0..tuple.elems.len) |i| {
+                    value.getTupleElem(i).setRefsToNull();
+                }
+            },
+            .ref => {
+                value.ptr[0] = 0;
             },
             .closure => {},
         }
@@ -1227,9 +1246,12 @@ const Value = struct {
 
 const StackItem = struct {
     name: ?[]const u8,
-    // `value.ptr` must point to `c.stack_data`.
     value: Value,
     ref_count: RefCount = .{ .count = RefCount.available },
+
+    fn deinit(stack_item: StackItem, c: *Compiler) void {
+        stack_item.value.freeRefs(c);
+    }
 };
 
 const RefCount = packed struct {
@@ -1340,31 +1362,6 @@ fn getProvenanceSlice(c: *Compiler, value: Value) []Provenance {
     return c.stack_provenance[index..][0..size];
 }
 
-fn drop(c: *Compiler, item: StackItem) void {
-    if (!item.ref_count.isMoved()) freeOwnedRefs(c, item.value);
-}
-
-fn freeOwnedRefs(c: *Compiler, value: Value) void {
-    switch (value.type.*) {
-        .number => {},
-        .tuple => |tuple| {
-            for (0..tuple.elems.len) |i| {
-                freeOwnedRefs(c, value.getTupleElem(i));
-            }
-        },
-        .ref => {
-            const provenance = getProvenance(c, value);
-            switch (provenance.lease) {
-                .not_a_ref => unreachable,
-                .owned => value.getRefElem().free(),
-                .borrowed => c.stack.items[provenance.lender].ref_count.dropBorrow(),
-                .shared => c.stack.items[provenance.lender].ref_count.dropShare(),
-            }
-        },
-        .closure => {},
-    }
-}
-
 fn stackPushEmptyTuple(c: *Compiler) void {
     c.stack.push(.{
         .name = null,
@@ -1395,8 +1392,7 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
         }
     }
 
-    for (c.stack.items[stack_start..c.stack.len]) |item| drop(c, item);
-    c.stack.len = stack_start;
+    while (c.stack.len > stack_start) c.stack.pop().deinit(c);
 
     const size = result.value.type.wordSize();
     if (size > 0) {
@@ -1459,17 +1455,31 @@ fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
     return result;
 }
 
-fn evalBool(c: *Compiler, expr_id: ExprId) error{Error}!bool {
-    const stack_data_start = c.stack_data.len;
+fn evalPopBool(c: *Compiler, expr_id: ExprId) error{Error}!bool {
+    const stack_data_start = c.stack_top;
     try eval(c, expr_id);
 
     errdefer comptime unreachable;
 
     const item = c.stack.pop();
     const cond = item.value.getBool();
-    drop(c, item);
+    item.deinit(c);
     c.stack_top = stack_data_start;
     return cond;
+}
+
+fn evalPopNumber(c: *Compiler, expr_id: ExprId) error{Error}!i64 {
+    const stack_data_start = c.stack_top;
+    try eval(c, expr_id);
+
+    const item = c.stack.pop();
+    errdefer item.deinit(c);
+
+    try checkKind(c, expr_id, .{ .expected = .number, .actual = item.value.type });
+    const number = item.value.getNumber();
+    item.deinit(c);
+    c.stack_top = stack_data_start;
+    return number;
 }
 
 fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, provenance: Provenance } {
@@ -1511,25 +1521,20 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
         },
         .tuple_get => |tuple_get| {
             const tuple = try evalPath(c, tuple_get.tuple);
-            try eval(c, tuple_get.index);
-
-            const index = c.stack.pop();
-            errdefer drop(c, index);
+            const index = try evalPopNumber(c, tuple_get.index);
 
             try checkKind(c, tuple_get.tuple, .{ .expected = .tuple, .actual = tuple.value.type });
-            try checkKind(c, tuple_get.index, .{ .expected = .number, .actual = index.value.type });
 
-            const i = index.value.getNumber();
-            if (i < 0 or i >= tuple.value.type.tuple.elems.len)
+            if (index < 0 or index >= tuple.value.type.tuple.elems.len)
                 return fail(
                     c,
                     .{ .expr_id = expr_id },
-                    "Index {f} is out of bounds for tuple {f}",
-                    .{ index.value, tuple.value },
+                    "Index {} is out of bounds for tuple {f}",
+                    .{ index, tuple.value },
                 );
 
             return .{
-                .value = tuple.value.getTupleElem(@intCast(i)),
+                .value = tuple.value.getTupleElem(@intCast(index)),
                 .provenance = tuple.provenance,
             };
         },
@@ -1616,6 +1621,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const value = stackAlloc(c, path.value.type);
             Value.copyShallow(.{ .to = value, .from = path.value });
             std.mem.copyForwards(Provenance, getProvenanceSlice(c, value), getProvenanceSlice(c, path.value));
+            path.value.setRefsToNull(); // Avoid freeing this value twice.
             c.stack.push(.{ .name = null, .value = value });
         },
         .borrow => |borrow| {
@@ -1730,8 +1736,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             errdefer comptime unreachable;
 
-            const item = c.stack.pop();
-            c.stack.push(.{ .name = let.name, .value = item.value });
+            c.stack.peek().name = let.name;
             stackPushEmptyTuple(c);
         },
         .block => |block| {
@@ -1740,23 +1745,23 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
                 try eval(c, statement);
-                drop(c, c.stack.pop());
+                c.stack.pop().deinit(c);
             }
 
             try eval(c, block.statements[block.statements.len - 1]);
             try stackCompact(c, expr_id, stack_start, stack_data_start);
         },
         .@"if" => |@"if"| {
-            const cond = try evalBool(c, @"if".cond);
+            const cond = try evalPopBool(c, @"if".cond);
             try eval(c, if (cond) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                const cond = try evalBool(c, @"while".cond);
+                const cond = try evalPopBool(c, @"while".cond);
                 if (!cond) break;
 
                 try eval(c, @"while".body);
-                drop(c, c.stack.pop());
+                c.stack.pop().deinit(c);
             }
             stackPushEmptyTuple(c);
         },
@@ -1819,7 +1824,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const path = try evalPath(c, call_builtin.args[0]);
 
                     const arg1 = c.stack.pop();
-                    errdefer drop(c, arg1);
+                    errdefer arg1.deinit(c);
 
                     switch (path.provenance.lease) {
                         .not_a_ref => unreachable,
@@ -1893,7 +1898,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     switch (lender_state) {
                         .moved => lender.ref_count.setAvailable(),
-                        .available => freeOwnedRefs(c, path.value),
+                        .available => path.value.freeRefs(c),
                         .shared, .borrowed => unreachable,
                     }
 
@@ -1909,10 +1914,10 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         try eval(c, expr);
 
                     const arg1 = c.stack.pop();
-                    defer drop(c, arg1);
+                    defer arg1.deinit(c);
 
                     const arg0 = c.stack.pop();
-                    defer drop(c, arg0);
+                    defer arg0.deinit(c);
 
                     try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
                     try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
@@ -1928,10 +1933,10 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         try eval(c, expr);
 
                     const arg1 = c.stack.pop();
-                    defer drop(c, arg1);
+                    defer arg1.deinit(c);
 
                     const arg0 = c.stack.pop();
-                    defer drop(c, arg0);
+                    defer arg0.deinit(c);
 
                     errdefer comptime unreachable;
 
@@ -1944,6 +1949,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             try stackCompact(c, expr_id, stack_start, stack_data_start);
         },
     }
+
+    //pp(.{ c.exprs.items[expr_id.id], getProvenanceSlice(c, c.stack.peek().value) });
 }
 
 fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
@@ -2011,6 +2018,8 @@ pub fn main() !void {
             defer compiler.deinit();
 
             const actual = compiler.run() catch compiler.error_message.?;
+
+            //std.debug.print("{s}\n\n", .{actual});
 
             if (!std.mem.eql(u8, expected, actual)) {
                 std.debug.print(
