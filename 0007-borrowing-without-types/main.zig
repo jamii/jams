@@ -922,11 +922,11 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             switch (call_builtin.builtin) {
                 .@"=" => {
-                    try analyze(c, call_builtin.args[1]);
                     const arg0 = &c.exprs.items[call_builtin.args[0].id];
                     if (arg0.* == .get)
                         arg0.get.allow_moved = true;
                     try analyzePath(c, call_builtin.args[0]);
+                    try analyze(c, call_builtin.args[1]);
                 },
                 .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
@@ -1824,9 +1824,8 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             switch (call_builtin.builtin) {
                 .@"=" => {
-                    try eval(c, call_builtin.args[1]);
-
                     const path = try evalPath(c, call_builtin.args[0]);
+                    try eval(c, call_builtin.args[1]);
 
                     const arg1 = c.stack.pop();
                     errdefer arg1.deinit(c);
