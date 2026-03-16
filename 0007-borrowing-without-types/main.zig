@@ -1250,6 +1250,10 @@ const StackItem = struct {
     ref_count: RefCount = .{ .count = RefCount.available },
 
     fn deinit(stack_item: StackItem, c: *Compiler) void {
+        assert(switch (stack_item.ref_count.state()) {
+            .available, .moved => true,
+            .borrowed, .shared => false,
+        });
         stack_item.value.freeRefs(c);
     }
 };
@@ -1374,6 +1378,7 @@ fn stackPushEmptyTuple(c: *Compiler) void {
 
 fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     var result = c.stack.pop();
+    errdefer result.deinit(c);
 
     for (getProvenanceSlice(c, result.value)) |provenance| {
         switch (provenance.lease) {
