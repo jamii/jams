@@ -353,8 +353,14 @@ const Expr = union(enum) {
         body: ExprId,
     },
     @"fn": struct {
+        captures: []ExprId,
+        capture_mode: CaptureMode,
         params: []ExprId,
         body: ExprId,
+    },
+    capture: struct {
+        name: []const u8,
+        mode: CaptureMode,
     },
     param: struct {
         name: []const u8,
@@ -379,9 +385,16 @@ const Expr = union(enum) {
             .@"fn" => |@"fn"| allocator.free(@"fn".params),
             .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
-            .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .param, .tuple_get => {},
+            .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .capture, .param, .tuple_get => {},
         }
     }
+};
+
+const CaptureMode = enum {
+    move,
+    borrow,
+    share,
+    copy,
 };
 
 const Builtin = enum {
@@ -464,26 +477,17 @@ fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     });
 }
 
-const arg_count_max: usize = 31;
-
 fn parseArgs(c: *Compiler) error{Error}![]ExprId {
     try expect(c, .@"(");
 
     var args: ArrayList(ExprId) = .{};
     defer args.deinit(allocator);
 
-    for (0..arg_count_max) |_| {
+    while (true) {
         if (peek(c) == .@")") break;
         const arg = try parseExprLoose(c);
         args.append(allocator, arg) catch oom();
         if (!takeIf(c, .@",")) break;
-    } else {
-        return fail(
-            c,
-            .{ .token_id = c.token_next },
-            "Functions may take at most {} arguments",
-            .{arg_count_max},
-        );
     }
 
     try expect(c, .@")");
@@ -658,23 +662,33 @@ fn parseWhile(c: *Compiler) error{Error}!ExprId {
 fn parseFn(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     try expect(c, .@"fn");
+
+    var captures: ArrayList(ExprId) = .{};
+    defer captures.deinit(allocator);
+
+    var capture_mode = CaptureMode.copy;
+
+    if (takeIf(c, .@"[")) {
+        while (true) {
+            if (peek(c) == .@"]") break;
+            const capture = try parseCapture(c);
+            captures.append(allocator, capture) catch oom();
+            if (!takeIf(c, .@",")) break;
+        }
+        try expect(c, .@"]");
+        capture_mode = parseCaptureMode(c);
+    }
+
     try expect(c, .@"(");
 
     var params: ArrayList(ExprId) = .{};
     defer params.deinit(allocator);
 
-    for (0..arg_count_max) |_| {
+    while (true) {
         if (peek(c) == .@")") break;
         const param = try parseParam(c);
         params.append(allocator, param) catch oom();
         if (!takeIf(c, .@",")) break;
-    } else {
-        return fail(
-            c,
-            .{ .token_id = c.token_next },
-            "Functions may take at most {} arguments",
-            .{arg_count_max},
-        );
     }
 
     try expect(c, .@")");
@@ -682,10 +696,30 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
 
     return pushExpr(c, start, .{
         .@"fn" = .{
+            .captures = captures.toOwnedSlice(allocator) catch oom(),
+            .capture_mode = capture_mode,
             .params = params.toOwnedSlice(allocator) catch oom(),
             .body = body,
         },
     });
+}
+
+fn parseCapture(c: *Compiler) error{Error}!ExprId {
+    const start = c.token_next;
+    const name = try expectName(c);
+    const mode = parseCaptureMode(c);
+    return pushExpr(c, start, .{ .capture = .{ .name = name, .mode = mode } });
+}
+
+fn parseCaptureMode(c: *Compiler) CaptureMode {
+    return if (takeIf(c, .@"^"))
+        .move
+    else if (takeIf(c, .@"!"))
+        .borrow
+    else if (takeIf(c, .@"&"))
+        .share
+    else
+        .copy;
 }
 
 fn parseParam(c: *Compiler) error{Error}!ExprId {
@@ -896,7 +930,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             try analyze(c, @"fn".body);
         },
-        .param => {
+        .capture, .param => {
             // Handled directly in @"fn" above.
             unreachable;
         },
@@ -1782,7 +1816,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 },
             });
         },
-        .param => {
+        .capture, .param => {
             // Handled directly in .call below.
             unreachable;
         },

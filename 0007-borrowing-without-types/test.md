@@ -306,3 +306,15 @@ Can't borrow `a` because it is already borrowed by TODO
 
 [2, 11, 8]
 ```
+
+```test
+{
+  let a = 1;
+  let b = 2;
+  let c = 3;
+  let d = 4;
+  fn [a, b&, c!, d^]! () {}
+}
+
+fn(.{ .id = 0 })
+```
