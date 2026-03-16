@@ -838,7 +838,12 @@ fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
             if (c.fn_id_current) |fn_id| {
                 const @"fn" = &c.fns.items[fn_id.id];
                 if (scope_index < @"fn".scope_start) {
-                    return fail(c, .{ .expr_id = expr_id }, "Sorry, no closures in part 1.", .{});
+                    return fail(
+                        c,
+                        .{ .expr_id = expr_id },
+                        "Can't refer to `{s}` here because it is defined outside this function - try using an explicit capture instead.",
+                        .{get.name},
+                    );
                 }
             }
 
@@ -1870,7 +1875,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         .shared => return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't assign through a shared ref",
+                            "Can't assign through a shared reference",
                             .{},
                         ),
                     }
@@ -1897,7 +1902,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         return fail(
                             c,
                             .{ .expr_id = expr_id },
-                            "Can't assign a value of type `{f}` to a ref of type `{f}`",
+                            "Can't assign a value of type `{f}` to a reference with elem type `{f}`",
                             .{ arg1.value.type, path.value.type },
                         );
                     }
@@ -1914,7 +1919,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                     return fail(
                                         c,
                                         .{ .expr_id = expr_id },
-                                        "Can't write borrowed/shared refs to the heap",
+                                        "Can't write borrowed/shared references to the heap",
                                         .{},
                                     );
                                 }

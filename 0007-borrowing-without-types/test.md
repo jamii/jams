@@ -76,7 +76,7 @@ This value shares/borrows from `x`, but `x` will be destroyed at the end of this
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a ref of type `ref(number)`
+Can't assign a value of type `number` to a reference with elem type `ref(number)`
 ```
 
 ```test
@@ -245,7 +245,7 @@ This value shares/borrows from `c`, which will be destroyed before `b` and so ca
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a ref of type `ref(number)`
+Can't assign a value of type `number` to a reference with elem type `ref(number)`
 ```
 
 ```test
@@ -308,12 +308,55 @@ Can't borrow `a` because it is already borrowed by TODO
 ```
 
 ```test
+{ 
+  let a = 1;
+  let b = a&;
+  let c = b*!;
+}
+
+Error at 4:11
+Can't borrow through a shared reference
+```
+
+```test
+{ 
+  let a = 1;
+  let b = a&;
+  let c = b!;
+  c* = a&;
+}
+
+[]
+```
+
+```test
+{ 
+  let a = 1;
+  let b = a&;
+  let c = b!;
+  c** = 2;
+}
+
+Error at 5:3
+Can't assign through a shared reference
+```
+
+```test
 {
   let a = 1;
-  let b = 2;
-  let c = 3;
-  let d = 4;
-  fn [a, b&, c!, d^]! () {}
+  let f = fn () { a };
+  f()
+}
+
+Error at 3:19
+Can't refer to `a` here because it is defined outside this function - try using an explicit capture instead.
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a] () { a };
+  f()
 }
 
 fn(.{ .id = 0 })
