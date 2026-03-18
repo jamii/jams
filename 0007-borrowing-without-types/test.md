@@ -542,3 +542,48 @@ Expected a tuple but found a ref
 Error at 4:11
 Expected a tuple but found a ref
 ```
+
+```test
+{
+  let a = [1, 2, 3];
+  let b = a[0]!;
+  let e = b*&;
+}
+
+[]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a!;
+  let e = b*&;
+}
+
+[]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a!;
+  let e = b*&;
+  b* = 11;
+  a
+}
+
+Error at 5:3
+Can't assign to `b` because it is shared with TODO
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a!;
+  let e = b*&;
+  c* = 11;
+  a
+}
+
+[1, 11, 3]
+```

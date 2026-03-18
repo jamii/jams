@@ -14,6 +14,10 @@ fn pp(args: anytype) void {
     std.debug.print("{any}\n", .{args});
 }
 
+fn pf(args: anytype) void {
+    std.debug.print("{f}\n", .{args});
+}
+
 const Compiler = struct {
     source: []const u8,
 
@@ -1289,7 +1293,12 @@ const Value = struct {
                 try writer.print("]", .{});
             },
             .ref => {
-                try writer.print("ref({f})", .{value.getRefElem()});
+                if (value.ptr[0] == 0) {
+                    // This isn't reachable in valid programs, but it's useful when debugging.
+                    try writer.print("null", .{});
+                } else {
+                    try writer.print("ref({f})", .{value.getRefElem()});
+                }
             },
             .closure => |closure| {
                 try writer.print("fn({})", .{closure.fn_id});
@@ -1556,6 +1565,7 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
             const item = &c.stack.items[stack_index];
+            assert(std.mem.eql(u8, item.name.?, get.name));
             if (!get.allow_moved and item.ref_count.isMoved()) {
                 return fail(
                     c,
@@ -1848,7 +1858,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             getProvenance(c, ref).* = .{
                 .lease = .shared,
                 .owner = path.provenance.owner,
-                .lender = path.provenance.owner, // not a typo - we don't need to freeze the lender
+                .lender = path.provenance.lender,
             };
             c.stack.push(.{ .name = null, .value = ref });
         },
