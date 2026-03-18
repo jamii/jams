@@ -337,7 +337,7 @@ const Expr = union(enum) {
     share: ExprId,
     deref: ExprId,
     let: struct {
-        name: []const u8,
+        pattern: ExprId,
         value: ExprId,
     },
     block: struct {
@@ -635,10 +635,10 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
 fn parseLet(c: *Compiler) error{Error}!ExprId {
     const start = c.token_next;
     try expect(c, .let);
-    const name = try expectName(c);
+    const pattern = try parseExprTight(c);
     try expect(c, .@"=");
     const value = try parseExprLoose(c);
-    return pushExpr(c, start, .{ .let = .{ .name = name, .value = value } });
+    return pushExpr(c, start, .{ .let = .{ .pattern = pattern, .value = value } });
 }
 
 fn parseIf(c: *Compiler) error{Error}!ExprId {
@@ -864,6 +864,21 @@ fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
     }
 }
 
+fn analyzePattern(c: *Compiler, expr_id: ExprId) error{Error}!void {
+    switch (c.exprs.items[expr_id.id]) {
+        .get => |get| {
+            c.scope.push(.{ .name = get.name });
+        },
+        .tuple => |elems| {
+            for (elems) |elem|
+                try analyzePattern(c, elem);
+        },
+        else => |other| {
+            return fail(c, .{ .expr_id = expr_id }, "Not a valid pattern: {s}", .{@tagName(other)});
+        },
+    }
+}
+
 fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
@@ -883,7 +898,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
         .let => |let| {
             try analyze(c, let.value);
             _ = c.scope.pop();
-            c.scope.push(.{ .name = let.name });
+            try analyzePattern(c, let.pattern);
         },
         .block => |block| {
             const scope_start = c.scope.len;
@@ -1360,6 +1375,16 @@ const RefCount = packed struct {
         assert(ref_count.state() == .shared);
         ref_count.count -= 1;
     }
+
+    fn splitBorrow(ref_count: *RefCount) void {
+        assert(ref_count.state() == .borrowed);
+        ref_count.count -= 1;
+    }
+
+    fn splitShare(ref_count: *RefCount) void {
+        assert(ref_count.state() == .shared);
+        ref_count.count += 1;
+    }
 };
 
 const Provenance = packed struct {
@@ -1586,6 +1611,85 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
     }
 }
 
+fn evalPattern(c: *Compiler, expr_id: ExprId) error{Error}!void {
+    switch (c.exprs.items[expr_id.id]) {
+        // Optimize the most common case.
+        .get => |get| {
+            c.stack.peek().name = get.name;
+        },
+        else => {
+            const item = c.stack.pop();
+            switch (item.value.type.*) {
+                .ref => {
+                    defer item.deinit(c); // If succesful, we make new refs and the original ref still needs to be cleaned up.
+                    try evalPatternRef(c, expr_id, item.value.getRefElem(), getProvenance(c, item.value).*);
+                },
+                else => {
+                    errdefer item.deinit(c); // If succesful, value is totally consumed.
+                    try evalPatternOwned(c, expr_id, item.value);
+                },
+            }
+        },
+    }
+}
+
+fn evalPatternRef(c: *Compiler, expr_id: ExprId, value: Value, provenance: Provenance) error{Error}!void {
+    switch (c.exprs.items[expr_id.id]) {
+        .get => |get| {
+            const lender = &c.stack.items[provenance.lender];
+            switch (provenance.lease) {
+                .not_a_ref => unreachable,
+                .owned => return fail(c, .{ .expr_id = expr_id }, "Can't destructure an owned ref", .{}),
+                .borrowed => lender.ref_count.splitBorrow(),
+                .shared => lender.ref_count.splitShare(),
+            }
+            const ref = stackAlloc(c, makeTypeRef(c, value.type));
+            ref.setRefElem(value);
+            getProvenance(c, ref).* = provenance;
+            c.stack.push(.{ .name = get.name, .value = ref });
+        },
+        .tuple => |elems| {
+            try checkKind(c, expr_id, .{ .expected = .tuple, .actual = value.type });
+            if (elems.len != value.type.tuple.elems.len)
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "Expected a tuple of length {} but found {f}",
+                    .{ elems.len, value },
+                );
+            for (elems, 0..) |elem, i| {
+                try evalPatternRef(c, elem, value.getTupleElem(i), provenance);
+            }
+        },
+        else => unreachable,
+    }
+}
+
+fn evalPatternOwned(c: *Compiler, expr_id: ExprId, value: Value) error{Error}!void {
+    switch (c.exprs.items[expr_id.id]) {
+        .get => |get| {
+            c.stack.push(.{
+                .name = get.name,
+                .value = value,
+            });
+        },
+        .tuple => |elems| {
+            try checkKind(c, expr_id, .{ .expected = .tuple, .actual = value.type });
+            if (elems.len != value.type.tuple.elems.len)
+                return fail(
+                    c,
+                    .{ .expr_id = expr_id },
+                    "Expected a tuple of length {} but found {f}",
+                    .{ elems.len, value },
+                );
+            for (elems, 0..) |elem, i| {
+                try evalPatternOwned(c, elem, value.getTupleElem(i));
+            }
+        },
+        else => unreachable,
+    }
+}
+
 fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
@@ -1777,10 +1881,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         .let => |let| {
             try eval(c, let.value);
-
-            errdefer comptime unreachable;
-
-            c.stack.peek().name = let.name;
+            try evalPattern(c, let.pattern);
             stackPushEmptyTuple(c);
         },
         .block => |block| {

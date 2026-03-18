@@ -359,5 +359,186 @@ Can't refer to `a` here because it is defined outside this function - try using 
   f()
 }
 
-fn(.{ .id = 0 })
+Error at 3:23
+Can't refer to `a` here because it is defined outside this function - try using an explicit capture instead.
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a;
+  [b, c, d]
+}
+
+[1, 2, 3]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a^;
+  [b, c, d]
+}
+
+[1, 2, 3]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a&;
+  [b, c, d]
+}
+
+Error at 1:1
+This value shares/borrows from `a`, but `a` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a&;
+  [b*, c*, d*]
+}
+
+[1, 2, 3]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a!;
+  b* = 3;
+  c* = 6;
+  d* = 9;
+  a
+}
+
+[3, 6, 9]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a!;
+  b* = 3;
+  c* = 6;
+  d* = 9;
+  a = [1, 2, 3];
+}
+
+Error at 7:3
+Can't assign to `a` because it is borrowed by TODO
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  {
+    let [b, c, d] = a!;
+    b* = 3;
+    c* = 6;
+    d* = 9;
+  };
+  a = [1, 2, 3];
+  a
+}
+
+[1, 2, 3]
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a&;
+  a = [1, 2, 3];
+}
+
+Error at 4:3
+Can't assign to `a` because it is shared with TODO
+```
+
+```test
+{
+  let a = [1, 2, 3];
+  let [b, c, d] = a;
+  a = [1, 2, 3];
+}
+
+[]
+```
+
+```test
+{
+  let a = 1;
+  let b = a!;
+  b
+}
+
+Error at 4:3
+Can't copy a borrowed reference
+```
+
+```test
+{
+  let a = [1, [2, 3]];
+  let [b, c, d] = a;
+}
+
+Error at 3:7
+Expected a tuple of length 3 but found [1, [2, 3]]
+```
+
+```test
+{
+  let a = [1, [2, 3]];
+  let [b, c] = a;
+  c
+}
+
+[2, 3]
+```
+
+```test
+{
+  let a = [1, [2, 3]];
+  let [b, c] = a&;
+  c*
+}
+
+[2, 3]
+```
+
+```test
+{
+  let a = [1, [2, 3]];
+  let [b, [c, d]] = a&;
+  [b*, c*, d*]
+}
+
+[1, 2, 3]
+```
+
+```test
+{
+  let a = [2, 3];
+  let b = [1, a&];
+  let [c, [d, e]] = b&;
+  [c*, d*, e*]
+}
+
+Error at 4:11
+Expected a tuple but found a ref
+```
+
+```test
+{
+  let a = [2, 3];
+  let b = [1, a&];
+  let [c, [d, e]] = b;
+  [c, d, e]
+}
+
+Error at 4:11
+Expected a tuple but found a ref
 ```
