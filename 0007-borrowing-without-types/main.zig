@@ -1594,12 +1594,17 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
             try checkKind(c, deref, .{ .expected = .ref, .actual = path.value.type });
 
             const ref_provenance = getProvenance(c, path.value).*;
+            const lender = if (ref_provenance.lease == .borrowed)
+                // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
+                path.provenance.lender
+            else
+                ref_provenance.owner;
             return .{
                 .value = path.value.getRefElem(),
                 .provenance = .{
                     .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
                     .owner = ref_provenance.owner,
-                    .lender = path.provenance.lender,
+                    .lender = lender,
                 },
             };
         },

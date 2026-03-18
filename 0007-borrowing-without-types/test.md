@@ -587,3 +587,85 @@ Can't assign to `b` because it is shared with TODO
 
 [1, 11, 3]
 ```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a&;
+    let c = b!;
+    c**&
+  };
+}
+
+[]
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a!;
+    let c = b&;
+    c**&
+  };
+}
+
+Error at 3:3
+This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a&;
+    let c = b!;
+    c*&
+  };
+}
+
+Error at 3:3
+This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a!;
+    let c = b&;
+    c*&
+  };
+}
+
+Error at 3:3
+This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a!;
+    b*!
+  };
+}
+
+Error at 3:3
+This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+```
+
+```test
+{
+  let a = 1;
+  {
+    let b = a!;
+    let c = b!;
+    c**!
+  };
+}
+
+Error at 3:3
+This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
+```
