@@ -2,12 +2,15 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const panic = std.debug.panic;
-const assert = std.debug.assert;
 
 const allocator = std.heap.c_allocator;
 
 fn oom() noreturn {
-    std.debug.panic("OOM", .{});
+    panic("OOM", .{});
+}
+
+fn assert(cond: bool) void {
+    if (!cond) panic("Assert failed", .{});
 }
 
 fn pp(args: anytype) void {
@@ -17,6 +20,8 @@ fn pp(args: anytype) void {
 fn pf(args: anytype) void {
     std.debug.print("{f}\n", .{args});
 }
+
+const debug = true;
 
 const Compiler = struct {
     source: []const u8,
@@ -160,7 +165,7 @@ const SourceLocation = union(enum) {
 };
 
 fn fail(c: *Compiler, source_location: SourceLocation, comptime fmt: []const u8, args: anytype) error{Error} {
-    assert(c.error_message == null);
+    if (debug) assert(c.error_message == null);
     const line_col = lineColFromSourceLocation(c, source_location);
     c.error_message = std.fmt.allocPrint(allocator, "Error at {}:{}\n" ++ fmt, .{ line_col[0], line_col[1] } ++ args) catch oom();
     return error.Error;
@@ -1161,10 +1166,10 @@ const Value = struct {
 
     fn setRefElem(value: Value, elem: Value) void {
         const ref = value.type.ref;
-        switch (ref.elem) {
+        if (debug) switch (ref.elem) {
             .known => |known| assert(Type.order(known, elem.type) == .eq),
             .any => {},
-        }
+        };
         value.ptr[0] = @intFromPtr(elem.ptr);
     }
 
@@ -1176,14 +1181,14 @@ const Value = struct {
     }
 
     fn copyShallow(args: struct { from: Value, to: Value }) void {
-        assert(Type.order(args.to.type, args.from.type) == .eq);
+        if (debug) assert(Type.order(args.to.type, args.from.type) == .eq);
         const size = args.from.type.wordSize();
         if (size > 0)
             @memcpy(args.to.ptr[0..size], args.from.ptr[0..size]);
     }
 
     fn copyDeep(args: struct { from: Value, to: Value }) void {
-        assert(Type.order(args.to.type, args.from.type) == .eq);
+        if (debug) assert(Type.order(args.to.type, args.from.type) == .eq);
         copyShallow(.{ .from = args.from, .to = args.to });
         cloneRefs(args.to);
     }
@@ -1313,7 +1318,7 @@ const StackItem = struct {
     ref_count: RefCount = .{ .count = RefCount.available },
 
     fn deinit(stack_item: StackItem, c: *Compiler) void {
-        assert(switch (stack_item.ref_count.state()) {
+        if (debug) assert(switch (stack_item.ref_count.state()) {
             .available, .moved => true,
             .borrowed, .shared => false,
         });
@@ -1340,7 +1345,7 @@ const RefCount = packed struct {
     }
 
     fn setAvailable(ref_count: *RefCount) void {
-        assert(ref_count.count == moved);
+        if (debug) assert(ref_count.count == moved);
         ref_count.count = available;
     }
 
@@ -1353,7 +1358,7 @@ const RefCount = packed struct {
     }
 
     fn move(ref_count: *RefCount) void {
-        assert(ref_count.canMove());
+        if (debug) assert(ref_count.canMove());
         ref_count.count = moved;
     }
 
@@ -1362,7 +1367,7 @@ const RefCount = packed struct {
     }
 
     fn borrow(ref_count: *RefCount) void {
-        assert(ref_count.canBorrow());
+        if (debug) assert(ref_count.canBorrow());
         ref_count.count -= 1;
     }
 
@@ -1371,27 +1376,27 @@ const RefCount = packed struct {
     }
 
     fn share(ref_count: *RefCount) void {
-        assert(ref_count.canShare());
+        if (debug) assert(ref_count.canShare());
         ref_count.count += 1;
     }
 
     fn dropBorrow(ref_count: *RefCount) void {
-        assert(ref_count.state() == .borrowed);
+        if (debug) assert(ref_count.state() == .borrowed);
         ref_count.count += 1;
     }
 
     fn dropShare(ref_count: *RefCount) void {
-        assert(ref_count.state() == .shared);
+        if (debug) assert(ref_count.state() == .shared);
         ref_count.count -= 1;
     }
 
     fn splitBorrow(ref_count: *RefCount) void {
-        assert(ref_count.state() == .borrowed);
+        if (debug) assert(ref_count.state() == .borrowed);
         ref_count.count -= 1;
     }
 
     fn splitShare(ref_count: *RefCount) void {
-        assert(ref_count.state() == .shared);
+        if (debug) assert(ref_count.state() == .shared);
         ref_count.count += 1;
     }
 };
@@ -1428,7 +1433,7 @@ fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
 }
 
 fn getProvenance(c: *Compiler, ref: Value) *Provenance {
-    assert(ref.type.* == .ref);
+    if (debug) assert(ref.type.* == .ref);
     const index = getStackIndex(c, ref).?;
     return &c.stack_provenance[index];
 }
@@ -1565,7 +1570,7 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
             const item = &c.stack.items[stack_index];
-            assert(std.mem.eql(u8, item.name.?, get.name));
+            if (debug) assert(std.mem.eql(u8, item.name.?, get.name));
             if (!get.allow_moved and item.ref_count.isMoved()) {
                 return fail(
                     c,
