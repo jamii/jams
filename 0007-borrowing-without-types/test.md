@@ -669,3 +669,136 @@ This value shares/borrows from `b`, but `b` will be destroyed at the end of this
 Error at 3:3
 This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
 ```
+
+```test
+{
+  let a = ref(42);
+  a
+}
+
+Error at 3:3
+Can't copy an owned reference
+```
+
+```test
+{
+  let a = ref(42);
+  a^
+}
+
+ref(42)
+```
+
+```test
+{
+  let a = ref(42);
+  {
+    let b = a*!;
+    b* = 12;
+  };
+  a^
+}
+
+ref(12)
+```
+
+```test
+{
+  let a = ref(42);
+  {
+    let b = a!;
+    b* = ref(12);
+  };
+  a^
+}
+
+ref(12)
+```
+
+```test
+{
+  let a = ref(42);
+  {
+    let b = a!;
+    let c = 12;
+    b* = c&;
+  };
+  a^
+}
+
+Error at 6:5
+This value shares/borrows from `c`, which will be destroyed before `a` and so can't be owned by `a`
+```
+
+```test
+{
+  let z = 12;
+  let a = ref(42);
+  {
+    let b = a!;
+    b* = z&;
+  };
+  a^
+}
+
+Error at 1:1
+This value shares/borrows from `z`, but `z` will be destroyed at the end of this block
+```
+
+```test
+{
+  let z = 12;
+  let a = ref(42);
+  {
+    let b = a!;
+    b* = z&;
+  };
+  a*
+}
+
+12
+```
+
+```test
+{
+  let z = 12;
+  let a = ref(z&);
+}
+
+Error at 3:11
+Can't create an owned ref containing a borrowed/shared ref
+```
+
+```test
+{
+  let z = 12;
+  let a = ref(ref(1));
+  {
+    let b = a*!;
+    b* = z&;
+  };
+  a*
+}
+
+Error at 6:10
+Can't share `z` because it is borrowed by TODO
+```
+
+```test
+{
+  let a = ref(ref(1));
+  a*
+}
+
+Error at 3:3
+TODO
+```
+
+```test
+{
+  let a = ref(ref(1));
+  a^
+}
+
+ref(ref(1))
+```
