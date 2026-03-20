@@ -23,6 +23,9 @@ fn pf(args: anytype) void {
 
 const debug = true;
 
+// Big 'ol production-quality global.
+var c: Compiler = undefined;
+
 const Compiler = struct {
     source: []const u8,
 
@@ -47,17 +50,20 @@ const Compiler = struct {
     stack_top: usize,
     stack_data: []u64,
     stack_provenance: []Provenance,
-    type_number: *Type,
-    type_empty_tuple: *Type,
+    types: ArrayList(Type),
+    type_number: TypeId,
+    type_empty_tuple: TypeId,
 
     error_message: ?[]u8,
 
     pub fn init(source: []const u8) Compiler {
-        const type_number = allocator.create(Type) catch oom();
-        type_number.* = .number;
+        var types: ArrayList(Type) = .{};
 
-        const type_empty_tuple = allocator.create(Type) catch oom();
-        type_empty_tuple.* = .{ .tuple = .{ .elems = &.{} } };
+        const type_number = TypeId{ .id = types.items.len };
+        types.append(allocator, .number) catch oom();
+
+        const type_empty_tuple = TypeId{ .id = types.items.len };
+        types.append(allocator, .{ .tuple = .{ .elems = &.{} } }) catch oom();
 
         return .{
             .source = source,
@@ -79,6 +85,7 @@ const Compiler = struct {
             .stack_top = 0,
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
             .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
+            .types = types,
             .type_number = type_number,
             .type_empty_tuple = type_empty_tuple,
 
@@ -86,39 +93,39 @@ const Compiler = struct {
         };
     }
 
-    pub fn deinit(c: *Compiler) void {
-        c.tokens.deinit(allocator);
-        c.token_to_range.deinit(allocator);
+    pub fn deinit(compiler: *Compiler) void {
+        compiler.tokens.deinit(allocator);
+        compiler.token_to_range.deinit(allocator);
 
-        for (c.exprs.items) |expr| expr.deinit();
-        c.exprs.deinit(allocator);
-        c.expr_to_tokens.deinit(allocator);
+        for (compiler.exprs.items) |expr| expr.deinit();
+        compiler.exprs.deinit(allocator);
+        compiler.expr_to_tokens.deinit(allocator);
 
-        c.fns.deinit(allocator);
-        c.expr_to_fn.deinit();
-        c.scope.deinit();
+        compiler.fns.deinit(allocator);
+        compiler.expr_to_fn.deinit();
+        compiler.scope.deinit();
 
-        while (c.stack.len > 0) c.stack.pop().deinit(c);
-        c.stack.deinit();
-        allocator.free(c.stack_data);
-        allocator.free(c.stack_provenance);
-        allocator.destroy(c.type_number);
-        allocator.destroy(c.type_empty_tuple);
+        while (compiler.stack.len > 0) compiler.stack.pop().deinit();
+        compiler.stack.deinit();
+        allocator.free(compiler.stack_data);
+        allocator.free(compiler.stack_provenance);
+        for (compiler.types.items) |@"type"| @"type".deinit();
+        compiler.types.deinit(allocator);
 
-        if (c.error_message) |err| allocator.free(err);
-    }
-
-    pub fn run(c: *Compiler) ![]const u8 {
-        //std.debug.print("{s}\n\n", .{c.source});
-        try tokenize(c);
-        c.expr_len = try parse(c);
-        try analyze(c, c.expr_len.?);
-        try eval(c, c.expr_len.?);
-        assert(c.stack.len == 1);
-        const result = c.stack.peek();
-        return std.fmt.allocPrint(allocator, "{f}", .{result.value});
+        if (compiler.error_message) |err| allocator.free(err);
     }
 };
+
+pub fn run() ![]const u8 {
+    //std.debug.print("{s}\n\n", .{c.source});
+    try tokenize();
+    c.expr_len = try parse();
+    try analyze(c.expr_len.?);
+    try eval(c.expr_len.?);
+    assert(c.stack.len == 1);
+    const result = c.stack.peek();
+    return std.fmt.allocPrint(allocator, "{f}", .{result.value});
+}
 
 const stack_size = 1024 * 1024;
 
@@ -164,14 +171,14 @@ const SourceLocation = union(enum) {
     expr_id: ExprId,
 };
 
-fn fail(c: *Compiler, source_location: SourceLocation, comptime fmt: []const u8, args: anytype) error{Error} {
+fn fail(source_location: SourceLocation, comptime fmt: []const u8, args: anytype) error{Error} {
     if (debug) assert(c.error_message == null);
-    const line_col = lineColFromSourceLocation(c, source_location);
+    const line_col = lineColFromSourceLocation(source_location);
     c.error_message = std.fmt.allocPrint(allocator, "Error at {}:{}\n" ++ fmt, .{ line_col[0], line_col[1] } ++ args) catch oom();
     return error.Error;
 }
 
-fn lineColFromSourceLocation(c: *Compiler, source_location_orig: SourceLocation) [2]usize {
+fn lineColFromSourceLocation(source_location_orig: SourceLocation) [2]usize {
     var source_location = source_location_orig;
     while (true) {
         switch (source_location) {
@@ -236,7 +243,7 @@ const Token = enum {
     eof,
 };
 
-pub fn tokenize(c: *Compiler) !void {
+pub fn tokenize() !void {
     const source = c.source;
     var pos: usize = 0;
     next_token: while (pos < source.len) {
@@ -266,7 +273,7 @@ pub fn tokenize(c: *Compiler) !void {
                     }
                     continue :next_token;
                 } else {
-                    return failBadToken(c, start);
+                    return failBadToken(start);
                 }
             },
             'a'...'z' => token: {
@@ -309,7 +316,7 @@ pub fn tokenize(c: *Compiler) !void {
             '\n' => {
                 continue :next_token;
             },
-            else => return failBadToken(c, start),
+            else => return failBadToken(start),
         };
         _ = c.tokens.append(allocator, token) catch oom();
         _ = c.token_to_range.append(allocator, .{ start, pos }) catch oom();
@@ -319,9 +326,8 @@ pub fn tokenize(c: *Compiler) !void {
     _ = c.token_to_range.append(allocator, .{ pos, pos }) catch oom();
 }
 
-fn failBadToken(c: *Compiler, pos: usize) error{Error} {
+fn failBadToken(pos: usize) error{Error} {
     return fail(
-        c,
         .{ .pos = pos },
         "Bad token",
         .{},
@@ -412,18 +418,18 @@ const Builtin = enum {
     ref,
 };
 
-fn parse(c: *Compiler) error{Error}!ExprId {
-    const len = try parseExprLoose(c);
-    try expect(c, .eof);
+fn parse() error{Error}!ExprId {
+    const len = try parseExprLoose();
+    try expect(.eof);
     return len;
 }
 
-fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
+fn parseExprLoose() error{Error}!ExprId {
     const start = c.token_next;
-    var expr = try parseExprTight(c);
+    var expr = try parseExprTight();
     var last_op: ?Builtin = null;
     while (true) {
-        switch (peek(c)) {
+        switch (peek()) {
             .@"=", .@"+", .@"<" => |token| {
                 const op: Builtin = switch (token) {
                     .@"=" => .@"=",
@@ -433,7 +439,6 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
                 };
                 if (last_op != null and last_op.? != op) {
                     return fail(
-                        c,
                         .{ .token_id = c.token_next },
                         "Ambiguous precedence: `{s}` vs `{s}`",
                         .{
@@ -443,10 +448,10 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
                     );
                 }
                 last_op = op;
-                _ = take(c);
+                _ = take();
 
-                const right = try parseExprTight(c);
-                expr = pushExpr(c, start, .{
+                const right = try parseExprTight();
+                expr = pushExpr(start, .{
                     .call_builtin = .{
                         .builtin = op,
                         .args = allocator.dupe(ExprId, &.{ expr, right }) catch oom(),
@@ -459,26 +464,26 @@ fn parseExprLoose(c: *Compiler) error{Error}!ExprId {
     return expr;
 }
 
-fn parseExprTight(c: *Compiler) error{Error}!ExprId {
-    var expr = try parseExprBase(c);
+fn parseExprTight() error{Error}!ExprId {
+    var expr = try parseExprBase();
     while (true) {
-        switch (peek(c)) {
-            .@"(" => expr = try parseCall(c, expr),
-            .@"[" => expr = try parseTupleGet(c, expr),
-            .@"^" => expr = try parseMove(c, expr),
-            .@"!" => expr = try parseBorrow(c, expr),
-            .@"&" => expr = try parseShare(c, expr),
-            .@"*" => expr = try parseDeref(c, expr),
+        switch (peek()) {
+            .@"(" => expr = try parseCall(expr),
+            .@"[" => expr = try parseTupleGet(expr),
+            .@"^" => expr = try parseMove(expr),
+            .@"!" => expr = try parseBorrow(expr),
+            .@"&" => expr = try parseShare(expr),
+            .@"*" => expr = try parseDeref(expr),
             else => break,
         }
     }
     return expr;
 }
 
-fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
+fn parseCall(closure: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[closure.id][0];
-    const args = try parseArgs(c);
-    return pushExpr(c, start, .{
+    const args = try parseArgs();
+    return pushExpr(start, .{
         .call = .{
             .closure = closure,
             .args = args,
@@ -486,30 +491,30 @@ fn parseCall(c: *Compiler, closure: ExprId) error{Error}!ExprId {
     });
 }
 
-fn parseArgs(c: *Compiler) error{Error}![]ExprId {
-    try expect(c, .@"(");
+fn parseArgs() error{Error}![]ExprId {
+    try expect(.@"(");
 
     var args: ArrayList(ExprId) = .{};
     defer args.deinit(allocator);
 
     while (true) {
-        if (peek(c) == .@")") break;
-        const arg = try parseExprLoose(c);
+        if (peek() == .@")") break;
+        const arg = try parseExprLoose();
         args.append(allocator, arg) catch oom();
-        if (!takeIf(c, .@",")) break;
+        if (!takeIf(.@",")) break;
     }
 
-    try expect(c, .@")");
+    try expect(.@")");
 
     return args.toOwnedSlice(allocator) catch oom();
 }
 
-fn parseTupleGet(c: *Compiler, tuple: ExprId) error{Error}!ExprId {
+fn parseTupleGet(tuple: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[tuple.id][0];
-    try expect(c, .@"[");
-    const index = try parseExprLoose(c);
-    try expect(c, .@"]");
-    return pushExpr(c, start, .{
+    try expect(.@"[");
+    const index = try parseExprLoose();
+    try expect(.@"]");
+    return pushExpr(start, .{
         .tuple_get = .{
             .tuple = tuple,
             .index = index,
@@ -517,87 +522,86 @@ fn parseTupleGet(c: *Compiler, tuple: ExprId) error{Error}!ExprId {
     });
 }
 
-fn parseMove(c: *Compiler, path: ExprId) error{Error}!ExprId {
+fn parseMove(path: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[path.id][0];
-    try expect(c, .@"^");
-    return pushExpr(c, start, .{ .move = path });
+    try expect(.@"^");
+    return pushExpr(start, .{ .move = path });
 }
 
-fn parseBorrow(c: *Compiler, path: ExprId) error{Error}!ExprId {
+fn parseBorrow(path: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[path.id][0];
-    try expect(c, .@"!");
-    return pushExpr(c, start, .{ .borrow = path });
+    try expect(.@"!");
+    return pushExpr(start, .{ .borrow = path });
 }
 
-fn parseShare(c: *Compiler, path: ExprId) error{Error}!ExprId {
+fn parseShare(path: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[path.id][0];
-    try expect(c, .@"&");
-    return pushExpr(c, start, .{ .share = path });
+    try expect(.@"&");
+    return pushExpr(start, .{ .share = path });
 }
 
-fn parseDeref(c: *Compiler, ref: ExprId) error{Error}!ExprId {
+fn parseDeref(ref: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[ref.id][0];
-    try expect(c, .@"*");
-    return pushExpr(c, start, .{ .deref = ref });
+    try expect(.@"*");
+    return pushExpr(start, .{ .deref = ref });
 }
 
-fn parseExprBase(c: *Compiler) error{Error}!ExprId {
-    return switch (peek(c)) {
-        .number => parseNumber(c),
-        .@"[" => parseList(c),
-        .name => parseGet(c),
-        .@"{" => parseBlock(c),
-        .@"if" => parseIf(c),
-        .@"while" => parseWhile(c),
-        .@"fn" => parseFn(c),
-        .ref => parseCallBuiltin(c),
-        else => failExpected(c, "an expression"),
+fn parseExprBase() error{Error}!ExprId {
+    return switch (peek()) {
+        .number => parseNumber(),
+        .@"[" => parseList(),
+        .name => parseGet(),
+        .@"{" => parseBlock(),
+        .@"if" => parseIf(),
+        .@"while" => parseWhile(),
+        .@"fn" => parseFn(),
+        .ref => parseCallBuiltin(),
+        else => failExpected("an expression"),
     };
 }
 
-fn parseNumber(c: *Compiler) error{Error}!ExprId {
+fn parseNumber() error{Error}!ExprId {
     const start = c.token_next;
-    const source = peekSource(c);
+    const source = peekSource();
     const number = std.fmt.parseInt(i64, source, 10) catch |err| {
         const reason: []const u8 = switch (err) {
             error.Overflow => "overflow",
             error.InvalidCharacter => "invalid character",
         };
         return fail(
-            c,
             .{ .token_id = c.token_next },
             "Failed to parse integer due to {s}",
             .{reason},
         );
     };
-    try expect(c, .number);
-    return pushExpr(c, start, .{ .number = number });
+    try expect(.number);
+    return pushExpr(start, .{ .number = number });
 }
 
-fn parseList(c: *Compiler) error{Error}!ExprId {
+fn parseList() error{Error}!ExprId {
     const start = c.token_next;
 
-    try expect(c, .@"[");
+    try expect(.@"[");
 
     var elems: ArrayList(ExprId) = .{};
     defer elems.deinit(allocator);
 
     while (true) {
-        if (peek(c) == .@"]") break;
-        const elem = try parseExprLoose(c);
+        if (peek() == .@"]") break;
+        const elem = try parseExprLoose();
         elems.append(allocator, elem) catch oom();
-        if (!takeIf(c, .@",")) break;
+        if (!takeIf(.@",")) break;
     }
 
-    try expect(c, .@"]");
+    try expect(.@"]");
 
-    return pushExpr(c, start, .{ .tuple = elems.toOwnedSlice(allocator) catch oom() });
+    return pushExpr(start, .{ .tuple = elems.toOwnedSlice(allocator) catch oom() });
 }
 
-fn parseGet(c: *Compiler) error{Error}!ExprId {
+fn parseGet() error{Error}!ExprId {
     const start = c.token_next;
-    const name = try expectName(c);
-    return pushExpr(c, start, .{
+    const name = try expectName();
+    return pushExpr(start, .{
         .get = .{
             .name = name,
             // These are filled in later by `analyze`.
@@ -607,33 +611,33 @@ fn parseGet(c: *Compiler) error{Error}!ExprId {
     });
 }
 
-fn parseBlock(c: *Compiler) error{Error}!ExprId {
+fn parseBlock() error{Error}!ExprId {
     const start = c.token_next;
 
-    try expect(c, .@"{");
+    try expect(.@"{");
 
     var statements: ArrayList(ExprId) = .{};
     defer statements.deinit(allocator);
 
     const return_last = while (true) {
-        if (peek(c) == .@"}") break false;
-        const statement = if (peek(c) == .let) try parseLet(c) else try parseExprLoose(c);
+        if (peek() == .@"}") break false;
+        const statement = if (peek() == .let) try parseLet() else try parseExprLoose();
         statements.append(allocator, statement) catch oom();
-        if (!takeIf(c, .@";")) break true;
+        if (!takeIf(.@";")) break true;
     };
 
     if (!return_last or statements.items.len == 0) {
-        const statement = pushExpr(c, c.token_next, .{ .tuple = &.{} });
+        const statement = pushExpr(c.token_next, .{ .tuple = &.{} });
         statements.append(allocator, statement) catch oom();
     }
 
-    try expect(c, .@"}");
+    try expect(.@"}");
 
     if (statements.items.len == 1 and c.exprs.items[statements.items[0].id] != .let) {
         // This looks like `{ x }` - we don't need to create a block.
         return statements.items[0];
     } else {
-        return pushExpr(c, start, .{
+        return pushExpr(start, .{
             .block = .{
                 .statements = statements.toOwnedSlice(allocator) catch oom(),
             },
@@ -641,69 +645,69 @@ fn parseBlock(c: *Compiler) error{Error}!ExprId {
     }
 }
 
-fn parseLet(c: *Compiler) error{Error}!ExprId {
+fn parseLet() error{Error}!ExprId {
     const start = c.token_next;
-    try expect(c, .let);
-    const pattern = try parseExprTight(c);
-    try expect(c, .@"=");
-    const value = try parseExprLoose(c);
-    return pushExpr(c, start, .{ .let = .{ .pattern = pattern, .value = value } });
+    try expect(.let);
+    const pattern = try parseExprTight();
+    try expect(.@"=");
+    const value = try parseExprLoose();
+    return pushExpr(start, .{ .let = .{ .pattern = pattern, .value = value } });
 }
 
-fn parseIf(c: *Compiler) error{Error}!ExprId {
+fn parseIf() error{Error}!ExprId {
     const start = c.token_next;
-    try expect(c, .@"if");
-    const cond = try parseExprLoose(c);
-    const then = try parseBlock(c);
-    try expect(c, .@"else");
-    const @"else" = try parseBlock(c);
-    return pushExpr(c, start, .{ .@"if" = .{ .cond = cond, .then = then, .@"else" = @"else" } });
+    try expect(.@"if");
+    const cond = try parseExprLoose();
+    const then = try parseBlock();
+    try expect(.@"else");
+    const @"else" = try parseBlock();
+    return pushExpr(start, .{ .@"if" = .{ .cond = cond, .then = then, .@"else" = @"else" } });
 }
 
-fn parseWhile(c: *Compiler) error{Error}!ExprId {
+fn parseWhile() error{Error}!ExprId {
     const start = c.token_next;
-    try expect(c, .@"while");
-    const cond = try parseExprLoose(c);
-    const body = try parseBlock(c);
-    return pushExpr(c, start, .{ .@"while" = .{ .cond = cond, .body = body } });
+    try expect(.@"while");
+    const cond = try parseExprLoose();
+    const body = try parseBlock();
+    return pushExpr(start, .{ .@"while" = .{ .cond = cond, .body = body } });
 }
 
-fn parseFn(c: *Compiler) error{Error}!ExprId {
+fn parseFn() error{Error}!ExprId {
     const start = c.token_next;
-    try expect(c, .@"fn");
+    try expect(.@"fn");
 
     var captures: ArrayList(ExprId) = .{};
     defer captures.deinit(allocator);
 
     var capture_mode = CaptureMode.copy;
 
-    if (takeIf(c, .@"[")) {
+    if (takeIf(.@"[")) {
         while (true) {
-            if (peek(c) == .@"]") break;
-            const capture = try parseCapture(c);
+            if (peek() == .@"]") break;
+            const capture = try parseCapture();
             captures.append(allocator, capture) catch oom();
-            if (!takeIf(c, .@",")) break;
+            if (!takeIf(.@",")) break;
         }
-        try expect(c, .@"]");
-        capture_mode = parseCaptureMode(c);
+        try expect(.@"]");
+        capture_mode = parseCaptureMode();
     }
 
-    try expect(c, .@"(");
+    try expect(.@"(");
 
     var params: ArrayList(ExprId) = .{};
     defer params.deinit(allocator);
 
     while (true) {
-        if (peek(c) == .@")") break;
-        const param = try parseParam(c);
+        if (peek() == .@")") break;
+        const param = try parseParam();
         params.append(allocator, param) catch oom();
-        if (!takeIf(c, .@",")) break;
+        if (!takeIf(.@",")) break;
     }
 
-    try expect(c, .@")");
-    const body = try parseBlock(c);
+    try expect(.@")");
+    const body = try parseBlock();
 
-    return pushExpr(c, start, .{
+    return pushExpr(start, .{
         .@"fn" = .{
             .captures = captures.toOwnedSlice(allocator) catch oom(),
             .capture_mode = capture_mode,
@@ -713,95 +717,93 @@ fn parseFn(c: *Compiler) error{Error}!ExprId {
     });
 }
 
-fn parseCapture(c: *Compiler) error{Error}!ExprId {
+fn parseCapture() error{Error}!ExprId {
     const start = c.token_next;
-    const name = try expectName(c);
-    const mode = parseCaptureMode(c);
-    return pushExpr(c, start, .{ .capture = .{ .name = name, .mode = mode } });
+    const name = try expectName();
+    const mode = parseCaptureMode();
+    return pushExpr(start, .{ .capture = .{ .name = name, .mode = mode } });
 }
 
-fn parseCaptureMode(c: *Compiler) CaptureMode {
-    return if (takeIf(c, .@"^"))
+fn parseCaptureMode() CaptureMode {
+    return if (takeIf(.@"^"))
         .move
-    else if (takeIf(c, .@"!"))
+    else if (takeIf(.@"!"))
         .borrow
-    else if (takeIf(c, .@"&"))
+    else if (takeIf(.@"&"))
         .share
     else
         .copy;
 }
 
-fn parseParam(c: *Compiler) error{Error}!ExprId {
+fn parseParam() error{Error}!ExprId {
     const start = c.token_next;
-    const name = try expectName(c);
-    return pushExpr(c, start, .{ .param = .{ .name = name } });
+    const name = try expectName();
+    return pushExpr(start, .{ .param = .{ .name = name } });
 }
 
-fn parseCallBuiltin(c: *Compiler) error{Error}!ExprId {
+fn parseCallBuiltin() error{Error}!ExprId {
     const start = c.token_next;
 
-    const builtin: Builtin = switch (peek(c)) {
+    const builtin: Builtin = switch (peek()) {
         .ref => .ref,
-        else => return failExpected(c, "a builtin function"),
+        else => return failExpected("a builtin function"),
     };
-    _ = take(c);
+    _ = take();
 
-    const args = try parseArgs(c);
-    const expr_id = pushExpr(c, start, .{ .call_builtin = .{ .builtin = builtin, .args = args } });
+    const args = try parseArgs();
+    const expr_id = pushExpr(start, .{ .call_builtin = .{ .builtin = builtin, .args = args } });
     return expr_id;
 }
 
-fn expect(c: *Compiler, expected: Token) error{Error}!void {
-    const actual = peek(c);
+fn expect(expected: Token) error{Error}!void {
+    const actual = peek();
     if (expected != actual) {
         return fail(
-            c,
             .{ .token_id = c.token_next },
             "Expected a `{s}` but found a `{s}`",
             .{ @tagName(expected), @tagName(actual) },
         );
     }
-    _ = take(c);
+    _ = take();
 }
 
-fn expectName(c: *Compiler) error{Error}![]const u8 {
-    const name = peekSource(c);
-    try expect(c, .name);
+fn expectName() error{Error}![]const u8 {
+    const name = peekSource();
+    try expect(.name);
     return name;
 }
 
-fn peek(c: *Compiler) Token {
+fn peek() Token {
     return c.tokens.items[c.token_next.id];
 }
 
-fn peekSource(c: *Compiler) []const u8 {
+fn peekSource() []const u8 {
     const range = c.token_to_range.items[c.token_next.id];
     return c.source[range[0]..range[1]];
 }
 
-fn take(c: *Compiler) Token {
-    const token = peek(c);
+fn take() Token {
+    const token = peek();
     c.token_next.id += 1;
     return token;
 }
 
-fn takeIf(c: *Compiler, expected: Token) bool {
-    const token = peek(c);
+fn takeIf(expected: Token) bool {
+    const token = peek();
     if (token == expected) c.token_next.id += 1;
     return token == expected;
 }
 
-fn pushExpr(c: *Compiler, start: TokenId, expr: Expr) ExprId {
+fn pushExpr(start: TokenId, expr: Expr) ExprId {
     const expr_id = ExprId{ .id = c.exprs.items.len };
     c.exprs.append(allocator, expr) catch oom();
     c.expr_to_tokens.append(allocator, .{ start, c.token_next }) catch oom();
     return expr_id;
 }
 
-fn failExpected(c: *Compiler, expected: []const u8) error{Error} {
+fn failExpected(expected: []const u8) error{Error} {
     const actual = c.tokens.items[c.token_next.id];
     return fail(
-        c,
         .{ .token_id = c.token_next },
         "Expected {s} but found a `{s}`",
         .{ expected, @tagName(actual) },
@@ -822,7 +824,7 @@ const ScopeItem = struct {
     name: ?[]const u8,
 };
 
-fn resolve(c: *Compiler, name: []const u8) ?usize {
+fn resolve(name: []const u8) ?usize {
     const items = c.scope.items[0..c.scope.len];
     var i = items.len;
     while (i > 0) : (i -= 1) {
@@ -835,17 +837,16 @@ fn resolve(c: *Compiler, name: []const u8) ?usize {
     return null;
 }
 
-fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
+fn analyzePath(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => |*get| {
-            const scope_index = resolve(c, get.name) orelse
-                return failNotDefined(c, expr_id, get.name);
+            const scope_index = resolve(get.name) orelse
+                return failNotDefined(expr_id, get.name);
 
             if (c.fn_id_current) |fn_id| {
                 const @"fn" = &c.fns.items[fn_id.id];
                 if (scope_index < @"fn".scope_start) {
                     return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't refer to `{s}` here because it is defined outside this function - try using an explicit capture instead.",
                         .{get.name},
@@ -856,80 +857,80 @@ fn analyzePath(c: *Compiler, expr_id: ExprId) error{Error}!void {
             get.stack_reverse_index = @intCast(c.scope.len - scope_index);
         },
         .deref => |path| {
-            try analyzePath(c, path);
+            try analyzePath(path);
         },
         .tuple_get => |tuple_get| {
-            try analyzePath(c, tuple_get.tuple);
+            try analyzePath(tuple_get.tuple);
 
-            try analyze(c, tuple_get.index);
+            try analyze(tuple_get.index);
             _ = c.scope.pop();
         },
         else => |other| {
-            return fail(c, .{ .expr_id = expr_id }, "Not a valid path: {s}", .{@tagName(other)});
+            return fail(.{ .expr_id = expr_id }, "Not a valid path: {s}", .{@tagName(other)});
         },
     }
 }
 
-fn analyzePattern(c: *Compiler, expr_id: ExprId) error{Error}!void {
+fn analyzePattern(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => |get| {
             c.scope.push(.{ .name = get.name });
         },
         .tuple => |elems| {
             for (elems) |elem|
-                try analyzePattern(c, elem);
+                try analyzePattern(elem);
         },
         else => |other| {
-            return fail(c, .{ .expr_id = expr_id }, "Not a valid pattern: {s}", .{@tagName(other)});
+            return fail(.{ .expr_id = expr_id }, "Not a valid pattern: {s}", .{@tagName(other)});
         },
     }
 }
 
-fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
+fn analyze(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
-            try analyzePath(c, expr_id);
+            try analyzePath(expr_id);
         },
         .move, .borrow, .share => |child| {
-            try analyzePath(c, child);
+            try analyzePath(child);
         },
         .number => {},
         .tuple => |tuple| {
             for (tuple) |elem|
-                try analyze(c, elem);
+                try analyze(elem);
 
             for (tuple) |_|
                 _ = c.scope.pop();
         },
         .let => |let| {
-            try analyze(c, let.value);
+            try analyze(let.value);
             _ = c.scope.pop();
-            try analyzePattern(c, let.pattern);
+            try analyzePattern(let.pattern);
         },
         .block => |block| {
             const scope_start = c.scope.len;
             defer c.scope.len = scope_start;
 
             for (block.statements) |statement| {
-                try analyze(c, statement);
+                try analyze(statement);
                 _ = c.scope.pop();
             }
         },
         .@"if" => |@"if"| {
-            try analyze(c, @"if".cond);
+            try analyze(@"if".cond);
             _ = c.scope.pop();
 
-            try analyze(c, @"if".then);
+            try analyze(@"if".then);
             _ = c.scope.pop();
 
-            try analyze(c, @"if".@"else");
+            try analyze(@"if".@"else");
             _ = c.scope.pop();
         },
         .@"while" => |@"while"| {
-            try analyze(c, @"while".cond);
+            try analyze(@"while".cond);
             _ = c.scope.pop();
 
-            try analyze(c, @"while".body);
+            try analyze(@"while".body);
             _ = c.scope.pop();
         },
         .@"fn" => |@"fn"| {
@@ -954,16 +955,16 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 c.scope.push(.{ .name = param.name });
             }
 
-            try analyze(c, @"fn".body);
+            try analyze(@"fn".body);
         },
         .capture, .param => {
             // Handled directly in @"fn" above.
             unreachable;
         },
         .call => |*call| {
-            try analyze(c, call.closure);
+            try analyze(call.closure);
             for (call.args) |arg|
-                try analyze(c, arg);
+                try analyze(arg);
 
             _ = c.scope.pop();
             for (call.args) |_|
@@ -973,7 +974,7 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const scope_start = c.scope.len;
             defer c.scope.len = scope_start;
 
-            try checkArgCount(c, expr_id, .{
+            try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
                     .ref => 1,
                     .@"=", .@"+", .@"<" => 2,
@@ -986,12 +987,12 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     const arg0 = &c.exprs.items[call_builtin.args[0].id];
                     if (arg0.* == .get)
                         arg0.get.allow_moved = true;
-                    try analyzePath(c, call_builtin.args[0]);
-                    try analyze(c, call_builtin.args[1]);
+                    try analyzePath(call_builtin.args[0]);
+                    try analyze(call_builtin.args[1]);
                 },
                 .ref, .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
-                        try analyze(c, arg);
+                        try analyze(arg);
 
                     for (call_builtin.args) |_|
                         _ = c.scope.pop();
@@ -1003,9 +1004,8 @@ fn analyze(c: *Compiler, expr_id: ExprId) error{Error}!void {
     c.scope.push(.{ .name = null });
 }
 
-fn failNotDefined(c: *Compiler, expr_id: ExprId, name: []const u8) error{Error} {
+fn failNotDefined(expr_id: ExprId, name: []const u8) error{Error} {
     return fail(
-        c,
         .{ .expr_id = expr_id },
         "Name `{s}` is not defined at this point",
         .{name},
@@ -1014,14 +1014,12 @@ fn failNotDefined(c: *Compiler, expr_id: ExprId, name: []const u8) error{Error} 
 
 // --- EVAL ---
 
-const Type = union(enum) {
-    number,
-    tuple: TypeTuple,
-    ref: TypeRef,
-    closure: TypeClosure,
+const TypeId = struct {
+    id: usize,
 
-    fn wordSize(@"type": Type) usize {
-        switch (@"type") {
+    fn wordSize(type_id: TypeId) usize {
+        // TODO precompute this
+        switch (c.types.items[type_id.id]) {
             .number => return 1,
             .tuple => |tuple| {
                 var size: usize = 0;
@@ -1040,17 +1038,19 @@ const Type = union(enum) {
         }
     }
 
-    fn order(a: *Type, b: *Type) std.math.Order {
-        switch (std.math.order(@intFromEnum(a.*), @intFromEnum(b.*))) {
+    fn order(a_id: TypeId, b_id: TypeId) std.math.Order {
+        const a = c.types.items[a_id.id];
+        const b = c.types.items[b_id.id];
+        switch (std.math.order(@intFromEnum(a), @intFromEnum(b))) {
             .lt => return .lt,
             .gt => return .gt,
             .eq => {},
         }
-        switch (a.*) {
+        switch (a) {
             .number => return .eq,
             .tuple => {
                 for (0..@min(a.tuple.elems.len, b.tuple.elems.len)) |i| {
-                    switch (Type.order(a.tuple.elems[i], b.tuple.elems[i])) {
+                    switch (TypeId.order(a.tuple.elems[i], b.tuple.elems[i])) {
                         .lt => return .lt,
                         .gt => return .gt,
                         .eq => {},
@@ -1066,10 +1066,30 @@ const Type = union(enum) {
                 }
                 switch (a.ref.elem) {
                     .any => return .eq,
-                    .known => return Type.order(a.ref.elem.known, b.ref.elem.known),
+                    .known => return TypeId.order(a.ref.elem.known, b.ref.elem.known),
                 }
             },
             .closure => return .eq,
+        }
+    }
+
+    pub fn format(type_id: TypeId, writer: *std.io.Writer) std.io.Writer.Error!void {
+        try c.types.items[type_id.id].format(writer);
+    }
+};
+
+const Type = union(enum) {
+    number,
+    tuple: TypeTuple,
+    ref: TypeRef,
+    closure: TypeClosure,
+
+    fn deinit(@"type": Type) void {
+        switch (@"type") {
+            .number => {},
+            .tuple => |tuple| tuple.deinit(),
+            .ref => |ref| ref.deinit(),
+            .closure => |closure| closure.deinit(),
         }
     }
 
@@ -1101,7 +1121,11 @@ const Type = union(enum) {
 };
 
 const TypeTuple = struct {
-    elems: []*Type,
+    elems: []TypeId,
+
+    fn deinit(tuple: TypeTuple) void {
+        allocator.free(tuple.elems);
+    }
 
     fn wordOffset(tuple: TypeTuple, index: usize) usize {
         var offset: usize = 0;
@@ -1114,79 +1138,83 @@ const TypeTuple = struct {
 
 const TypeRef = struct {
     elem: union(enum) {
-        known: *Type,
+        known: TypeId,
         any,
     },
+
+    fn deinit(_: TypeRef) void {}
 };
 
 const TypeClosure = struct {
     fn_id: FnId,
+
+    fn deinit(_: TypeClosure) void {}
 };
 
 const Value = struct {
     ptr: [*]u64,
-    type: *Type,
+    type_id: TypeId,
 
     fn getNumber(value: Value) i64 {
-        _ = value.type.number;
+        _ = c.types.items[value.type_id.id].number;
         return @bitCast(value.ptr[0]);
     }
 
     fn getBool(value: Value) bool {
         // Zero is falsey. Everything else is truthy.
-        if (value.type.* != .number) return true;
+        if (c.types.items[value.type_id.id] != .number) return true;
         return value.getNumber() != 0;
     }
 
     fn setNumber(value: Value, number: i64) void {
-        _ = value.type.number;
+        _ = c.types.items[value.type_id.id].number;
         value.ptr[0] = @bitCast(number);
     }
 
     fn getTupleElem(value: Value, index: usize) Value {
-        const tuple = value.type.tuple;
+        const tuple = c.types.items[value.type_id.id].tuple;
         return .{
             .ptr = value.ptr + tuple.wordOffset(index),
-            .type = tuple.elems[index],
+            .type_id = tuple.elems[index],
         };
     }
 
     fn getRefElem(value: Value) Value {
-        const ref = value.type.ref;
+        const ref = c.types.items[value.type_id.id].ref;
         return .{
             .ptr = @ptrFromInt(value.ptr[0]),
-            .type = switch (ref.elem) {
+            .type_id = switch (ref.elem) {
                 .known => |known| known,
-                .any => @ptrFromInt(value.ptr[1]),
+                .any => .{ .id = @intCast(value.ptr[1]) },
             },
         };
     }
 
     fn setRefElem(value: Value, elem: Value) void {
-        const ref = value.type.ref;
+        const ref = c.types.items[value.type_id.id].ref;
         if (debug) switch (ref.elem) {
-            .known => |known| assert(Type.order(known, elem.type) == .eq),
+            .known => |known| assert(TypeId.order(known, elem.type_id) == .eq),
             .any => {},
         };
         value.ptr[0] = @intFromPtr(elem.ptr);
     }
 
-    fn allocHeap(@"type": *Type) Value {
+    fn allocHeap(type_id: TypeId) Value {
         return .{
-            .ptr = @ptrCast(allocator.alloc(u64, @"type".wordSize()) catch oom()),
-            .type = @"type",
+            .ptr = @ptrCast(allocator.alloc(u64, type_id.wordSize()) catch oom()),
+            .type_id = type_id,
         };
     }
 
     fn copyShallow(args: struct { from: Value, to: Value }) void {
-        if (debug) assert(Type.order(args.to.type, args.from.type) == .eq);
-        const size = args.from.type.wordSize();
+        if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
+        const size = args.from.type_id.wordSize();
         if (size > 0)
             @memcpy(args.to.ptr[0..size], args.from.ptr[0..size]);
     }
 
     fn copyDeep(args: struct { from: Value, to: Value }) void {
-        if (debug) assert(Type.order(args.to.type, args.from.type) == .eq);
+        if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
         copyShallow(.{ .from = args.from, .to = args.to });
         cloneRefs(args.to);
     }
@@ -1213,12 +1241,12 @@ const Value = struct {
     }
 
     fn order(a: Value, b: Value) std.math.Order {
-        switch (Type.order(a.type, b.type)) {
+        switch (TypeId.order(a.type_id, b.type_id)) {
             .lt => return .lt,
             .gt => return .gt,
             .eq => {},
         }
-        switch (a.type.*) {
+        switch (c.types.items[a.type_id.id]) {
             .number => return std.math.order(a.getNumber(), b.getNumber()),
             .tuple => |tuple| {
                 for (0..tuple.elems.len) |i| {
@@ -1239,26 +1267,28 @@ const Value = struct {
         }
     }
 
-    fn freeRefs(value: Value, c: *Compiler) void {
-        switch (value.type.*) {
+    fn freeRefs(
+        value: Value,
+    ) void {
+        switch (c.types.items[value.type_id.id]) {
             .number => {},
             .tuple => |tuple| {
                 for (0..tuple.elems.len) |i| {
-                    value.getTupleElem(i).freeRefs(c);
+                    value.getTupleElem(i).freeRefs();
                 }
             },
             .ref => {
                 if (value.ptr[0] != 0) {
-                    const lease = if (getProvenance(c, value)) |provenance| provenance.lease else .owned;
+                    const lease = if (getProvenance(value)) |provenance| provenance.lease else .owned;
                     switch (lease) {
                         .not_a_ref => unreachable,
                         .owned => {
                             const elem = value.getRefElem();
-                            elem.freeRefs(c);
-                            allocator.free(elem.ptr[0..value.type.wordSize()]);
+                            elem.freeRefs();
+                            allocator.free(elem.ptr[0..value.type_id.wordSize()]);
                         },
-                        .borrowed => c.stack.items[getProvenance(c, value).?.lender].ref_count.dropBorrow(),
-                        .shared => c.stack.items[getProvenance(c, value).?.lender].ref_count.dropShare(),
+                        .borrowed => c.stack.items[getProvenance(value).?.lender].ref_count.dropBorrow(),
+                        .shared => c.stack.items[getProvenance(value).?.lender].ref_count.dropShare(),
                     }
                     value.ptr[0] = 0;
                 }
@@ -1268,7 +1298,7 @@ const Value = struct {
     }
 
     fn setRefsToNull(value: Value) void {
-        switch (value.type.*) {
+        switch (c.types.items[value.type_id.id]) {
             .number => {},
             .tuple => |tuple| {
                 for (0..tuple.elems.len) |i| {
@@ -1283,7 +1313,7 @@ const Value = struct {
     }
 
     pub fn format(value: Value, writer: *std.io.Writer) std.io.Writer.Error!void {
-        switch (value.type.*) {
+        switch (c.types.items[value.type_id.id]) {
             .number => {
                 try writer.print("{}", .{value.getNumber()});
             },
@@ -1316,12 +1346,14 @@ const StackItem = struct {
     value: Value,
     ref_count: RefCount = .{ .count = RefCount.available },
 
-    fn deinit(stack_item: StackItem, c: *Compiler) void {
+    fn deinit(
+        stack_item: StackItem,
+    ) void {
         if (debug) assert(switch (stack_item.ref_count.state()) {
             .available, .moved => true,
             .borrowed, .shared => false,
         });
-        stack_item.value.freeRefs(c);
+        stack_item.value.freeRefs();
     }
 };
 
@@ -1425,7 +1457,7 @@ const Lease = enum(u2) {
 };
 
 // Returns null if `value.ptr` does not point to `stack_data`.
-fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
+fn getStackIndex(value: Value) ?StackIndex {
     if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
     const index = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
     if (index >= c.stack_data.len) return null;
@@ -1433,41 +1465,40 @@ fn getStackIndex(c: *Compiler, value: Value) ?StackIndex {
 }
 
 // Returns null if `ref.ptr` does not point to `stack_data`.
-fn getProvenance(c: *Compiler, ref: Value) ?*Provenance {
-    if (debug) assert(ref.type.* == .ref);
-    const index = getStackIndex(c, ref) orelse return null;
+fn getProvenance(ref: Value) ?*Provenance {
+    if (debug) assert(c.types.items[ref.type_id.id] == .ref);
+    const index = getStackIndex(ref) orelse return null;
     return &c.stack_provenance[index];
 }
 
 // Returns null if `value.ptr` does not point to `stack_data`.
-fn getProvenanceSlice(c: *Compiler, value: Value) ?[]Provenance {
-    const index = getStackIndex(c, value) orelse return null;
-    const size = value.type.wordSize();
+fn getProvenanceSlice(value: Value) ?[]Provenance {
+    const index = getStackIndex(value) orelse return null;
+    const size = value.type_id.wordSize();
     return c.stack_provenance[index..][0..size];
 }
 
-fn stackPushEmptyTuple(c: *Compiler) void {
+fn stackPushEmptyTuple() void {
     c.stack.push(.{
         .name = null,
         .value = .{
             .ptr = c.stack_data.ptr,
-            .type = c.type_empty_tuple,
+            .type_id = c.type_empty_tuple,
         },
     });
 }
 
-fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
+fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     var result = c.stack.pop();
-    errdefer result.deinit(c);
+    errdefer result.deinit();
 
-    for (getProvenanceSlice(c, result.value).?) |provenance| {
+    for (getProvenanceSlice(result.value).?) |provenance| {
         switch (provenance.lease) {
             .not_a_ref, .owned => {},
             .borrowed, .shared => {
                 if (provenance.lease != .not_a_ref and provenance.lender >= stack_start) {
                     const item = &c.stack.items[provenance.lender];
                     return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "This value shares/borrows from `{s}`, but `{s}` will be destroyed at the end of this block",
                         .{ item.name.?, item.name.? },
@@ -1477,11 +1508,11 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
         }
     }
 
-    while (c.stack.len > stack_start) c.stack.pop().deinit(c);
+    while (c.stack.len > stack_start) c.stack.pop().deinit();
 
-    const size = result.value.type.wordSize();
+    const size = result.value.type_id.wordSize();
     if (size > 0) {
-        const index = getStackIndex(c, result.value).?;
+        const index = getStackIndex(result.value).?;
         std.mem.copyBackwards(
             u64,
             c.stack_data[stack_data_start..][0..size],
@@ -1502,72 +1533,69 @@ fn stackCompact(c: *Compiler, expr_id: ExprId, stack_start: usize, stack_data_st
     c.stack.push(result);
 }
 
-fn allocStack(c: *Compiler, @"type": *Type) Value {
-    const size = @"type".wordSize();
+fn allocStack(type_id: TypeId) Value {
+    const size = type_id.wordSize();
     const ptr = &c.stack_data[c.stack_top];
     @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
     @memset(c.stack_provenance[c.stack_top..][0..size], .not_a_ref);
     c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
-        .type = @"type",
+        .type_id = type_id,
     };
 }
 
 // TODO Memoize this.
-fn makeTypeTuple(c: *Compiler, items: []StackItem) *Type {
-    _ = c;
-    const result = allocator.create(Type) catch oom();
-    const elems = allocator.alloc(*Type, items.len) catch oom();
-    for (elems, items) |*elem, item| elem.* = item.value.type;
-    result.* = .{ .tuple = .{ .elems = elems } };
-    return result;
+fn makeTypeTuple(items: []StackItem) TypeId {
+    const elems = allocator.alloc(TypeId, items.len) catch oom();
+    for (elems, items) |*elem, item| elem.* = item.value.type_id;
+    const type_id = TypeId{ .id = c.types.items.len };
+    c.types.append(allocator, .{ .tuple = .{ .elems = elems } }) catch oom();
+    return type_id;
 }
 
 // TODO Memoize this.
-fn makeTypeRef(c: *Compiler, elem: *Type) *Type {
-    _ = c;
-    const result = allocator.create(Type) catch oom();
-    result.* = .{ .ref = .{ .elem = .{ .known = elem } } };
-    return result;
+fn makeTypeRef(elem: TypeId) TypeId {
+    const type_id = TypeId{ .id = c.types.items.len };
+    c.types.append(allocator, .{ .ref = .{ .elem = .{ .known = elem } } }) catch oom();
+    return type_id;
 }
 
 // TODO Memoize this.
-fn makeTypeClosure(c: *Compiler, fn_id: FnId) *Type {
-    _ = c;
-    const result = allocator.create(Type) catch oom();
-    result.* = .{ .closure = .{ .fn_id = fn_id } };
-    return result;
+fn makeTypeClosure(fn_id: FnId) TypeId {
+    const type_id = TypeId{ .id = c.types.items.len };
+    c.types.append(allocator, .{ .closure = .{ .fn_id = fn_id } }) catch oom();
+    return type_id;
 }
 
-fn evalPopBool(c: *Compiler, expr_id: ExprId) error{Error}!bool {
+fn evalPopBool(expr_id: ExprId) error{Error}!bool {
     const stack_data_start = c.stack_top;
-    try eval(c, expr_id);
+    try eval(expr_id);
 
     errdefer comptime unreachable;
 
     const item = c.stack.pop();
     const cond = item.value.getBool();
-    item.deinit(c);
+    item.deinit();
     c.stack_top = stack_data_start;
     return cond;
 }
 
-fn evalPopNumber(c: *Compiler, expr_id: ExprId) error{Error}!i64 {
+fn evalPopNumber(expr_id: ExprId) error{Error}!i64 {
     const stack_data_start = c.stack_top;
-    try eval(c, expr_id);
+    try eval(expr_id);
 
     const item = c.stack.pop();
-    errdefer item.deinit(c);
+    errdefer item.deinit();
 
-    try checkKind(c, expr_id, .{ .expected = .number, .actual = item.value.type });
+    try checkKind(expr_id, .{ .expected = .number, .actual = item.value.type_id });
     const number = item.value.getNumber();
-    item.deinit(c);
+    item.deinit();
     c.stack_top = stack_data_start;
     return number;
 }
 
-fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, provenance: Provenance } {
+fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Provenance } {
     switch (c.exprs.items[expr_id.id]) {
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
@@ -1575,7 +1603,6 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
             if (debug) assert(std.mem.eql(u8, item.name.?, get.name));
             if (!get.allow_moved and item.ref_count.isMoved()) {
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Can't refer to `{s}` because it has been moved",
                     .{item.name.?},
@@ -1591,11 +1618,11 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
             };
         },
         .deref => |deref| {
-            const path = try evalPath(c, deref);
+            const path = try evalPath(deref);
 
-            try checkKind(c, deref, .{ .expected = .ref, .actual = path.value.type });
+            try checkKind(deref, .{ .expected = .ref, .actual = path.value.type_id });
 
-            const ref_provenance = if (getProvenance(c, path.value)) |provenance|
+            const ref_provenance = if (getProvenance(path.value)) |provenance|
                 provenance.*
             else
                 // If ref is not on the stack then it must be owned by `path.owner`.
@@ -1619,14 +1646,13 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
             };
         },
         .tuple_get => |tuple_get| {
-            const tuple = try evalPath(c, tuple_get.tuple);
-            const index = try evalPopNumber(c, tuple_get.index);
+            const tuple = try evalPath(tuple_get.tuple);
+            const index = try evalPopNumber(tuple_get.index);
 
-            try checkKind(c, tuple_get.tuple, .{ .expected = .tuple, .actual = tuple.value.type });
+            try checkKind(tuple_get.tuple, .{ .expected = .tuple, .actual = tuple.value.type_id });
 
-            if (index < 0 or index >= tuple.value.type.tuple.elems.len)
+            if (index < 0 or index >= c.types.items[tuple.value.type_id.id].tuple.elems.len)
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Index {} is out of bounds for tuple {f}",
                     .{ index, tuple.value },
@@ -1641,7 +1667,7 @@ fn evalPath(c: *Compiler, expr_id: ExprId) error{Error}!struct { value: Value, p
     }
 }
 
-fn evalPattern(c: *Compiler, expr_id: ExprId) error{Error}!void {
+fn evalPattern(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         // Optimize the most common case.
         .get => |get| {
@@ -1649,53 +1675,52 @@ fn evalPattern(c: *Compiler, expr_id: ExprId) error{Error}!void {
         },
         else => {
             const item = c.stack.pop();
-            switch (item.value.type.*) {
+            switch (c.types.items[item.value.type_id.id]) {
                 .ref => {
-                    defer item.deinit(c); // If succesful, we make new refs and the original ref still needs to be cleaned up.
-                    try evalPatternRef(c, expr_id, item.value.getRefElem(), getProvenance(c, item.value).?.*);
+                    defer item.deinit(); // If succesful, we make new refs and the original ref still needs to be cleaned up.
+                    try evalPatternRef(expr_id, item.value.getRefElem(), getProvenance(item.value).?.*);
                 },
                 else => {
-                    errdefer item.deinit(c); // If succesful, value is totally consumed.
-                    try evalPatternOwned(c, expr_id, item.value);
+                    errdefer item.deinit(); // If succesful, value is totally consumed.
+                    try evalPatternOwned(expr_id, item.value);
                 },
             }
         },
     }
 }
 
-fn evalPatternRef(c: *Compiler, expr_id: ExprId, value: Value, provenance: Provenance) error{Error}!void {
+fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => |get| {
             const lender = &c.stack.items[provenance.lender];
             switch (provenance.lease) {
                 .not_a_ref => unreachable,
-                .owned => return fail(c, .{ .expr_id = expr_id }, "Can't destructure an owned ref", .{}),
+                .owned => return fail(.{ .expr_id = expr_id }, "Can't destructure an owned ref", .{}),
                 .borrowed => lender.ref_count.splitBorrow(),
                 .shared => lender.ref_count.splitShare(),
             }
-            const ref = allocStack(c, makeTypeRef(c, value.type));
+            const ref = allocStack(makeTypeRef(value.type_id));
             ref.setRefElem(value);
-            getProvenance(c, ref).?.* = provenance;
+            getProvenance(ref).?.* = provenance;
             c.stack.push(.{ .name = get.name, .value = ref });
         },
         .tuple => |elems| {
-            try checkKind(c, expr_id, .{ .expected = .tuple, .actual = value.type });
-            if (elems.len != value.type.tuple.elems.len)
+            try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
+            if (elems.len != c.types.items[value.type_id.id].tuple.elems.len)
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Expected a tuple of length {} but found {f}",
                     .{ elems.len, value },
                 );
             for (elems, 0..) |elem, i| {
-                try evalPatternRef(c, elem, value.getTupleElem(i), provenance);
+                try evalPatternRef(elem, value.getTupleElem(i), provenance);
             }
         },
         else => unreachable,
     }
 }
 
-fn evalPatternOwned(c: *Compiler, expr_id: ExprId, value: Value) error{Error}!void {
+fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => |get| {
             c.stack.push(.{
@@ -1704,33 +1729,31 @@ fn evalPatternOwned(c: *Compiler, expr_id: ExprId, value: Value) error{Error}!vo
             });
         },
         .tuple => |elems| {
-            try checkKind(c, expr_id, .{ .expected = .tuple, .actual = value.type });
-            if (elems.len != value.type.tuple.elems.len)
+            try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
+            if (elems.len != c.types.items[value.type_id.id].tuple.elems.len)
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Expected a tuple of length {} but found {f}",
                     .{ elems.len, value },
                 );
             for (elems, 0..) |elem, i| {
-                try evalPatternOwned(c, elem, value.getTupleElem(i));
+                try evalPatternOwned(elem, value.getTupleElem(i));
             }
         },
         else => unreachable,
     }
 }
 
-fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
+fn eval(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
-            const path = try evalPath(c, expr_id);
-            if (getProvenanceSlice(c, path.value)) |path_provenance_slice| {
+            const path = try evalPath(expr_id);
+            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
                 for (path_provenance_slice) |ref_provenance| {
                     switch (ref_provenance.lease) {
                         .not_a_ref, .shared => {},
                         .owned => {
                             return fail(
-                                c,
                                 .{ .expr_id = expr_id },
                                 "Can't copy an owned reference",
                                 .{},
@@ -1738,7 +1761,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                         },
                         .borrowed => {
                             return fail(
-                                c,
                                 .{ .expr_id = expr_id },
                                 "Can't copy a borrowed reference",
                                 .{},
@@ -1747,30 +1769,29 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     }
                 }
             } else {
-                return fail(c, .{ .expr_id = expr_id }, "TODO", .{});
+                return fail(.{ .expr_id = expr_id }, "TODO", .{});
             }
 
             //errdefer comptime unreachable; TODO
 
-            const value = allocStack(c, path.value.type);
+            const value = allocStack(path.value.type_id);
             Value.copyShallow(.{ .to = value, .from = path.value });
-            if (getProvenanceSlice(c, path.value)) |path_provenance_slice| {
-                for (getProvenanceSlice(c, value).?, path_provenance_slice) |*value_provenance, ref_provenance| {
+            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
+                for (getProvenanceSlice(value).?, path_provenance_slice) |*value_provenance, ref_provenance| {
                     if (ref_provenance.lease == .shared) {
                         c.stack.items[ref_provenance.lender].ref_count.share();
                     }
                     value_provenance.* = ref_provenance;
                 }
             } else {
-                return fail(c, .{ .expr_id = expr_id }, "TODO", .{});
+                return fail(.{ .expr_id = expr_id }, "TODO", .{});
             }
             c.stack.push(.{ .name = null, .value = value });
         },
         .move => |move| {
-            const path = try evalPath(c, move);
+            const path = try evalPath(move);
             if (path.provenance.lease != .owned) {
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Can't move out of a borrowed/shared reference",
                     .{},
@@ -1780,19 +1801,16 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             if (!owner.ref_count.canMove()) {
                 switch (owner.ref_count.state()) {
                     .moved => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it has already been moved",
                         .{owner.name.?},
                     ),
                     .borrowed => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it is borrowed by TODO",
                         .{owner.name.?},
                     ),
                     .shared => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it is shared by TODO",
                         .{owner.name.?},
@@ -1804,21 +1822,20 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             //errdefer comptime unreachable; TODO
 
             owner.ref_count.move();
-            const value = allocStack(c, path.value.type);
+            const value = allocStack(path.value.type_id);
             Value.copyShallow(.{ .to = value, .from = path.value });
-            if (getProvenanceSlice(c, path.value)) |path_provenance_slice| {
-                std.mem.copyForwards(Provenance, getProvenanceSlice(c, value).?, path_provenance_slice);
+            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
+                std.mem.copyForwards(Provenance, getProvenanceSlice(value).?, path_provenance_slice);
             } else {
-                return fail(c, .{ .expr_id = expr_id }, "TODO", .{});
+                return fail(.{ .expr_id = expr_id }, "TODO", .{});
             }
             path.value.setRefsToNull(); // Avoid freeing this value twice.
             c.stack.push(.{ .name = null, .value = value });
         },
         .borrow => |borrow| {
-            const path = try evalPath(c, borrow);
+            const path = try evalPath(borrow);
             if (path.provenance.lease == .shared) {
                 return fail(
-                    c,
                     .{ .expr_id = expr_id },
                     "Can't borrow through a shared reference",
                     .{},
@@ -1828,19 +1845,16 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             if (!lender.ref_count.canBorrow()) {
                 switch (lender.ref_count.state()) {
                     .moved => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it has been moved",
                         .{lender.name.?},
                     ),
                     .borrowed => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it is already borrowed by TODO",
                         .{lender.name.?},
                     ),
                     .shared => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it is shared by TODO",
                         .{lender.name.?},
@@ -1852,9 +1866,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.borrow();
-            const ref = allocStack(c, makeTypeRef(c, path.value.type));
+            const ref = allocStack(makeTypeRef(path.value.type_id));
             ref.setRefElem(path.value);
-            getProvenance(c, ref).?.* = .{
+            getProvenance(ref).?.* = .{
                 .lease = .borrowed,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
@@ -1862,18 +1876,16 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             c.stack.push(.{ .name = null, .value = ref });
         },
         .share => |share| {
-            const path = try evalPath(c, share);
+            const path = try evalPath(share);
             const lender = &c.stack.items[path.provenance.lender];
             if (!lender.ref_count.canShare()) {
                 switch (lender.ref_count.state()) {
                     .moved => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't share `{s}` because it has been moved",
                         .{lender.name.?},
                     ),
                     .borrowed => return fail(
-                        c,
                         .{ .expr_id = expr_id },
                         "Can't share `{s}` because it is borrowed by TODO",
                         .{lender.name.?},
@@ -1885,9 +1897,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.share();
-            const ref = allocStack(c, makeTypeRef(c, path.value.type));
+            const ref = allocStack(makeTypeRef(path.value.type_id));
             ref.setRefElem(path.value);
-            getProvenance(c, ref).?.* = .{
+            getProvenance(ref).?.* = .{
                 .lease = .shared,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
@@ -1897,60 +1909,60 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
         .number => |number| {
             errdefer comptime unreachable;
 
-            const value = allocStack(c, c.type_number);
+            const value = allocStack(c.type_number);
             value.setNumber(number);
             c.stack.push(.{ .name = null, .value = value });
         },
         .tuple => |exprs| {
             if (exprs.len == 0) {
-                stackPushEmptyTuple(c);
+                stackPushEmptyTuple();
                 return;
             }
 
             const stack_start = c.stack.len;
 
             for (exprs) |expr|
-                try eval(c, expr);
+                try eval(expr);
 
             errdefer comptime unreachable;
 
-            const type_tuple = makeTypeTuple(c, c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
+            const type_tuple = makeTypeTuple(c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
 
             // All the elems are now contiguous on the stack so we can just point at the first elem.
             c.stack.len = stack_start + 1;
             const result = c.stack.peek();
-            result.value.type = type_tuple;
+            result.value.type_id = type_tuple;
         },
         .let => |let| {
-            try eval(c, let.value);
-            try evalPattern(c, let.pattern);
-            stackPushEmptyTuple(c);
+            try eval(let.value);
+            try evalPattern(let.pattern);
+            stackPushEmptyTuple();
         },
         .block => |block| {
             const stack_start = c.stack.len;
             const stack_data_start = c.stack_top;
 
             for (block.statements[0 .. block.statements.len - 1]) |statement| {
-                try eval(c, statement);
-                c.stack.pop().deinit(c);
+                try eval(statement);
+                c.stack.pop().deinit();
             }
 
-            try eval(c, block.statements[block.statements.len - 1]);
-            try stackCompact(c, expr_id, stack_start, stack_data_start);
+            try eval(block.statements[block.statements.len - 1]);
+            try stackCompact(expr_id, stack_start, stack_data_start);
         },
         .@"if" => |@"if"| {
-            const cond = try evalPopBool(c, @"if".cond);
-            try eval(c, if (cond) @"if".then else @"if".@"else");
+            const cond = try evalPopBool(@"if".cond);
+            try eval(if (cond) @"if".then else @"if".@"else");
         },
         .@"while" => |@"while"| {
             while (true) {
-                const cond = try evalPopBool(c, @"while".cond);
+                const cond = try evalPopBool(@"while".cond);
                 if (!cond) break;
 
-                try eval(c, @"while".body);
-                c.stack.pop().deinit(c);
+                try eval(@"while".body);
+                c.stack.pop().deinit();
             }
-            stackPushEmptyTuple(c);
+            stackPushEmptyTuple();
         },
         .@"fn" => {
             errdefer comptime unreachable;
@@ -1960,7 +1972,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 .name = null,
                 .value = .{
                     .ptr = c.stack_data.ptr,
-                    .type = makeTypeClosure(c, fn_id),
+                    .type_id = makeTypeClosure(fn_id),
                 },
             });
         },
@@ -1969,11 +1981,11 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             unreachable;
         },
         .call => |call| {
-            try eval(c, call.closure);
+            try eval(call.closure);
             const closure = c.stack.peek();
 
-            try checkKind(c, call.closure, .{ .expected = .closure, .actual = closure.value.type });
-            const @"fn" = &c.fns.items[closure.value.type.closure.fn_id.id];
+            try checkKind(call.closure, .{ .expected = .closure, .actual = closure.value.type_id });
+            const @"fn" = &c.fns.items[c.types.items[closure.value.type_id.id].closure.fn_id.id];
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
@@ -1981,7 +1993,7 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
             const stack_data_start = c.stack_top;
 
             for (call.args) |arg_expr|
-                try eval(c, arg_expr);
+                try eval(arg_expr);
 
             for (fn_expr.params, 0..) |param_id, i| {
                 const param = c.exprs.items[param_id.id].param;
@@ -1989,9 +2001,9 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 item.name = param.name;
             }
 
-            try eval(c, fn_expr.body);
+            try eval(fn_expr.body);
             // TODO We could avoid this extra compaction by passing stack_start/stack_data_start to the block in `fn_expr.body`.
-            try stackCompact(c, expr_id, stack_start, stack_data_start);
+            try stackCompact(expr_id, stack_start, stack_data_start);
         },
         .call_builtin => |call_builtin| {
             const stack_start = c.stack.len;
@@ -2001,17 +2013,16 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
             switch (call_builtin.builtin) {
                 .@"=" => {
-                    const path = try evalPath(c, call_builtin.args[0]);
-                    try eval(c, call_builtin.args[1]);
+                    const path = try evalPath(call_builtin.args[0]);
+                    try eval(call_builtin.args[1]);
 
                     const arg1 = c.stack.pop();
-                    errdefer arg1.deinit(c);
+                    errdefer arg1.deinit();
 
                     switch (path.provenance.lease) {
                         .not_a_ref => unreachable,
                         .owned, .borrowed => {},
                         .shared => return fail(
-                            c,
                             .{ .expr_id = expr_id },
                             "Can't assign through a shared reference",
                             .{},
@@ -2023,37 +2034,33 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                     switch (lender_state) {
                         .moved, .available => {},
                         .shared => return fail(
-                            c,
                             .{ .expr_id = expr_id },
                             "Can't assign to `{s}` because it is shared with TODO",
                             .{lender.name.?},
                         ),
                         .borrowed => return fail(
-                            c,
                             .{ .expr_id = expr_id },
                             "Can't assign to `{s}` because it is borrowed by TODO",
                             .{lender.name.?},
                         ),
                     }
 
-                    if (Type.order(path.value.type, arg1.value.type) != .eq) {
+                    if (TypeId.order(path.value.type_id, arg1.value.type_id) != .eq) {
                         return fail(
-                            c,
                             .{ .expr_id = expr_id },
                             "Can't assign a value of type `{f}` to a reference with elem type `{f}`",
-                            .{ arg1.value.type, path.value.type },
+                            .{ arg1.value.type_id, path.value.type_id },
                         );
                     }
 
-                    const elem_provenances = getProvenanceSlice(c, arg1.value).?;
+                    const elem_provenances = getProvenanceSlice(arg1.value).?;
                     for (elem_provenances) |elem_provenance| {
                         switch (elem_provenance.lease) {
                             .not_a_ref, .owned => {},
                             .borrowed, .shared => {
-                                if (getStackIndex(c, path.value) == null) {
+                                if (getStackIndex(path.value) == null) {
                                     // TODO This check wouldn't be needed if refs had distinct types.
                                     return fail(
-                                        c,
                                         .{ .expr_id = expr_id },
                                         "Can't write a borrowed/shared reference to an owned ref",
                                         .{},
@@ -2063,7 +2070,6 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                                     const ref_item = &c.stack.items[path.provenance.owner];
                                     const elem_item = &c.stack.items[elem_provenance.lender];
                                     return fail(
-                                        c,
                                         .{ .expr_id = expr_id },
                                         "This value shares/borrows from `{s}`, which will be destroyed before `{s}` and so can't be owned by `{s}`",
                                         .{ elem_item.name.?, ref_item.name.?, ref_item.name.? },
@@ -2077,64 +2083,63 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     switch (lender_state) {
                         .moved => lender.ref_count.setAvailable(),
-                        .available => path.value.freeRefs(c),
+                        .available => path.value.freeRefs(),
                         .shared, .borrowed => unreachable,
                     }
 
                     Value.copyShallow(.{ .to = path.value, .from = arg1.value });
-                    if (getProvenanceSlice(c, path.value)) |path_provenance_slice| {
-                        std.mem.copyBackwards(Provenance, path_provenance_slice, getProvenanceSlice(c, arg1.value).?);
+                    if (getProvenanceSlice(path.value)) |path_provenance_slice| {
+                        std.mem.copyBackwards(Provenance, path_provenance_slice, getProvenanceSlice(arg1.value).?);
                     }
 
-                    stackPushEmptyTuple(c);
+                    stackPushEmptyTuple();
                 },
                 .@"+" => {
-                    try eval(c, call_builtin.args[0]);
-                    try eval(c, call_builtin.args[1]);
+                    try eval(call_builtin.args[0]);
+                    try eval(call_builtin.args[1]);
 
                     const arg1 = c.stack.pop();
-                    defer arg1.deinit(c);
+                    defer arg1.deinit();
 
                     const arg0 = c.stack.pop();
-                    defer arg0.deinit(c);
+                    defer arg0.deinit();
 
-                    try checkKind(c, call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type });
-                    try checkKind(c, call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type });
+                    try checkKind(call_builtin.args[0], .{ .expected = .number, .actual = arg0.value.type_id });
+                    try checkKind(call_builtin.args[1], .{ .expected = .number, .actual = arg1.value.type_id });
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(c, c.type_number);
+                    const result = allocStack(c.type_number);
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .name = null, .value = result });
                 },
                 .@"<" => {
-                    try eval(c, call_builtin.args[0]);
-                    try eval(c, call_builtin.args[1]);
+                    try eval(call_builtin.args[0]);
+                    try eval(call_builtin.args[1]);
 
                     const arg1 = c.stack.pop();
-                    defer arg1.deinit(c);
+                    defer arg1.deinit();
 
                     const arg0 = c.stack.pop();
-                    defer arg0.deinit(c);
+                    defer arg0.deinit();
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(c, c.type_number);
+                    const result = allocStack(c.type_number);
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .name = null, .value = result });
                 },
                 .ref => {
-                    try eval(c, call_builtin.args[0]);
+                    try eval(call_builtin.args[0]);
 
                     const arg0 = c.stack.pop();
-                    errdefer arg0.deinit(c);
+                    errdefer arg0.deinit();
 
-                    for (getProvenanceSlice(c, arg0.value).?) |provenance| {
+                    for (getProvenanceSlice(arg0.value).?) |provenance| {
                         switch (provenance.lease) {
                             .not_a_ref, .owned => {},
                             .borrowed, .shared => {
                                 return fail(
-                                    c,
                                     .{ .expr_id = expr_id },
                                     "Can't create an owned ref containing a borrowed/shared ref",
                                     .{},
@@ -2145,12 +2150,12 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const target = Value.allocHeap(arg0.value.type);
+                    const target = Value.allocHeap(arg0.value.type_id);
                     Value.copyShallow(.{ .from = arg0.value, .to = target });
 
-                    const ref = allocStack(c, makeTypeRef(c, arg0.value.type));
+                    const ref = allocStack(makeTypeRef(arg0.value.type_id));
                     ref.setRefElem(target);
-                    getProvenance(c, ref).?.* = .{
+                    getProvenance(ref).?.* = .{
                         .lease = .owned,
                         .owner = 0,
                         .lender = 0,
@@ -2160,30 +2165,29 @@ fn eval(c: *Compiler, expr_id: ExprId) error{Error}!void {
                 },
             }
 
-            try stackCompact(c, expr_id, stack_start, stack_data_start);
+            try stackCompact(expr_id, stack_start, stack_data_start);
         },
     }
 
-    //pp(.{ c.exprs.items[expr_id.id], getProvenanceSlice(c, c.stack.peek().value) });
+    //pp(.{ c.exprs.items[expr_id.id], getProvenanceSlice(c.stack.peek().value) });
 }
 
-fn checkArgCount(c: *Compiler, expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
+fn checkArgCount(expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {
     if (opts.expected != opts.actual)
         return fail(
-            c,
             .{ .expr_id = expr_id },
             "Expected {} arguments but found {} arguments",
             .{ opts.expected, opts.actual },
         );
 }
 
-fn checkKind(c: *Compiler, expr_id: ExprId, opts: struct { expected: std.meta.Tag(Type), actual: *Type }) error{Error}!void {
-    if (opts.expected != opts.actual.*)
+fn checkKind(expr_id: ExprId, opts: struct { expected: std.meta.Tag(Type), actual: TypeId }) error{Error}!void {
+    const actual_type = c.types.items[opts.actual.id];
+    if (opts.expected != actual_type)
         return fail(
-            c,
             .{ .expr_id = expr_id },
             "Expected a {s} but found a {s}",
-            .{ @tagName(opts.expected), @tagName(opts.actual.*) },
+            .{ @tagName(opts.expected), @tagName(actual_type) },
         );
 }
 
@@ -2228,10 +2232,10 @@ pub fn main() !void {
             const expected = std.mem.trim(u8, parts.next() orelse "", "\n");
             assert(parts.next() == null);
 
-            var compiler = Compiler.init(source);
-            defer compiler.deinit();
+            c = .init(source);
+            defer c.deinit();
 
-            const actual = compiler.run() catch compiler.error_message.?;
+            const actual = run() catch c.error_message.?;
 
             //std.debug.print("{s}\n\n", .{actual});
 
