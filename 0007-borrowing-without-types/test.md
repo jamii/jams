@@ -797,8 +797,9 @@ TODO
 ```test
 {
   let a = ref(ref(1));
-  a^
+  a*^
 }
 
-ref(ref(1))
+Error at 3:3
+TODO
 ```
