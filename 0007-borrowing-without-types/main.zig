@@ -1434,7 +1434,7 @@ const RefCount = packed struct {
 
 const Provenance = packed struct {
     lease: Lease,
-    // `owner` and `lender` are only meaninful if `lease == .borrowed` or `lease == .shared`.
+    // `owner` and `lender` are only meaningful if `lease == .borrowed` or `lease == .shared`.
     owner: StackIndex,
     lender: StackIndex,
 
@@ -1545,27 +1545,27 @@ fn allocStack(type_id: TypeId) Value {
     };
 }
 
+fn makeType(@"type": Type) TypeId {
+    const type_id = TypeId{ .id = c.types.items.len };
+    c.types.append(allocator, @"type") catch oom();
+    return type_id;
+}
+
 // TODO Memoize this.
 fn makeTypeTuple(items: []StackItem) TypeId {
     const elems = allocator.alloc(TypeId, items.len) catch oom();
     for (elems, items) |*elem, item| elem.* = item.value.type_id;
-    const type_id = TypeId{ .id = c.types.items.len };
-    c.types.append(allocator, .{ .tuple = .{ .elems = elems } }) catch oom();
-    return type_id;
+    return makeType(.{ .tuple = .{ .elems = elems } });
 }
 
 // TODO Memoize this.
 fn makeTypeRef(elem: TypeId) TypeId {
-    const type_id = TypeId{ .id = c.types.items.len };
-    c.types.append(allocator, .{ .ref = .{ .elem = .{ .known = elem } } }) catch oom();
-    return type_id;
+    return makeType(.{ .ref = .{ .elem = .{ .known = elem } } });
 }
 
 // TODO Memoize this.
 fn makeTypeClosure(fn_id: FnId) TypeId {
-    const type_id = TypeId{ .id = c.types.items.len };
-    c.types.append(allocator, .{ .closure = .{ .fn_id = fn_id } }) catch oom();
-    return type_id;
+    return makeType(.{ .closure = .{ .fn_id = fn_id } });
 }
 
 fn evalPopBool(expr_id: ExprId) error{Error}!bool {
