@@ -51,6 +51,7 @@ const Compiler = struct {
     stack_data: []u64,
     stack_provenance: []Provenance,
     types: ArrayList(Type),
+    type_to_ref_map: ArrayList([]RefIndex),
     type_number: ?TypeId,
     type_tuple_empty: ?TypeId,
 
@@ -78,6 +79,7 @@ const Compiler = struct {
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
             .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
             .types = .{},
+            .type_to_ref_map = .{},
             .type_number = null,
             .type_tuple_empty = null,
 
@@ -103,6 +105,8 @@ const Compiler = struct {
         allocator.free(compiler.stack_provenance);
         for (compiler.types.items) |@"type"| @"type".deinit();
         compiler.types.deinit(allocator);
+        for (compiler.type_to_ref_map.items) |ref_map| allocator.free(ref_map);
+        compiler.type_to_ref_map.deinit(allocator);
 
         if (compiler.error_message) |err| allocator.free(err);
     }
@@ -1009,6 +1013,10 @@ fn failNotDefined(expr_id: ExprId, name: []const u8) error{Error} {
 const TypeId = struct {
     id: usize,
 
+    fn getRefMap(type_id: TypeId) []RefIndex {
+        return c.type_to_ref_map.items[type_id.id];
+    }
+
     fn wordSize(type_id: TypeId) usize {
         // TODO precompute this
         switch (c.types.items[type_id.id]) {
@@ -1085,6 +1093,33 @@ const Type = union(enum) {
         }
     }
 
+    fn makeRefMap(@"type": Type, word_offset: usize) []RefIndex {
+        var bitmap: ArrayList(RefIndex) = .{};
+        switch (@"type") {
+            .number => {},
+            .tuple => |tuple| {
+                var elem_word_offset = word_offset;
+                for (tuple.elems) |elem| {
+                    for (elem.getRefMap()) |ref_index| {
+                        bitmap.append(allocator, .{
+                            .word_offset = word_offset + ref_index.word_offset,
+                            .elem = ref_index.elem,
+                        }) catch oom();
+                    }
+                    elem_word_offset += elem.wordSize();
+                }
+            },
+            .ref => |ref| {
+                bitmap.append(allocator, .{
+                    .word_offset = word_offset,
+                    .elem = ref.elem,
+                }) catch oom();
+            },
+            .closure => {},
+        }
+        return bitmap.toOwnedSlice(allocator) catch oom();
+    }
+
     pub fn format(@"type": Type, writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (@"type") {
             .number => {
@@ -1129,18 +1164,25 @@ const TypeTuple = struct {
 };
 
 const TypeRef = struct {
-    elem: union(enum) {
-        known: TypeId,
-        any,
-    },
+    elem: TypeRefElem,
 
     fn deinit(_: TypeRef) void {}
+};
+
+const TypeRefElem = union(enum) {
+    known: TypeId,
+    any,
 };
 
 const TypeClosure = struct {
     fn_id: FnId,
 
     fn deinit(_: TypeClosure) void {}
+};
+
+const RefIndex = struct {
+    word_offset: usize,
+    elem: TypeRefElem,
 };
 
 const Value = struct {
@@ -1540,6 +1582,7 @@ fn allocStack(type_id: TypeId) Value {
 fn makeType(@"type": Type) TypeId {
     const type_id = TypeId{ .id = c.types.items.len };
     c.types.append(allocator, @"type") catch oom();
+    c.type_to_ref_map.append(allocator, @"type".makeRefMap(0)) catch oom();
     return type_id;
 }
 
