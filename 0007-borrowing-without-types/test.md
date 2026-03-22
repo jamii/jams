@@ -802,3 +802,11 @@ Can't copy an owned reference
 
 ref(1)
 ```
+
+```test
+let a = 1;
+let b = a;
+b + 1
+
+2
+```

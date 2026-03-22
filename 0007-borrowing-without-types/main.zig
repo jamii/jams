@@ -414,9 +414,10 @@ const Builtin = enum {
 };
 
 fn parse() error{Error}!ExprId {
-    const len = try parseExprLoose();
+    const start = c.token_next;
+    const root = try parseBlockInner(start, .eof);
     try expect(.eof);
-    return len;
+    return root;
 }
 
 fn parseExprLoose() error{Error}!ExprId {
@@ -608,14 +609,18 @@ fn parseGet() error{Error}!ExprId {
 
 fn parseBlock() error{Error}!ExprId {
     const start = c.token_next;
-
     try expect(.@"{");
+    const block = try parseBlockInner(start, .@"}");
+    try expect(.@"}");
+    return block;
+}
 
+fn parseBlockInner(start: TokenId, end: Token) error{Error}!ExprId {
     var statements: ArrayList(ExprId) = .{};
     defer statements.deinit(allocator);
 
     const return_last = while (true) {
-        if (peek() == .@"}") break false;
+        if (peek() == end) break false;
         const statement = if (peek() == .let) try parseLet() else try parseExprLoose();
         statements.append(allocator, statement) catch oom();
         if (!takeIf(.@";")) break true;
@@ -625,8 +630,6 @@ fn parseBlock() error{Error}!ExprId {
         const statement = pushExpr(c.token_next, .{ .tuple = &.{} });
         statements.append(allocator, statement) catch oom();
     }
-
-    try expect(.@"}");
 
     if (statements.items.len == 1 and c.exprs.items[statements.items[0].id] != .let) {
         // This looks like `{ x }` - we don't need to create a block.
