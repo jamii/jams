@@ -51,20 +51,12 @@ const Compiler = struct {
     stack_data: []u64,
     stack_provenance: []Provenance,
     types: ArrayList(Type),
-    type_number: TypeId,
-    type_empty_tuple: TypeId,
+    type_number: ?TypeId,
+    type_tuple_empty: ?TypeId,
 
     error_message: ?[]u8,
 
     pub fn init(source: []const u8) Compiler {
-        var types: ArrayList(Type) = .{};
-
-        const type_number = TypeId{ .id = types.items.len };
-        types.append(allocator, .number) catch oom();
-
-        const type_empty_tuple = TypeId{ .id = types.items.len };
-        types.append(allocator, .{ .tuple = .{ .elems = &.{} } }) catch oom();
-
         return .{
             .source = source,
 
@@ -85,9 +77,9 @@ const Compiler = struct {
             .stack_top = 0,
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
             .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
-            .types = types,
-            .type_number = type_number,
-            .type_empty_tuple = type_empty_tuple,
+            .types = .{},
+            .type_number = null,
+            .type_tuple_empty = null,
 
             .error_message = null,
         };
@@ -1483,7 +1475,7 @@ fn stackPushEmptyTuple() void {
         .name = null,
         .value = .{
             .ptr = c.stack_data.ptr,
-            .type_id = c.type_empty_tuple,
+            .type_id = makeTypeTupleEmpty(),
         },
     });
 }
@@ -1549,6 +1541,18 @@ fn makeType(@"type": Type) TypeId {
     const type_id = TypeId{ .id = c.types.items.len };
     c.types.append(allocator, @"type") catch oom();
     return type_id;
+}
+
+fn makeTypeNumber() TypeId {
+    if (c.type_number == null)
+        c.type_number = makeType(.number);
+    return c.type_number.?;
+}
+
+fn makeTypeTupleEmpty() TypeId {
+    if (c.type_tuple_empty == null)
+        c.type_tuple_empty = makeType(.{ .tuple = .{ .elems = &.{} } });
+    return c.type_tuple_empty.?;
 }
 
 // TODO Memoize this.
@@ -1909,7 +1913,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
         .number => |number| {
             errdefer comptime unreachable;
 
-            const value = allocStack(c.type_number);
+            const value = allocStack(makeTypeNumber());
             value.setNumber(number);
             c.stack.push(.{ .name = null, .value = value });
         },
@@ -2109,7 +2113,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(c.type_number);
+                    const result = allocStack(makeTypeNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .name = null, .value = result });
                 },
@@ -2125,7 +2129,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(c.type_number);
+                    const result = allocStack(makeTypeNumber());
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .name = null, .value = result });
                 },
