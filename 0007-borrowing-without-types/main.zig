@@ -1242,36 +1242,7 @@ const Value = struct {
 
     fn copyShallow(args: struct { from: Value, to: Value }) void {
         if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
-        const size = args.from.type_id.wordSize();
-        if (size > 0)
-            @memcpy(args.to.ptr[0..size], args.from.ptr[0..size]);
-    }
-
-    fn copyDeep(args: struct { from: Value, to: Value }) void {
-        if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
-        copyShallow(.{ .from = args.from, .to = args.to });
-        cloneRefs(args.to);
-    }
-
-    fn cloneRefs(value: Value) void {
-        switch (value.type) {
-            .number => {},
-            .tuple => |tuple| {
-                for (0..tuple.elems.len) |i| {
-                    cloneRefs(value.getTupleElem(i));
-                }
-            },
-            .ref => {
-                value.setRefElem(value.getRefElem().clone());
-            },
-            .closure => {},
-        }
-    }
-
-    fn clone(value: Value) Value {
-        const cloned = allocHeap(value.type);
-        copyDeep(.{ .from = value, .to = cloned });
-        return cloned;
+        @memcpy(getDataSlice(args.to), getDataSlice(args.from));
     }
 
     fn order(a: Value, b: Value) std.math.Order {
@@ -1319,7 +1290,7 @@ const Value = struct {
                         .owned => {
                             const elem = value.getRefElem();
                             elem.freeRefs();
-                            allocator.free(elem.ptr[0..value.type_id.wordSize()]);
+                            allocator.free(getDataSlice(elem));
                         },
                         .borrowed => c.stack.items[getProvenance(value).?.lender].ref_count.dropBorrow(),
                         .shared => c.stack.items[getProvenance(value).?.lender].ref_count.dropShare(),
@@ -1505,6 +1476,11 @@ fn getProvenance(ref: Value) ?*Provenance {
     return &c.stack_provenance[index];
 }
 
+fn getDataSlice(value: Value) []u64 {
+    const size = value.type_id.wordSize();
+    return value.ptr[0..size];
+}
+
 // Returns null if `value.ptr` does not point to `stack_data`.
 fn getProvenanceSlice(value: Value) ?[]Provenance {
     const index = getStackIndex(value) orelse return null;
@@ -1523,9 +1499,15 @@ fn stackPushEmptyTuple() void {
 }
 
 fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
+    const stack_top = c.stack_top;
+
     var result = c.stack.pop();
     errdefer result.deinit();
 
+    if (debug) {
+        assert(result.name == null);
+        assert(result.ref_count.state() == .available);
+    }
     for (getProvenanceSlice(result.value).?) |provenance| {
         switch (provenance.lease) {
             .not_a_ref, .owned => {},
@@ -1543,40 +1525,45 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     }
 
     while (c.stack.len > stack_start) c.stack.pop().deinit();
+    c.stack_top = stack_data_start;
 
-    const size = result.value.type_id.wordSize();
-    if (size > 0) {
-        const index = getStackIndex(result.value).?;
-        std.mem.copyBackwards(
-            u64,
-            c.stack_data[stack_data_start..][0..size],
-            c.stack_data[index..][0..size],
-        );
-        std.mem.copyBackwards(
-            Provenance,
-            c.stack_provenance[stack_data_start..][0..size],
-            c.stack_provenance[index..][0..size],
-        );
-        result.value.ptr = @ptrCast(c.stack_data[stack_data_start..]);
+    const result_moved = allocStackWithoutInit(result.value.type_id);
+    std.mem.copyBackwards(
+        u64,
+        getDataSlice(result_moved),
+        getDataSlice(result.value),
+    );
+    std.mem.copyBackwards(
+        Provenance,
+        getProvenanceSlice(result_moved).?,
+        getProvenanceSlice(result.value).?,
+    );
+
+    if (debug) {
+        @memset(c.stack_data[c.stack_top..stack_top], 0xCC);
+        @memset(c.stack_provenance[c.stack_top..stack_top], .not_a_ref);
     }
 
-    @memset(c.stack_data[stack_data_start + size .. c.stack_top], undefined);
-    @memset(c.stack_provenance[stack_data_start + size .. c.stack_top], undefined);
-    c.stack_top = stack_data_start + size;
-
-    c.stack.push(result);
+    c.stack.push(.{ .name = null, .value = result_moved });
 }
 
-fn allocStack(type_id: TypeId) Value {
+fn allocStackWithoutInit(type_id: TypeId) Value {
     const size = type_id.wordSize();
     const ptr = &c.stack_data[c.stack_top];
-    @memset(c.stack_data[c.stack_top..][0..size], 0xCC);
-    @memset(c.stack_provenance[c.stack_top..][0..size], .not_a_ref);
     c.stack_top += size;
     return .{
         .ptr = @ptrCast(ptr),
         .type_id = type_id,
     };
+}
+
+fn allocStack(type_id: TypeId) Value {
+    const value = allocStackWithoutInit(type_id);
+    if (debug) {
+        @memset(getDataSlice(value), 0xCC);
+        @memset(getProvenanceSlice(value).?, .not_a_ref);
+    }
+    return value;
 }
 
 fn makeType(@"type": Type) TypeId {
