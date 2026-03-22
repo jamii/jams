@@ -113,7 +113,6 @@ const Compiler = struct {
 };
 
 pub fn run() ![]const u8 {
-    //std.debug.print("{s}\n\n", .{c.source});
     try tokenize();
     c.expr_len = try parse();
     try analyze(c.expr_len.?);
@@ -1093,26 +1092,26 @@ const Type = union(enum) {
         }
     }
 
-    fn makeRefMap(@"type": Type, word_offset: usize) []RefIndex {
+    fn makeRefMap(@"type": Type, type_id: TypeId) []RefIndex {
         var bitmap: ArrayList(RefIndex) = .{};
         switch (@"type") {
             .number => {},
             .tuple => |tuple| {
-                var elem_word_offset = word_offset;
+                var word_offset: usize = 0;
                 for (tuple.elems) |elem| {
                     for (elem.getRefMap()) |ref_index| {
                         bitmap.append(allocator, .{
                             .word_offset = word_offset + ref_index.word_offset,
-                            .elem = ref_index.elem,
+                            .type_id = ref_index.type_id,
                         }) catch oom();
                     }
-                    elem_word_offset += elem.wordSize();
+                    word_offset += elem.wordSize();
                 }
             },
-            .ref => |ref| {
+            .ref => {
                 bitmap.append(allocator, .{
-                    .word_offset = word_offset,
-                    .elem = ref.elem,
+                    .word_offset = 0,
+                    .type_id = type_id,
                 }) catch oom();
             },
             .closure => {},
@@ -1164,14 +1163,12 @@ const TypeTuple = struct {
 };
 
 const TypeRef = struct {
-    elem: TypeRefElem,
+    elem: union(enum) {
+        known: TypeId,
+        any,
+    },
 
     fn deinit(_: TypeRef) void {}
-};
-
-const TypeRefElem = union(enum) {
-    known: TypeId,
-    any,
 };
 
 const TypeClosure = struct {
@@ -1182,7 +1179,7 @@ const TypeClosure = struct {
 
 const RefIndex = struct {
     word_offset: usize,
-    elem: TypeRefElem,
+    type_id: TypeId,
 };
 
 const Value = struct {
@@ -1272,48 +1269,39 @@ const Value = struct {
         }
     }
 
-    fn freeRefs(
-        value: Value,
-    ) void {
-        switch (c.types.items[value.type_id.id]) {
-            .number => {},
-            .tuple => |tuple| {
-                for (0..tuple.elems.len) |i| {
-                    value.getTupleElem(i).freeRefs();
+    fn freeRefs(value: Value) void {
+        const provenance_slice_maybe = getProvenanceSlice(value);
+        for (value.type_id.getRefMap()) |ref_index| {
+            if (value.ptr[ref_index.word_offset] != 0) {
+                const lease = if (provenance_slice_maybe) |provenance_slice| provenance_slice[ref_index.word_offset].lease else .owned;
+                switch (lease) {
+                    .not_a_ref => unreachable,
+                    .owned => {
+                        const ref = Value{
+                            .ptr = value.ptr[ref_index.word_offset..],
+                            .type_id = ref_index.type_id,
+                        };
+                        const elem = ref.getRefElem();
+                        elem.freeRefs();
+                        allocator.free(getDataSlice(elem));
+                    },
+                    .borrowed => {
+                        const lender = provenance_slice_maybe.?[ref_index.word_offset].lender;
+                        c.stack.items[lender].ref_count.dropBorrow();
+                    },
+                    .shared => {
+                        const lender = provenance_slice_maybe.?[ref_index.word_offset].lender;
+                        c.stack.items[lender].ref_count.dropShare();
+                    },
                 }
-            },
-            .ref => {
-                if (value.ptr[0] != 0) {
-                    const lease = if (getProvenance(value)) |provenance| provenance.lease else .owned;
-                    switch (lease) {
-                        .not_a_ref => unreachable,
-                        .owned => {
-                            const elem = value.getRefElem();
-                            elem.freeRefs();
-                            allocator.free(getDataSlice(elem));
-                        },
-                        .borrowed => c.stack.items[getProvenance(value).?.lender].ref_count.dropBorrow(),
-                        .shared => c.stack.items[getProvenance(value).?.lender].ref_count.dropShare(),
-                    }
-                    value.ptr[0] = 0;
-                }
-            },
-            .closure => {},
+                value.ptr[ref_index.word_offset] = 0;
+            }
         }
     }
 
     fn setRefsToNull(value: Value) void {
-        switch (c.types.items[value.type_id.id]) {
-            .number => {},
-            .tuple => |tuple| {
-                for (0..tuple.elems.len) |i| {
-                    value.getTupleElem(i).setRefsToNull();
-                }
-            },
-            .ref => {
-                value.ptr[0] = 0;
-            },
-            .closure => {},
+        for (value.type_id.getRefMap()) |ref_index| {
+            value.ptr[ref_index.word_offset] = 0;
         }
     }
 
@@ -1569,7 +1557,7 @@ fn allocStack(type_id: TypeId) Value {
 fn makeType(@"type": Type) TypeId {
     const type_id = TypeId{ .id = c.types.items.len };
     c.types.append(allocator, @"type") catch oom();
-    c.type_to_ref_map.append(allocator, @"type".makeRefMap(0)) catch oom();
+    c.type_to_ref_map.append(allocator, @"type".makeRefMap(type_id)) catch oom();
     return type_id;
 }
 
@@ -2265,6 +2253,8 @@ pub fn main() !void {
             const source = std.mem.trim(u8, parts.next().?, "\n");
             const expected = std.mem.trim(u8, parts.next() orelse "", "\n");
             assert(parts.next() == null);
+
+            //std.debug.print("{s}\n\n", .{source});
 
             c = .init(source);
             defer c.deinit();
