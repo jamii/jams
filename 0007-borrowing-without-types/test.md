@@ -791,7 +791,7 @@ Can't share `z` because it is borrowed by TODO
 }
 
 Error at 3:3
-TODO
+Can't copy an owned reference
 ```
 
 ```test
@@ -800,6 +800,5 @@ TODO
   a*^
 }
 
-Error at 3:3
-TODO
+ref(1)
 ```

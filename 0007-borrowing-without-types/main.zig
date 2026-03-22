@@ -1269,28 +1269,32 @@ const Value = struct {
         }
     }
 
+    fn getRef(value: Value, ref_index: RefIndex) Value {
+        return .{
+            .ptr = value.ptr + ref_index.word_offset,
+            .type_id = ref_index.type_id,
+        };
+    }
+
     fn freeRefs(value: Value) void {
-        const provenance_slice_maybe = getProvenanceSlice(value);
         for (value.type_id.getRefMap()) |ref_index| {
             if (value.ptr[ref_index.word_offset] != 0) {
-                const lease = if (provenance_slice_maybe) |provenance_slice| provenance_slice[ref_index.word_offset].lease else .owned;
+                const ref = value.getRef(ref_index);
+                const provenance_maybe = getProvenance(ref);
+                const lease = if (provenance_maybe) |provenance| provenance.lease else .owned;
                 switch (lease) {
                     .not_a_ref => unreachable,
                     .owned => {
-                        const ref = Value{
-                            .ptr = value.ptr[ref_index.word_offset..],
-                            .type_id = ref_index.type_id,
-                        };
                         const elem = ref.getRefElem();
                         elem.freeRefs();
                         allocator.free(getDataSlice(elem));
                     },
                     .borrowed => {
-                        const lender = provenance_slice_maybe.?[ref_index.word_offset].lender;
+                        const lender = provenance_maybe.?.lender;
                         c.stack.items[lender].ref_count.dropBorrow();
                     },
                     .shared => {
-                        const lender = provenance_slice_maybe.?[ref_index.word_offset].lender;
+                        const lender = provenance_maybe.?.lender;
                         c.stack.items[lender].ref_count.dropShare();
                     },
                 }
@@ -1770,45 +1774,51 @@ fn eval(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
             const path = try evalPath(expr_id);
-            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
-                for (path_provenance_slice) |ref_provenance| {
-                    switch (ref_provenance.lease) {
-                        .not_a_ref, .shared => {},
-                        .owned => {
-                            return fail(
-                                .{ .expr_id = expr_id },
-                                "Can't copy an owned reference",
-                                .{},
-                            );
-                        },
-                        .borrowed => {
-                            return fail(
-                                .{ .expr_id = expr_id },
-                                "Can't copy a borrowed reference",
-                                .{},
-                            );
-                        },
-                    }
+            for (path.value.type_id.getRefMap()) |ref_index| {
+                const ref = path.value.getRef(ref_index);
+                const lease = if (getProvenance(ref)) |provenance| provenance.lease else .owned;
+                switch (lease) {
+                    .not_a_ref, .shared => {},
+                    .owned => {
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "Can't copy an owned reference",
+                            .{},
+                        );
+                    },
+                    .borrowed => {
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "Can't copy a borrowed reference",
+                            .{},
+                        );
+                    },
                 }
-            } else {
-                return fail(.{ .expr_id = expr_id }, "TODO", .{});
             }
 
-            //errdefer comptime unreachable; TODO
+            errdefer comptime unreachable;
 
-            const value = allocStack(path.value.type_id);
-            Value.copyShallow(.{ .to = value, .from = path.value });
-            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
-                for (getProvenanceSlice(value).?, path_provenance_slice) |*value_provenance, ref_provenance| {
-                    if (ref_provenance.lease == .shared) {
-                        c.stack.items[ref_provenance.lender].ref_count.share();
-                    }
-                    value_provenance.* = ref_provenance;
+            const result = allocStack(path.value.type_id);
+            Value.copyShallow(.{ .to = result, .from = path.value });
+
+            for (path.value.type_id.getRefMap()) |ref_index| {
+                const path_ref = path.value.getRef(ref_index);
+                const result_ref = result.getRef(ref_index);
+                const result_provenance = getProvenance(result_ref).?;
+                if (getProvenance(path_ref)) |path_provenance| {
+                    if (path_provenance.lease == .shared)
+                        c.stack.items[path_provenance.lender].ref_count.share();
+                    result_provenance.* = path_provenance.*;
+                } else {
+                    result_provenance.* = .{
+                        .lease = .owned,
+                        .owner = 0,
+                        .lender = 0,
+                    };
                 }
-            } else {
-                return fail(.{ .expr_id = expr_id }, "TODO", .{});
             }
-            c.stack.push(.{ .name = null, .value = value });
+
+            c.stack.push(.{ .name = null, .value = result });
         },
         .move => |move| {
             const path = try evalPath(move);
@@ -1841,18 +1851,29 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 }
             }
 
-            //errdefer comptime unreachable; TODO
+            errdefer comptime unreachable;
 
             owner.ref_count.move();
-            const value = allocStack(path.value.type_id);
-            Value.copyShallow(.{ .to = value, .from = path.value });
-            if (getProvenanceSlice(path.value)) |path_provenance_slice| {
-                std.mem.copyForwards(Provenance, getProvenanceSlice(value).?, path_provenance_slice);
-            } else {
-                return fail(.{ .expr_id = expr_id }, "TODO", .{});
-            }
+
+            const result = allocStack(path.value.type_id);
+            Value.copyShallow(.{ .to = result, .from = path.value });
             path.value.setRefsToNull(); // Avoid freeing this value twice.
-            c.stack.push(.{ .name = null, .value = value });
+
+            for (path.value.type_id.getRefMap()) |ref_index| {
+                const path_ref = path.value.getRef(ref_index);
+                const result_ref = result.getRef(ref_index);
+                getProvenance(result_ref).?.* =
+                    if (getProvenance(path_ref)) |path_provenance|
+                        path_provenance.*
+                    else
+                        .{
+                            .lease = .owned,
+                            .owner = 0,
+                            .lender = 0,
+                        };
+            }
+
+            c.stack.push(.{ .name = null, .value = result });
         },
         .borrow => |borrow| {
             const path = try evalPath(borrow);
