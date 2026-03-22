@@ -1230,6 +1230,25 @@ const Value = struct {
         value.ptr[0] = @intFromPtr(elem.ptr);
     }
 
+    fn allocStackWithoutInit(type_id: TypeId) Value {
+        const size = type_id.wordSize();
+        const ptr = &c.stack_data[c.stack_top];
+        c.stack_top += size;
+        return .{
+            .ptr = @ptrCast(ptr),
+            .type_id = type_id,
+        };
+    }
+
+    fn allocStack(type_id: TypeId) Value {
+        const value = allocStackWithoutInit(type_id);
+        if (debug) {
+            @memset(getDataSlice(value), 0xCC);
+            @memset(getProvenanceSlice(value).?, .not_a_ref);
+        }
+        return value;
+    }
+
     fn allocHeap(type_id: TypeId) Value {
         return .{
             .ptr = @ptrCast(allocator.alloc(u64, type_id.wordSize()) catch oom()),
@@ -1237,9 +1256,36 @@ const Value = struct {
         };
     }
 
+    // Returns null if `value.ptr` does not point to `stack_data`.
+    fn getStackIndex(value: Value) ?StackIndex {
+        if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
+        const index = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
+        if (index >= c.stack_data.len) return null;
+        return @intCast(@divExact(index, 8));
+    }
+
+    fn getDataSlice(value: Value) []u64 {
+        const size = value.type_id.wordSize();
+        return value.ptr[0..size];
+    }
+
     fn copyData(args: struct { to: Value, from: Value }) void {
         if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
         @memcpy(getDataSlice(args.to), getDataSlice(args.from));
+    }
+
+    // Returns null if `ref.ptr` does not point to `stack_data`.
+    fn getProvenance(ref: Value) ?*Provenance {
+        if (debug) assert(c.types.items[ref.type_id.id] == .ref);
+        const index = getStackIndex(ref) orelse return null;
+        return &c.stack_provenance[index];
+    }
+
+    // Returns null if `value.ptr` does not point to `stack_data`.
+    fn getProvenanceSlice(value: Value) ?[]Provenance {
+        const index = getStackIndex(value) orelse return null;
+        const size = value.type_id.wordSize();
+        return c.stack_provenance[index..][0..size];
     }
 
     fn copyProvenance(args: struct { to: Value, from: Value }) void {
@@ -1470,33 +1516,6 @@ const Lease = enum(u2) {
     }
 };
 
-// Returns null if `value.ptr` does not point to `stack_data`.
-fn getStackIndex(value: Value) ?StackIndex {
-    if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
-    const index = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
-    if (index >= c.stack_data.len) return null;
-    return @intCast(@divExact(index, 8));
-}
-
-// Returns null if `ref.ptr` does not point to `stack_data`.
-fn getProvenance(ref: Value) ?*Provenance {
-    if (debug) assert(c.types.items[ref.type_id.id] == .ref);
-    const index = getStackIndex(ref) orelse return null;
-    return &c.stack_provenance[index];
-}
-
-fn getDataSlice(value: Value) []u64 {
-    const size = value.type_id.wordSize();
-    return value.ptr[0..size];
-}
-
-// Returns null if `value.ptr` does not point to `stack_data`.
-fn getProvenanceSlice(value: Value) ?[]Provenance {
-    const index = getStackIndex(value) orelse return null;
-    const size = value.type_id.wordSize();
-    return c.stack_provenance[index..][0..size];
-}
-
 fn stackPushEmptyTuple() void {
     c.stack.push(.{
         .name = null,
@@ -1519,7 +1538,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     }
 
     for (result.value.type_id.getRefMap()) |ref_index| {
-        const provenance = getProvenance(result.value.getRefAtIndex(ref_index)).?;
+        const provenance = result.value.getRefAtIndex(ref_index).getProvenance().?;
         switch (provenance.lease) {
             .not_a_ref => unreachable,
             .owned => {},
@@ -1539,17 +1558,17 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     while (c.stack.len > stack_start) c.stack.pop().deinit();
     c.stack_top = stack_data_start;
 
-    const result_moved = allocStackWithoutInit(result.value.type_id);
+    const result_moved = Value.allocStackWithoutInit(result.value.type_id);
     // Can't use Value.copyData/Provenance here because the slices might overlap.
     std.mem.copyBackwards(
         u64,
-        getDataSlice(result_moved),
-        getDataSlice(result.value),
+        result_moved.getDataSlice(),
+        result.value.getDataSlice(),
     );
     std.mem.copyBackwards(
         Provenance,
-        getProvenanceSlice(result_moved).?,
-        getProvenanceSlice(result.value).?,
+        result_moved.getProvenanceSlice().?,
+        result.value.getProvenanceSlice().?,
     );
 
     if (debug) {
@@ -1558,25 +1577,6 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     }
 
     c.stack.push(.{ .name = null, .value = result_moved });
-}
-
-fn allocStackWithoutInit(type_id: TypeId) Value {
-    const size = type_id.wordSize();
-    const ptr = &c.stack_data[c.stack_top];
-    c.stack_top += size;
-    return .{
-        .ptr = @ptrCast(ptr),
-        .type_id = type_id,
-    };
-}
-
-fn allocStack(type_id: TypeId) Value {
-    const value = allocStackWithoutInit(type_id);
-    if (debug) {
-        @memset(getDataSlice(value), 0xCC);
-        @memset(getProvenanceSlice(value).?, .not_a_ref);
-    }
-    return value;
 }
 
 fn makeType(@"type": Type) TypeId {
@@ -1669,7 +1669,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
 
             try checkKind(deref, .{ .expected = .ref, .actual = path.value.type_id });
 
-            const ref_provenance = if (getProvenance(path.value)) |provenance|
+            const ref_provenance = if (path.value.getProvenance()) |provenance|
                 provenance.*
             else
                 // If ref is not on the stack then it must be owned by `path.owner`.
@@ -1725,7 +1725,7 @@ fn evalPattern(expr_id: ExprId) error{Error}!void {
             switch (c.types.items[item.value.type_id.id]) {
                 .ref => {
                     defer item.deinit(); // If succesful, we make new refs and the original ref still needs to be cleaned up.
-                    try evalPatternRef(expr_id, item.value.getRefElem(), getProvenance(item.value).?.*);
+                    try evalPatternRef(expr_id, item.value.getRefElem(), item.value.getProvenance().?.*);
                 },
                 else => {
                     errdefer item.deinit(); // If succesful, value is totally consumed.
@@ -1746,9 +1746,9 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
                 .borrowed => lender.ref_count.splitBorrow(),
                 .shared => lender.ref_count.splitShare(),
             }
-            const ref = allocStack(makeTypeRef(value.type_id));
+            const ref = Value.allocStack(makeTypeRef(value.type_id));
             ref.setRefElem(value);
-            getProvenance(ref).?.* = provenance;
+            ref.getProvenance().?.* = provenance;
             c.stack.push(.{ .name = get.name, .value = ref });
         },
         .tuple => |elems| {
@@ -1797,7 +1797,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const path = try evalPath(expr_id);
             for (path.value.type_id.getRefMap()) |ref_index| {
                 const ref = path.value.getRefAtIndex(ref_index);
-                const lease = if (getProvenance(ref)) |provenance| provenance.lease else .owned;
+                const lease = if (ref.getProvenance()) |provenance| provenance.lease else .owned;
                 switch (lease) {
                     .not_a_ref => unreachable,
                     .shared => {},
@@ -1820,12 +1820,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             errdefer comptime unreachable;
 
-            const result = allocStack(path.value.type_id);
+            const result = Value.allocStack(path.value.type_id);
             Value.copyData(.{ .to = result, .from = path.value });
             Value.copyProvenance(.{ .to = result, .from = path.value });
 
             for (result.type_id.getRefMap()) |ref_index| {
-                const provenance = getProvenance(result.getRefAtIndex(ref_index)).?;
+                const provenance = result.getRefAtIndex(ref_index).getProvenance().?;
                 if (provenance.lease == .shared)
                     c.stack.items[provenance.lender].ref_count.share();
             }
@@ -1867,7 +1867,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             owner.ref_count.move();
 
-            const result = allocStack(path.value.type_id);
+            const result = Value.allocStack(path.value.type_id);
             Value.copyData(.{ .to = result, .from = path.value });
             Value.copyProvenance(.{ .to = result, .from = path.value });
             path.value.setRefsToNull(); // Avoid freeing this value twice.
@@ -1908,9 +1908,9 @@ fn eval(expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.borrow();
-            const ref = allocStack(makeTypeRef(path.value.type_id));
+            const ref = Value.allocStack(makeTypeRef(path.value.type_id));
             ref.setRefElem(path.value);
-            getProvenance(ref).?.* = .{
+            ref.getProvenance().?.* = .{
                 .lease = .borrowed,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
@@ -1939,9 +1939,9 @@ fn eval(expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.share();
-            const ref = allocStack(makeTypeRef(path.value.type_id));
+            const ref = Value.allocStack(makeTypeRef(path.value.type_id));
             ref.setRefElem(path.value);
-            getProvenance(ref).?.* = .{
+            ref.getProvenance().?.* = .{
                 .lease = .shared,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
@@ -1951,7 +1951,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
         .number => |number| {
             errdefer comptime unreachable;
 
-            const value = allocStack(makeTypeNumber());
+            const value = Value.allocStack(makeTypeNumber());
             value.setNumber(number);
             c.stack.push(.{ .name = null, .value = value });
         },
@@ -2096,12 +2096,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     }
 
                     for (arg1.value.type_id.getRefMap()) |ref_index| {
-                        const elem_provenance = getProvenance(arg1.value.getRefAtIndex(ref_index)).?;
+                        const elem_provenance = arg1.value.getRefAtIndex(ref_index).getProvenance().?;
                         switch (elem_provenance.lease) {
                             .not_a_ref, .owned => {},
                             .borrowed, .shared => {
-                                if (getStackIndex(path.value) == null) {
-                                    // TODO This check wouldn't be needed if refs had distinct types.
+                                if (path.value.getStackIndex() == null) {
                                     return fail(
                                         .{ .expr_id = expr_id },
                                         "Can't write a borrowed/shared reference to an owned ref",
@@ -2149,7 +2148,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(makeTypeNumber());
+                    const result = Value.allocStack(makeTypeNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .name = null, .value = result });
                 },
@@ -2165,7 +2164,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = allocStack(makeTypeNumber());
+                    const result = Value.allocStack(makeTypeNumber());
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .name = null, .value = result });
                 },
@@ -2176,7 +2175,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     errdefer arg0.deinit();
 
                     for (arg0.value.type_id.getRefMap()) |ref_index| {
-                        const lease = getProvenance(arg0.value.getRefAtIndex(ref_index)).?.lease;
+                        const lease = arg0.value.getRefAtIndex(ref_index).getProvenance().?.lease;
                         switch (lease) {
                             .not_a_ref, .owned => {},
                             .borrowed, .shared => {
@@ -2194,9 +2193,9 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const target = Value.allocHeap(arg0.value.type_id);
                     Value.copyData(.{ .from = arg0.value, .to = target });
 
-                    const ref = allocStack(makeTypeRef(arg0.value.type_id));
+                    const ref = Value.allocStack(makeTypeRef(arg0.value.type_id));
                     ref.setRefElem(target);
-                    getProvenance(ref).?.* = .{
+                    ref.getProvenance().?.* = .{
                         .lease = .owned,
                         .owner = 0,
                         .lender = 0,
