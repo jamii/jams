@@ -1079,6 +1079,7 @@ const TypeId = packed struct {
     }
 
     fn order(a_id: TypeId, b_id: TypeId) std.math.Order {
+        if (a_id == b_id) return .eq;
         const a = c.types.items[a_id.id];
         const b = c.types.items[b_id.id];
         switch (std.math.order(@intFromEnum(a), @intFromEnum(b))) {
@@ -1265,7 +1266,7 @@ const Value = struct {
     fn setRefElem(value: Value, elem: Value) void {
         const ref = c.types.items[value.type_id.id].ref;
         if (debug) switch (ref.elem) {
-            .known => |known| assert(TypeId.order(known, elem.type_id) == .eq),
+            .known => |known| assert(known == elem.type_id),
             .any => {},
         };
         value.ptr[0] = @intFromPtr(elem.ptr);
@@ -1311,7 +1312,7 @@ const Value = struct {
     }
 
     fn copyData(args: struct { to: Value, from: Value }) void {
-        if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
+        if (debug) assert(args.to.type_id == args.from.type_id);
         @memcpy(getDataSlice(args.to), getDataSlice(args.from));
     }
 
@@ -1330,7 +1331,7 @@ const Value = struct {
     }
 
     fn copyProvenance(args: struct { to: Value, from: Value }) void {
-        if (debug) assert(TypeId.order(args.to.type_id, args.from.type_id) == .eq);
+        if (debug) assert(args.to.type_id == args.from.type_id);
         if (getProvenanceSlice(args.to)) |to_provenance_slice| {
             if (getProvenanceSlice(args.from)) |from_provenance_slice| {
                 @memcpy(to_provenance_slice, from_provenance_slice);
@@ -2135,7 +2136,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         ),
                     }
 
-                    if (TypeId.order(path.value.type_id, arg1.value.type_id) != .eq) {
+                    if (path.value.type_id != arg1.value.type_id) {
                         return fail(
                             .{ .expr_id = expr_id },
                             "Can't assign a value of type `{f}` to a reference with elem type `{f}`",
