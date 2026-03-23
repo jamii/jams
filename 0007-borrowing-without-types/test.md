@@ -818,3 +818,22 @@ a^
 
 ref(3)
 ```
+
+```test
+let a = 1;
+a = [];
+
+Error at 2:1
+Can't assign a value of type `[]` to a path of type `number`
+```
+
+```test
+let nums = [1, 5];
+let inc = fn (i) {i + 1};
+while {nums[0] < nums[1]} {
+  nums[0] = inc(nums[0]);
+};
+nums
+
+[5, 5]
+```

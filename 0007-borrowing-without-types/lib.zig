@@ -981,7 +981,6 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         },
         .@"fn" => |@"fn"| {
             const scope_start = c.scope.len;
-            defer c.scope.len = scope_start;
 
             const fn_id = FnId{ .id = c.fns.items.len };
 
@@ -1002,6 +1001,11 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             }
 
             try analyze(@"fn".body);
+            _ = c.scope.pop();
+
+            for (@"fn".params) |_| {
+                _ = c.scope.pop();
+            }
         },
         .capture, .param => {
             // Handled directly in @"fn" above.
@@ -1009,17 +1013,16 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         },
         .call => |*call| {
             try analyze(call.closure);
+
             for (call.args) |arg|
                 try analyze(arg);
 
-            _ = c.scope.pop();
             for (call.args) |_|
                 _ = c.scope.pop();
+
+            _ = c.scope.pop();
         },
         .call_builtin => |call_builtin| {
-            const scope_start = c.scope.len;
-            defer c.scope.len = scope_start;
-
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
                     .ref => 1,
@@ -1031,6 +1034,8 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             switch (call_builtin.builtin) {
                 .@"=" => {
                     try analyze(call_builtin.args[1]);
+                    _ = c.scope.pop();
+
                     const arg0 = &c.exprs.items[call_builtin.args[0].id];
                     if (arg0.* == .get)
                         arg0.get.allow_moved = true;
@@ -2104,6 +2109,9 @@ fn eval(expr_id: ExprId) error{Error}!void {
             unreachable;
         },
         .call => |call| {
+            const stack_start = c.stack.len;
+            const stack_data_start = c.stack_top;
+
             try eval(call.closure);
             const closure = c.stack.peek();
 
@@ -2111,9 +2119,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const @"fn" = &c.fns.items[closure.value.type_id.getType().closure.fn_id.id];
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
-
-            const stack_start = c.stack.len;
-            const stack_data_start = c.stack_top;
 
             for (call.args) |arg_expr|
                 try eval(arg_expr);
