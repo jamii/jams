@@ -51,9 +51,10 @@ const Compiler = struct {
     stack_data: []u64,
     stack_provenance: []Provenance,
     types: ArrayList(Type),
-    type_to_ref_map: ArrayList([]RefIndex),
+    type_to_ref_indexes: ArrayList([]RefIndex),
     type_number: ?TypeId,
     type_tuple_empty: ?TypeId,
+    type_tuple: std.HashMap([]TypeId, TypeId, TypeIdsHashContext, std.hash_map.default_max_load_percentage),
 
     error_message: ?[]u8,
 
@@ -79,9 +80,10 @@ const Compiler = struct {
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
             .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
             .types = .{},
-            .type_to_ref_map = .{},
+            .type_to_ref_indexes = .{},
             .type_number = null,
             .type_tuple_empty = null,
+            .type_tuple = .init(allocator),
 
             .error_message = null,
         };
@@ -105,22 +107,42 @@ const Compiler = struct {
         allocator.free(compiler.stack_provenance);
         for (compiler.types.items) |@"type"| @"type".deinit();
         compiler.types.deinit(allocator);
-        for (compiler.type_to_ref_map.items) |ref_map| allocator.free(ref_map);
-        compiler.type_to_ref_map.deinit(allocator);
+        for (compiler.type_to_ref_indexes.items) |ref_indexes| allocator.free(ref_indexes);
+        compiler.type_to_ref_indexes.deinit(allocator);
+        compiler.type_tuple.deinit();
 
         if (compiler.error_message) |err| allocator.free(err);
     }
 };
 
-pub fn run() ![]const u8 {
-    try tokenize();
-    c.expr_len = try parse();
-    try analyze(c.expr_len.?);
-    try eval(c.expr_len.?);
-    assert(c.stack.len == 1);
-    const result = c.stack.peek();
-    return std.fmt.allocPrint(allocator, "{f}", .{result.value});
-}
+const TypeIdsHashContext = struct {
+    pub fn eql(_: @This(), type_ids_a: []TypeId, type_ids_b: []TypeId) bool {
+        return std.mem.eql(TypeId, type_ids_a, type_ids_b);
+    }
+
+    pub fn hash(_: @This(), type_ids: []TypeId) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (type_ids) |type_id|
+            std.hash.autoHash(&hasher, type_id);
+        return hasher.final();
+    }
+};
+
+const StackItemsHashContext = struct {
+    pub fn eql(_: @This(), items: []StackItem, type_ids: []TypeId) bool {
+        if (items.len != type_ids.len) return false;
+        for (items, type_ids) |item, type_id|
+            if (item.value.type_id != type_id) return false;
+        return true;
+    }
+
+    pub fn hash(_: @This(), items: []StackItem) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (items) |item|
+            std.hash.autoHash(&hasher, item.value.type_id);
+        return hasher.final();
+    }
+};
 
 const stack_size = 1024 * 1024;
 
@@ -158,6 +180,16 @@ fn Stack(comptime Item: type) type {
             return &self.items[self.len - 1];
         }
     };
+}
+
+pub fn run() ![]const u8 {
+    try tokenize();
+    c.expr_len = try parse();
+    try analyze(c.expr_len.?);
+    try eval(c.expr_len.?);
+    assert(c.stack.len == 1);
+    const result = c.stack.peek();
+    return std.fmt.allocPrint(allocator, "{f}", .{result.value});
 }
 
 const SourceLocation = union(enum) {
@@ -1012,11 +1044,11 @@ fn failNotDefined(expr_id: ExprId, name: []const u8) error{Error} {
 
 // --- EVAL ---
 
-const TypeId = struct {
+const TypeId = packed struct {
     id: usize,
 
-    fn getRefMap(type_id: TypeId) []RefIndex {
-        return c.type_to_ref_map.items[type_id.id];
+    fn getRefIndexes(type_id: TypeId) []RefIndex {
+        return c.type_to_ref_indexes.items[type_id.id];
     }
 
     fn wordSize(type_id: TypeId) usize {
@@ -1095,15 +1127,15 @@ const Type = union(enum) {
         }
     }
 
-    fn makeRefMap(@"type": Type, type_id: TypeId) []RefIndex {
-        var bitmap: ArrayList(RefIndex) = .{};
+    fn makeRefIndexes(@"type": Type, type_id: TypeId) []RefIndex {
+        var indexes: ArrayList(RefIndex) = .{};
         switch (@"type") {
             .number => {},
             .tuple => |tuple| {
                 var word_offset: usize = 0;
                 for (tuple.elems) |elem| {
-                    for (elem.getRefMap()) |ref_index| {
-                        bitmap.append(allocator, .{
+                    for (elem.getRefIndexes()) |ref_index| {
+                        indexes.append(allocator, .{
                             .word_offset = word_offset + ref_index.word_offset,
                             .type_id = ref_index.type_id,
                         }) catch oom();
@@ -1112,14 +1144,14 @@ const Type = union(enum) {
                 }
             },
             .ref => {
-                bitmap.append(allocator, .{
+                indexes.append(allocator, .{
                     .word_offset = 0,
                     .type_id = type_id,
                 }) catch oom();
             },
             .closure => {},
         }
-        return bitmap.toOwnedSlice(allocator) catch oom();
+        return indexes.toOwnedSlice(allocator) catch oom();
     }
 
     pub fn format(@"type": Type, writer: *std.io.Writer) std.io.Writer.Error!void {
@@ -1219,7 +1251,7 @@ const Value = struct {
             .ptr = @ptrFromInt(value.ptr[0]),
             .type_id = switch (ref.elem) {
                 .known => |known| known,
-                .any => .{ .id = @intCast(value.ptr[1]) },
+                .any => @bitCast(value.ptr[1]),
             },
         };
     }
@@ -1297,7 +1329,7 @@ const Value = struct {
             if (getProvenanceSlice(args.from)) |from_provenance_slice| {
                 @memcpy(to_provenance_slice, from_provenance_slice);
             } else {
-                for (args.to.type_id.getRefMap()) |ref_index| {
+                for (args.to.type_id.getRefIndexes()) |ref_index| {
                     to_provenance_slice[ref_index.word_offset] = .{
                         .lease = .owned,
                         .owner = 0,
@@ -1343,7 +1375,7 @@ const Value = struct {
     }
 
     fn freeRefs(value: Value) void {
-        for (value.type_id.getRefMap()) |ref_index| {
+        for (value.type_id.getRefIndexes()) |ref_index| {
             if (value.ptr[ref_index.word_offset] != 0) {
                 const ref = value.getRefAtIndex(ref_index);
                 const provenance_maybe = getProvenance(ref);
@@ -1370,7 +1402,7 @@ const Value = struct {
     }
 
     fn setRefsToNull(value: Value) void {
-        for (value.type_id.getRefMap()) |ref_index| {
+        for (value.type_id.getRefIndexes()) |ref_index| {
             value.ptr[ref_index.word_offset] = 0;
         }
     }
@@ -1540,7 +1572,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
         assert(result.ref_count.state() == .available);
     }
 
-    for (result.value.type_id.getRefMap()) |ref_index| {
+    for (result.value.type_id.getRefIndexes()) |ref_index| {
         const provenance = result.value.getRefAtIndex(ref_index).getProvenance().?;
         switch (provenance.lease) {
             .not_a_ref => unreachable,
@@ -1585,7 +1617,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
 fn makeType(@"type": Type) TypeId {
     const type_id = TypeId{ .id = c.types.items.len };
     c.types.append(allocator, @"type") catch oom();
-    c.type_to_ref_map.append(allocator, @"type".makeRefMap(type_id)) catch oom();
+    c.type_to_ref_indexes.append(allocator, @"type".makeRefIndexes(type_id)) catch oom();
     return type_id;
 }
 
@@ -1601,11 +1633,14 @@ fn makeTypeTupleEmpty() TypeId {
     return c.type_tuple_empty.?;
 }
 
-// TODO Memoize this.
 fn makeTypeTuple(items: []StackItem) TypeId {
+    if (items.len == 0) return makeTypeTupleEmpty();
+    if (c.type_tuple.getAdapted(items, StackItemsHashContext{})) |type_id| return type_id;
     const elems = allocator.alloc(TypeId, items.len) catch oom();
     for (elems, items) |*elem, item| elem.* = item.value.type_id;
-    return makeType(.{ .tuple = .{ .elems = elems } });
+    const type_id = makeType(.{ .tuple = .{ .elems = elems } });
+    c.type_tuple.putNoClobber(elems, type_id) catch oom();
+    return type_id;
 }
 
 // TODO Memoize this.
@@ -1798,7 +1833,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
             const path = try evalPath(expr_id);
-            for (path.value.type_id.getRefMap()) |ref_index| {
+            for (path.value.type_id.getRefIndexes()) |ref_index| {
                 const ref = path.value.getRefAtIndex(ref_index);
                 const lease = if (ref.getProvenance()) |provenance| provenance.lease else .owned;
                 switch (lease) {
@@ -1827,7 +1862,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             Value.copyData(.{ .to = result, .from = path.value });
             Value.copyProvenance(.{ .to = result, .from = path.value });
 
-            for (result.type_id.getRefMap()) |ref_index| {
+            for (result.type_id.getRefIndexes()) |ref_index| {
                 const provenance = result.getRefAtIndex(ref_index).getProvenance().?;
                 if (provenance.lease == .shared)
                     c.stack.items[provenance.lender].ref_count.share();
@@ -2098,7 +2133,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         );
                     }
 
-                    for (arg1.value.type_id.getRefMap()) |ref_index| {
+                    for (arg1.value.type_id.getRefIndexes()) |ref_index| {
                         const elem_provenance = arg1.value.getRefAtIndex(ref_index).getProvenance().?;
                         switch (elem_provenance.lease) {
                             .not_a_ref, .owned => {},
@@ -2177,7 +2212,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const arg0 = c.stack.pop();
                     errdefer arg0.deinit();
 
-                    for (arg0.value.type_id.getRefMap()) |ref_index| {
+                    for (arg0.value.type_id.getRefIndexes()) |ref_index| {
                         const lease = arg0.value.getRefAtIndex(ref_index).getProvenance().?.lease;
                         switch (lease) {
                             .not_a_ref, .owned => {},
