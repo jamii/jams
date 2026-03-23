@@ -76,7 +76,7 @@ This value shares/borrows from `x`, but `x` will be destroyed at the end of this
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a reference with elem type `ref(number)`
+Can't assign a value of type `number` to a path of type `ref(number)`
 ```
 
 ```test
@@ -245,7 +245,7 @@ This value shares/borrows from `c`, which will be destroyed before `b` and so ca
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a reference with elem type `ref(number)`
+Can't assign a value of type `number` to a path of type `ref(number)`
 ```
 
 ```test

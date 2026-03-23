@@ -2171,7 +2171,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     if (path.value.type_id != arg1.value.type_id) {
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't assign a value of type `{f}` to a reference with elem type `{f}`",
+                            "Can't assign a value of type `{f}` to a path of type `{f}`",
                             .{ arg1.value.type_id, path.value.type_id },
                         );
                     }
