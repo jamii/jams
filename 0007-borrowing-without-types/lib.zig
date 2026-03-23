@@ -1764,7 +1764,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .owner = path.provenance.owner,
                     .lender = path.provenance.lender,
                 };
-            const lender = if (ref_provenance.lease == .borrowed)
+            const lender = if (ref_provenance.lease != .shared)
                 // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
                 path.provenance.lender
             else
@@ -2295,8 +2295,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
             try stackCompact(expr_id, stack_start, stack_data_start);
         },
     }
-
-    //pp(.{ c.exprs.items[expr_id.id], getProvenanceSlice(c.stack.peek().value) });
 }
 
 fn checkArgCount(expr_id: ExprId, opts: struct { expected: usize, actual: usize }) error{Error}!void {

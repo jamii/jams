@@ -780,8 +780,8 @@ Can't create an owned ref containing a borrowed/shared ref
   a*
 }
 
-Error at 6:10
-Can't share `z` because it is borrowed by TODO
+Error at 6:5
+Can't write a borrowed/shared reference to an owned ref
 ```
 
 ```test
