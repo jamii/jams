@@ -56,6 +56,7 @@ const Compiler = struct {
     type_tuple_empty: ?TypeId,
     type_tuple: std.HashMap([]TypeId, TypeId, TypeIdsHashContext, std.hash_map.default_max_load_percentage),
     type_ref: std.AutoHashMap(TypeId, TypeId),
+    type_closure: std.AutoHashMap(FnId, TypeId),
 
     error_message: ?[]u8,
 
@@ -86,6 +87,7 @@ const Compiler = struct {
             .type_tuple_empty = null,
             .type_tuple = .init(allocator),
             .type_ref = .init(allocator),
+            .type_closure = .init(allocator),
 
             .error_message = null,
         };
@@ -113,6 +115,7 @@ const Compiler = struct {
         compiler.type_to_ref_indexes.deinit(allocator);
         compiler.type_tuple.deinit();
         compiler.type_ref.deinit();
+        compiler.type_closure.deinit();
 
         if (compiler.error_message) |err| allocator.free(err);
     }
@@ -1653,9 +1656,11 @@ fn makeTypeRef(elem: TypeId) TypeId {
     return type_id;
 }
 
-// TODO Memoize this.
 fn makeTypeClosure(fn_id: FnId) TypeId {
-    return makeType(.{ .closure = .{ .fn_id = fn_id } });
+    if (c.type_closure.get(fn_id)) |type_id| return type_id;
+    const type_id = makeType(.{ .closure = .{ .fn_id = fn_id } });
+    c.type_closure.putNoClobber(fn_id, type_id) catch oom();
+    return type_id;
 }
 
 fn evalPopBool(expr_id: ExprId) error{Error}!bool {
