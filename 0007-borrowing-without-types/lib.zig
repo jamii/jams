@@ -1030,11 +1030,11 @@ fn analyze(expr_id: ExprId) error{Error}!void {
 
             switch (call_builtin.builtin) {
                 .@"=" => {
+                    try analyze(call_builtin.args[1]);
                     const arg0 = &c.exprs.items[call_builtin.args[0].id];
                     if (arg0.* == .get)
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
-                    try analyze(call_builtin.args[1]);
                 },
                 .ref, .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
@@ -2136,11 +2136,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             switch (call_builtin.builtin) {
                 .@"=" => {
-                    const path = try evalPath(call_builtin.args[0]);
                     try eval(call_builtin.args[1]);
 
                     const arg1 = c.stack.pop();
                     errdefer arg1.deinit();
+
+                    const path = try evalPath(call_builtin.args[0]);
 
                     switch (path.provenance.lease) {
                         .not_a_ref => unreachable,
