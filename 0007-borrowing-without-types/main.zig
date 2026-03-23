@@ -55,6 +55,7 @@ const Compiler = struct {
     type_number: ?TypeId,
     type_tuple_empty: ?TypeId,
     type_tuple: std.HashMap([]TypeId, TypeId, TypeIdsHashContext, std.hash_map.default_max_load_percentage),
+    type_ref: std.AutoHashMap(TypeId, TypeId),
 
     error_message: ?[]u8,
 
@@ -84,6 +85,7 @@ const Compiler = struct {
             .type_number = null,
             .type_tuple_empty = null,
             .type_tuple = .init(allocator),
+            .type_ref = .init(allocator),
 
             .error_message = null,
         };
@@ -110,6 +112,7 @@ const Compiler = struct {
         for (compiler.type_to_ref_indexes.items) |ref_indexes| allocator.free(ref_indexes);
         compiler.type_to_ref_indexes.deinit(allocator);
         compiler.type_tuple.deinit();
+        compiler.type_ref.deinit();
 
         if (compiler.error_message) |err| allocator.free(err);
     }
@@ -1643,9 +1646,11 @@ fn makeTypeTuple(items: []StackItem) TypeId {
     return type_id;
 }
 
-// TODO Memoize this.
 fn makeTypeRef(elem: TypeId) TypeId {
-    return makeType(.{ .ref = .{ .elem = .{ .known = elem } } });
+    if (c.type_ref.get(elem)) |type_id| return type_id;
+    const type_id = makeType(.{ .ref = .{ .elem = .{ .known = elem } } });
+    c.type_ref.putNoClobber(elem, type_id) catch oom();
+    return type_id;
 }
 
 // TODO Memoize this.
