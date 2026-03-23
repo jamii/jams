@@ -1076,40 +1076,9 @@ const TypeId = packed struct {
         return c.type_to_word_offsets.items[type_id.id][elem_index];
     }
 
-    fn order(a_id: TypeId, b_id: TypeId) std.math.Order {
-        if (a_id == b_id) return .eq;
-        const a = a_id.getType();
-        const b = b_id.getType();
-        switch (std.math.order(@intFromEnum(a), @intFromEnum(b))) {
-            .lt => return .lt,
-            .gt => return .gt,
-            .eq => {},
-        }
-        switch (a) {
-            .number => return .eq,
-            .tuple => {
-                for (0..@min(a.tuple.elems.len, b.tuple.elems.len)) |i| {
-                    switch (TypeId.order(a.tuple.elems[i], b.tuple.elems[i])) {
-                        .lt => return .lt,
-                        .gt => return .gt,
-                        .eq => {},
-                    }
-                }
-                return std.math.order(a.tuple.elems.len, b.tuple.elems.len);
-            },
-            .ref => {
-                switch (std.math.order(@intFromEnum(a.ref.elem), @intFromEnum(b.ref.elem))) {
-                    .lt => return .lt,
-                    .gt => return .gt,
-                    .eq => {},
-                }
-                switch (a.ref.elem) {
-                    .any => return .eq,
-                    .known => return TypeId.order(a.ref.elem.known, b.ref.elem.known),
-                }
-            },
-            .closure => return .eq,
-        }
+    fn order(a: TypeId, b: TypeId) std.math.Order {
+        if (a == b) return .eq;
+        return Type.order(a.getType(), b.getType());
     }
 
     pub fn format(type_id: TypeId, writer: *std.io.Writer) std.io.Writer.Error!void {
@@ -1237,6 +1206,39 @@ const Type = union(enum) {
             .closure => {},
         }
         return indexes.toOwnedSlice(allocator) catch oom();
+    }
+
+    fn order(a: Type, b: Type) std.math.Order {
+        switch (std.math.order(@intFromEnum(a), @intFromEnum(b))) {
+            .lt => return .lt,
+            .gt => return .gt,
+            .eq => {},
+        }
+        switch (a) {
+            .number => return .eq,
+            .tuple => {
+                for (0..@min(a.tuple.elems.len, b.tuple.elems.len)) |i| {
+                    switch (TypeId.order(a.tuple.elems[i], b.tuple.elems[i])) {
+                        .lt => return .lt,
+                        .gt => return .gt,
+                        .eq => {},
+                    }
+                }
+                return std.math.order(a.tuple.elems.len, b.tuple.elems.len);
+            },
+            .ref => {
+                switch (std.math.order(@intFromEnum(a.ref.elem), @intFromEnum(b.ref.elem))) {
+                    .lt => return .lt,
+                    .gt => return .gt,
+                    .eq => {},
+                }
+                switch (a.ref.elem) {
+                    .any => return .eq,
+                    .known => return TypeId.order(a.ref.elem.known, b.ref.elem.known),
+                }
+            },
+            .closure => return .eq,
+        }
     }
 
     pub fn format(@"type": Type, writer: *std.io.Writer) std.io.Writer.Error!void {
