@@ -1378,7 +1378,7 @@ const Value = struct {
         if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
         const index = @intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr);
         if (index >= c.stack_data.len) return null;
-        return @intCast(@divExact(index, 8));
+        return @intCast(@divExact(index, @sizeOf(usize)));
     }
 
     fn getDataSlice(value: Value) []usize {

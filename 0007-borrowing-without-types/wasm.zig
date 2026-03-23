@@ -2,15 +2,15 @@ const std = @import("std");
 
 const lib = @import("./lib.zig");
 
-export fn wasm_alloc(len: usize) usize {
+export fn alloc(len: usize) usize {
     return @intFromPtr((lib.allocator.allocSentinel(u8, len, 0) catch lib.oom()).ptr);
 }
 
-export fn wasm_free(ptr: usize) void {
+export fn free(ptr: usize) void {
     lib.allocator.free(std.mem.span(@as([*c]u8, @ptrFromInt(ptr))));
 }
 
-export fn wasm_eval(source_ptr: usize) usize {
+export fn run(source_ptr: usize) usize {
     const source = std.mem.span(@as([*c]u8, @ptrFromInt(source_ptr)));
 
     lib.c = .init(source);
