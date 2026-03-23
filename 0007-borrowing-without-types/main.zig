@@ -51,6 +51,8 @@ const Compiler = struct {
     stack_data: []u64,
     stack_provenance: []Provenance,
     types: ArrayList(Type),
+    type_to_word_size: ArrayList(usize),
+    type_to_word_offsets: ArrayList([]usize),
     type_to_ref_indexes: ArrayList([]RefIndex),
     type_number: ?TypeId,
     type_tuple_empty: ?TypeId,
@@ -82,6 +84,8 @@ const Compiler = struct {
             .stack_data = allocator.alloc(u64, stack_size) catch oom(),
             .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
             .types = .{},
+            .type_to_word_size = .{},
+            .type_to_word_offsets = .{},
             .type_to_ref_indexes = .{},
             .type_number = null,
             .type_tuple_empty = null,
@@ -111,6 +115,9 @@ const Compiler = struct {
         allocator.free(compiler.stack_provenance);
         for (compiler.types.items) |@"type"| @"type".deinit();
         compiler.types.deinit(allocator);
+        compiler.type_to_word_size.deinit(allocator);
+        for (compiler.type_to_word_offsets.items) |word_offsets| allocator.free(word_offsets);
+        compiler.type_to_word_offsets.deinit(allocator);
         for (compiler.type_to_ref_indexes.items) |ref_indexes| allocator.free(ref_indexes);
         compiler.type_to_ref_indexes.deinit(allocator);
         compiler.type_tuple.deinit();
@@ -1061,25 +1068,12 @@ const TypeId = packed struct {
         return c.type_to_ref_indexes.items[type_id.id];
     }
 
-    fn wordSize(type_id: TypeId) usize {
-        // TODO precompute this
-        switch (type_id.getType()) {
-            .number => return 1,
-            .tuple => |tuple| {
-                var size: usize = 0;
-                for (tuple.elems) |elem| {
-                    size += elem.wordSize();
-                }
-                return size;
-            },
-            .ref => |ref| {
-                return switch (ref.elem) {
-                    .known => 1,
-                    .any => 2,
-                };
-            },
-            .closure => return 0,
-        }
+    fn getWordSize(type_id: TypeId) usize {
+        return c.type_to_word_size.items[type_id.id];
+    }
+
+    fn getWordOffset(type_id: TypeId, elem_index: usize) usize {
+        return c.type_to_word_offsets.items[type_id.id][elem_index];
     }
 
     fn order(a_id: TypeId, b_id: TypeId) std.math.Order {
@@ -1132,6 +1126,8 @@ const Type = union(enum) {
     fn internUnchecked(@"type": Type) TypeId {
         const type_id = TypeId{ .id = c.types.items.len };
         c.types.append(allocator, @"type") catch oom();
+        c.type_to_word_size.append(allocator, @"type".calculateWordSize()) catch oom();
+        c.type_to_word_offsets.append(allocator, @"type".calculateWordOffsets()) catch oom();
         c.type_to_ref_indexes.append(allocator, @"type".makeRefIndexes(type_id)) catch oom();
         return type_id;
     }
@@ -1181,6 +1177,41 @@ const Type = union(enum) {
         }
     }
 
+    fn calculateWordSize(@"type": Type) usize {
+        switch (@"type") {
+            .number => return 1,
+            .tuple => |tuple| {
+                var size: usize = 0;
+                for (tuple.elems) |elem| {
+                    size += elem.getWordSize();
+                }
+                return size;
+            },
+            .ref => |ref| {
+                return switch (ref.elem) {
+                    .known => 1,
+                    .any => 2,
+                };
+            },
+            .closure => return 0,
+        }
+    }
+
+    fn calculateWordOffsets(@"type": Type) []usize {
+        switch (@"type") {
+            .number, .ref, .closure => return &.{},
+            .tuple => |tuple| {
+                const offsets = allocator.alloc(usize, tuple.elems.len) catch oom();
+                var offset: usize = 0;
+                for (tuple.elems, 0..) |elem, i| {
+                    offsets[i] = offset;
+                    offset += elem.getWordSize();
+                }
+                return offsets;
+            },
+        }
+    }
+
     fn makeRefIndexes(@"type": Type, type_id: TypeId) []RefIndex {
         var indexes: ArrayList(RefIndex) = .{};
         switch (@"type") {
@@ -1194,7 +1225,7 @@ const Type = union(enum) {
                             .type_id = ref_index.type_id,
                         }) catch oom();
                     }
-                    word_offset += elem.wordSize();
+                    word_offset += elem.getWordSize();
                 }
             },
             .ref => {
@@ -1241,14 +1272,6 @@ const TypeTuple = struct {
     fn deinit(tuple: TypeTuple) void {
         allocator.free(tuple.elems);
     }
-
-    fn wordOffset(tuple: TypeTuple, index: usize) usize {
-        var offset: usize = 0;
-        for (tuple.elems[0..index]) |elem| {
-            offset += elem.wordSize();
-        }
-        return offset;
-    }
 };
 
 const TypeRef = struct {
@@ -1294,7 +1317,7 @@ const Value = struct {
     fn getTupleElem(value: Value, index: usize) Value {
         const tuple = value.type_id.getType().tuple;
         return .{
-            .ptr = value.ptr + tuple.wordOffset(index),
+            .ptr = value.ptr + value.type_id.getWordOffset(index),
             .type_id = tuple.elems[index],
         };
     }
@@ -1320,7 +1343,7 @@ const Value = struct {
     }
 
     fn allocStackWithoutInit(type_id: TypeId) Value {
-        const size = type_id.wordSize();
+        const size = type_id.getWordSize();
         const ptr = &c.stack_data[c.stack_top];
         c.stack_top += size;
         return .{
@@ -1340,7 +1363,7 @@ const Value = struct {
 
     fn allocHeap(type_id: TypeId) Value {
         return .{
-            .ptr = @ptrCast(allocator.alloc(u64, type_id.wordSize()) catch oom()),
+            .ptr = @ptrCast(allocator.alloc(u64, type_id.getWordSize()) catch oom()),
             .type_id = type_id,
         };
     }
@@ -1354,7 +1377,7 @@ const Value = struct {
     }
 
     fn getDataSlice(value: Value) []u64 {
-        const size = value.type_id.wordSize();
+        const size = value.type_id.getWordSize();
         return value.ptr[0..size];
     }
 
@@ -1373,7 +1396,7 @@ const Value = struct {
     // Returns null if `value.ptr` does not point to `stack_data`.
     fn getProvenanceSlice(value: Value) ?[]Provenance {
         const index = getStackIndex(value) orelse return null;
-        const size = value.type_id.wordSize();
+        const size = value.type_id.getWordSize();
         return c.stack_provenance[index..][0..size];
     }
 
