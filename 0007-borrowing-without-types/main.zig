@@ -1125,6 +1125,49 @@ const Type = union(enum) {
     ref: TypeRef,
     closure: TypeClosure,
 
+    fn internUnchecked(@"type": Type) TypeId {
+        const type_id = TypeId{ .id = c.types.items.len };
+        c.types.append(allocator, @"type") catch oom();
+        c.type_to_ref_indexes.append(allocator, @"type".makeRefIndexes(type_id)) catch oom();
+        return type_id;
+    }
+
+    fn internNumber() TypeId {
+        if (c.type_number == null)
+            c.type_number = internUnchecked(.number);
+        return c.type_number.?;
+    }
+
+    fn internTupleEmpty() TypeId {
+        if (c.type_tuple_empty == null)
+            c.type_tuple_empty = internUnchecked(.{ .tuple = .{ .elems = &.{} } });
+        return c.type_tuple_empty.?;
+    }
+
+    fn internTuple(items: []StackItem) TypeId {
+        if (items.len == 0) return internTupleEmpty();
+        if (c.type_tuple.getAdapted(items, StackItemsHashContext{})) |type_id| return type_id;
+        const elems = allocator.alloc(TypeId, items.len) catch oom();
+        for (elems, items) |*elem, item| elem.* = item.value.type_id;
+        const type_id = internUnchecked(.{ .tuple = .{ .elems = elems } });
+        c.type_tuple.putNoClobber(elems, type_id) catch oom();
+        return type_id;
+    }
+
+    fn internRef(elem: TypeId) TypeId {
+        if (c.type_ref.get(elem)) |type_id| return type_id;
+        const type_id = internUnchecked(.{ .ref = .{ .elem = .{ .known = elem } } });
+        c.type_ref.putNoClobber(elem, type_id) catch oom();
+        return type_id;
+    }
+
+    fn internClosure(fn_id: FnId) TypeId {
+        if (c.type_closure.get(fn_id)) |type_id| return type_id;
+        const type_id = internUnchecked(.{ .closure = .{ .fn_id = fn_id } });
+        c.type_closure.putNoClobber(fn_id, type_id) catch oom();
+        return type_id;
+    }
+
     fn deinit(@"type": Type) void {
         switch (@"type") {
             .number => {},
@@ -1563,7 +1606,7 @@ fn stackPushEmptyTuple() void {
         .name = null,
         .value = .{
             .ptr = c.stack_data.ptr,
-            .type_id = makeTypeTupleEmpty(),
+            .type_id = Type.internTupleEmpty(),
         },
     });
 }
@@ -1619,49 +1662,6 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     }
 
     c.stack.push(.{ .name = null, .value = result_moved });
-}
-
-fn makeType(@"type": Type) TypeId {
-    const type_id = TypeId{ .id = c.types.items.len };
-    c.types.append(allocator, @"type") catch oom();
-    c.type_to_ref_indexes.append(allocator, @"type".makeRefIndexes(type_id)) catch oom();
-    return type_id;
-}
-
-fn makeTypeNumber() TypeId {
-    if (c.type_number == null)
-        c.type_number = makeType(.number);
-    return c.type_number.?;
-}
-
-fn makeTypeTupleEmpty() TypeId {
-    if (c.type_tuple_empty == null)
-        c.type_tuple_empty = makeType(.{ .tuple = .{ .elems = &.{} } });
-    return c.type_tuple_empty.?;
-}
-
-fn makeTypeTuple(items: []StackItem) TypeId {
-    if (items.len == 0) return makeTypeTupleEmpty();
-    if (c.type_tuple.getAdapted(items, StackItemsHashContext{})) |type_id| return type_id;
-    const elems = allocator.alloc(TypeId, items.len) catch oom();
-    for (elems, items) |*elem, item| elem.* = item.value.type_id;
-    const type_id = makeType(.{ .tuple = .{ .elems = elems } });
-    c.type_tuple.putNoClobber(elems, type_id) catch oom();
-    return type_id;
-}
-
-fn makeTypeRef(elem: TypeId) TypeId {
-    if (c.type_ref.get(elem)) |type_id| return type_id;
-    const type_id = makeType(.{ .ref = .{ .elem = .{ .known = elem } } });
-    c.type_ref.putNoClobber(elem, type_id) catch oom();
-    return type_id;
-}
-
-fn makeTypeClosure(fn_id: FnId) TypeId {
-    if (c.type_closure.get(fn_id)) |type_id| return type_id;
-    const type_id = makeType(.{ .closure = .{ .fn_id = fn_id } });
-    c.type_closure.putNoClobber(fn_id, type_id) catch oom();
-    return type_id;
 }
 
 fn evalPopBool(expr_id: ExprId) error{Error}!bool {
@@ -1795,7 +1795,7 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
                 .borrowed => lender.ref_count.splitBorrow(),
                 .shared => lender.ref_count.splitShare(),
             }
-            const ref = Value.allocStack(makeTypeRef(value.type_id));
+            const ref = Value.allocStack(Type.internRef(value.type_id));
             ref.setRefElem(value);
             ref.getProvenance().?.* = provenance;
             c.stack.push(.{ .name = get.name, .value = ref });
@@ -1957,7 +1957,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.borrow();
-            const ref = Value.allocStack(makeTypeRef(path.value.type_id));
+            const ref = Value.allocStack(Type.internRef(path.value.type_id));
             ref.setRefElem(path.value);
             ref.getProvenance().?.* = .{
                 .lease = .borrowed,
@@ -1988,7 +1988,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.share();
-            const ref = Value.allocStack(makeTypeRef(path.value.type_id));
+            const ref = Value.allocStack(Type.internRef(path.value.type_id));
             ref.setRefElem(path.value);
             ref.getProvenance().?.* = .{
                 .lease = .shared,
@@ -2000,7 +2000,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
         .number => |number| {
             errdefer comptime unreachable;
 
-            const value = Value.allocStack(makeTypeNumber());
+            const value = Value.allocStack(Type.internNumber());
             value.setNumber(number);
             c.stack.push(.{ .name = null, .value = value });
         },
@@ -2017,7 +2017,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             errdefer comptime unreachable;
 
-            const type_tuple = makeTypeTuple(c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
+            const type_tuple = Type.internTuple(c.stack.items[c.stack.len - exprs.len .. c.stack.len]);
 
             // All the elems are now contiguous on the stack so we can just point at the first elem.
             c.stack.len = stack_start + 1;
@@ -2063,7 +2063,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 .name = null,
                 .value = .{
                     .ptr = c.stack_data.ptr,
-                    .type_id = makeTypeClosure(fn_id),
+                    .type_id = Type.internClosure(fn_id),
                 },
             });
         },
@@ -2197,7 +2197,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = Value.allocStack(makeTypeNumber());
+                    const result = Value.allocStack(Type.internNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .name = null, .value = result });
                 },
@@ -2213,7 +2213,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     errdefer comptime unreachable;
 
-                    const result = Value.allocStack(makeTypeNumber());
+                    const result = Value.allocStack(Type.internNumber());
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .name = null, .value = result });
                 },
@@ -2242,7 +2242,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const target = Value.allocHeap(arg0.value.type_id);
                     Value.copyData(.{ .from = arg0.value, .to = target });
 
-                    const ref = Value.allocStack(makeTypeRef(arg0.value.type_id));
+                    const ref = Value.allocStack(Type.internRef(arg0.value.type_id));
                     ref.setRefElem(target);
                     ref.getProvenance().?.* = .{
                         .lease = .owned,
