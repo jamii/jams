@@ -1053,13 +1053,17 @@ fn failNotDefined(expr_id: ExprId, name: []const u8) error{Error} {
 const TypeId = packed struct {
     id: usize,
 
+    fn getType(type_id: TypeId) Type {
+        return c.types.items[type_id.id];
+    }
+
     fn getRefIndexes(type_id: TypeId) []RefIndex {
         return c.type_to_ref_indexes.items[type_id.id];
     }
 
     fn wordSize(type_id: TypeId) usize {
         // TODO precompute this
-        switch (c.types.items[type_id.id]) {
+        switch (type_id.getType()) {
             .number => return 1,
             .tuple => |tuple| {
                 var size: usize = 0;
@@ -1080,8 +1084,8 @@ const TypeId = packed struct {
 
     fn order(a_id: TypeId, b_id: TypeId) std.math.Order {
         if (a_id == b_id) return .eq;
-        const a = c.types.items[a_id.id];
-        const b = c.types.items[b_id.id];
+        const a = a_id.getType();
+        const b = b_id.getType();
         switch (std.math.order(@intFromEnum(a), @intFromEnum(b))) {
             .lt => return .lt,
             .gt => return .gt,
@@ -1115,7 +1119,7 @@ const TypeId = packed struct {
     }
 
     pub fn format(type_id: TypeId, writer: *std.io.Writer) std.io.Writer.Error!void {
-        try c.types.items[type_id.id].format(writer);
+        try type_id.getType().format(writer);
     }
 };
 
@@ -1272,23 +1276,23 @@ const Value = struct {
     type_id: TypeId,
 
     fn getNumber(value: Value) i64 {
-        _ = c.types.items[value.type_id.id].number;
+        _ = value.type_id.getType().number;
         return @bitCast(value.ptr[0]);
     }
 
     fn getBool(value: Value) bool {
         // Zero is falsey. Everything else is truthy.
-        if (c.types.items[value.type_id.id] != .number) return true;
+        if (value.type_id.getType() != .number) return true;
         return value.getNumber() != 0;
     }
 
     fn setNumber(value: Value, number: i64) void {
-        _ = c.types.items[value.type_id.id].number;
+        _ = value.type_id.getType().number;
         value.ptr[0] = @bitCast(number);
     }
 
     fn getTupleElem(value: Value, index: usize) Value {
-        const tuple = c.types.items[value.type_id.id].tuple;
+        const tuple = value.type_id.getType().tuple;
         return .{
             .ptr = value.ptr + tuple.wordOffset(index),
             .type_id = tuple.elems[index],
@@ -1296,7 +1300,7 @@ const Value = struct {
     }
 
     fn getRefElem(value: Value) Value {
-        const ref = c.types.items[value.type_id.id].ref;
+        const ref = value.type_id.getType().ref;
         return .{
             .ptr = @ptrFromInt(value.ptr[0]),
             .type_id = switch (ref.elem) {
@@ -1307,7 +1311,7 @@ const Value = struct {
     }
 
     fn setRefElem(value: Value, elem: Value) void {
-        const ref = c.types.items[value.type_id.id].ref;
+        const ref = value.type_id.getType().ref;
         if (debug) switch (ref.elem) {
             .known => |known| assert(known == elem.type_id),
             .any => {},
@@ -1361,7 +1365,7 @@ const Value = struct {
 
     // Returns null if `ref.ptr` does not point to `stack_data`.
     fn getProvenance(ref: Value) ?*Provenance {
-        if (debug) assert(c.types.items[ref.type_id.id] == .ref);
+        if (debug) assert(ref.type_id.getType() == .ref);
         const index = getStackIndex(ref) orelse return null;
         return &c.stack_provenance[index];
     }
@@ -1396,7 +1400,7 @@ const Value = struct {
             .gt => return .gt,
             .eq => {},
         }
-        switch (c.types.items[a.type_id.id]) {
+        switch (a.type_id.getType()) {
             .number => return std.math.order(a.getNumber(), b.getNumber()),
             .tuple => |tuple| {
                 for (0..tuple.elems.len) |i| {
@@ -1458,7 +1462,7 @@ const Value = struct {
     }
 
     pub fn format(value: Value, writer: *std.io.Writer) std.io.Writer.Error!void {
-        switch (c.types.items[value.type_id.id]) {
+        switch (value.type_id.getType()) {
             .number => {
                 try writer.print("{}", .{value.getNumber()});
             },
@@ -1747,7 +1751,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
 
             try checkKind(tuple_get.tuple, .{ .expected = .tuple, .actual = tuple.value.type_id });
 
-            if (index < 0 or index >= c.types.items[tuple.value.type_id.id].tuple.elems.len)
+            if (index < 0 or index >= tuple.value.type_id.getType().tuple.elems.len)
                 return fail(
                     .{ .expr_id = expr_id },
                     "Index {} is out of bounds for tuple {f}",
@@ -1771,7 +1775,7 @@ fn evalPattern(expr_id: ExprId) error{Error}!void {
         },
         else => {
             const item = c.stack.pop();
-            switch (c.types.items[item.value.type_id.id]) {
+            switch (item.value.type_id.getType()) {
                 .ref => {
                     defer item.deinit(); // If succesful, we make new refs and the original ref still needs to be cleaned up.
                     try evalPatternRef(expr_id, item.value.getRefElem(), item.value.getProvenance().?.*);
@@ -1802,7 +1806,7 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
         },
         .tuple => |elems| {
             try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
-            if (elems.len != c.types.items[value.type_id.id].tuple.elems.len)
+            if (elems.len != value.type_id.getType().tuple.elems.len)
                 return fail(
                     .{ .expr_id = expr_id },
                     "Expected a tuple of length {} but found {f}",
@@ -1826,7 +1830,7 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
         },
         .tuple => |elems| {
             try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
-            if (elems.len != c.types.items[value.type_id.id].tuple.elems.len)
+            if (elems.len != value.type_id.getType().tuple.elems.len)
                 return fail(
                     .{ .expr_id = expr_id },
                     "Expected a tuple of length {} but found {f}",
@@ -2076,7 +2080,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const closure = c.stack.peek();
 
             try checkKind(call.closure, .{ .expected = .closure, .actual = closure.value.type_id });
-            const @"fn" = &c.fns.items[c.types.items[closure.value.type_id.id].closure.fn_id.id];
+            const @"fn" = &c.fns.items[closure.value.type_id.getType().closure.fn_id.id];
 
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
