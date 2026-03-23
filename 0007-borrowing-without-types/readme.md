@@ -11,3 +11,10 @@ To rewrite tests:
 nix-shell
 zig run -lc ./main.zig -- --rewrite ./test.md
 ```
+
+To build wasm:
+
+```sh
+nix-shell
+zig build-exe -target wasm32-freestanding -fno-entry ./wasm.zig
+```
