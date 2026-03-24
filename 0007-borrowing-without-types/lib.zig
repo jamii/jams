@@ -1682,12 +1682,12 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
 
     const result_moved = Value.allocStackWithoutInit(result.value.type_id);
     // Can't use Value.copyData/Provenance here because the slices might overlap.
-    std.mem.copyBackwards(
+    std.mem.copyForwards(
         usize,
         result_moved.getDataSlice(),
         result.value.getDataSlice(),
     );
-    std.mem.copyBackwards(
+    std.mem.copyForwards(
         Provenance,
         result_moved.getProvenanceSlice().?,
         result.value.getProvenanceSlice().?,
