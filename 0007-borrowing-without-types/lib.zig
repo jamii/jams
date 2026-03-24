@@ -319,10 +319,10 @@ pub fn tokenize() !void {
                     return failBadToken(start);
                 }
             },
-            'a'...'z' => token: {
+            'a'...'z', 'A'...'Z' => token: {
                 while (pos < source.len) {
                     switch (source[pos]) {
-                        'a'...'z' => pos += 1,
+                        'a'...'z', 'A'...'Z', '0'...'9', '_' => pos += 1,
                         else => break,
                     }
                 }
