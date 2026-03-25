@@ -2106,7 +2106,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             for (fn_expr.params, 0..) |param_id, i| {
                 const param = c.exprs.items[param_id.id].param;
-                const item = &c.stack.items[c.stack.len - 1 - i];
+                const item = &c.stack.items[c.stack.len - fn_expr.params.len + i];
                 item.name = param.name;
             }
 

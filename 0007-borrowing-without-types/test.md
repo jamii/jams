@@ -844,3 +844,18 @@ a*
 
 [1, 2, 3]
 ```
+
+```test
+let get = fn (tuple, index) {
+  tuple[index]!
+};
+let a = [1, 2, 3];
+{
+  let b = get(a, 1);
+  b* = 42;
+};
+a
+
+Error at 6:11
+This value shares/borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+```
