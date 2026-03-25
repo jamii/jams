@@ -76,7 +76,7 @@ This value shares/borrows from `x`, but `x` will be destroyed at the end of this
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a path of type `ref(number)`
+Can't assign a value of type `number` to a location of type `ref(number)`
 ```
 
 ```test
@@ -214,7 +214,7 @@ Can't assign to `b` because it is borrowed by TODO
 }
 
 Error at 5:3
-This value shares/borrows from `c`, which will be destroyed before `b` and so can't be owned by `b`
+This value can't be owned by `b` because it shares/borrows from `c`, which will be destroyed before `b`
 ```
 
 ```test
@@ -245,7 +245,7 @@ This value shares/borrows from `c`, which will be destroyed before `b` and so ca
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a path of type `ref(number)`
+Can't assign a value of type `number` to a location of type `ref(number)`
 ```
 
 ```test
@@ -727,7 +727,7 @@ ref(12)
 }
 
 Error at 6:5
-This value shares/borrows from `c`, which will be destroyed before `a` and so can't be owned by `a`
+This value can't be owned by `a` because it shares/borrows from `c`, which will be destroyed before `a`
 ```
 
 ```test
@@ -824,7 +824,7 @@ let a = 1;
 a = [];
 
 Error at 2:1
-Can't assign a value of type `[]` to a path of type `number`
+Can't assign a value of type `[]` to a location of type `number`
 ```
 
 ```test

@@ -981,6 +981,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         },
         .@"fn" => |@"fn"| {
             const scope_start = c.scope.len;
+            defer c.scope.len = scope_start;
 
             const fn_id = FnId{ .id = c.fns.items.len };
 
@@ -1001,11 +1002,6 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             }
 
             try analyze(@"fn".body);
-            _ = c.scope.pop();
-
-            for (@"fn".params) |_| {
-                _ = c.scope.pop();
-            }
         },
         .capture, .param => {
             // Handled directly in @"fn" above.
@@ -1930,11 +1926,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const owner = &c.stack.items[path.provenance.owner];
             if (!owner.ref_count.canMove()) {
                 switch (owner.ref_count.state()) {
-                    .moved => return fail(
-                        .{ .expr_id = expr_id },
-                        "Can't move out of `{s}` because it has already been moved",
-                        .{owner.name.?},
-                    ),
+                    .moved, .available => unreachable,
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it is borrowed by TODO",
@@ -1945,7 +1937,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         "Can't move out of `{s}` because it is shared by TODO",
                         .{owner.name.?},
                     ),
-                    .available => unreachable,
                 }
             }
 
@@ -1972,11 +1963,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const lender = &c.stack.items[path.provenance.lender];
             if (!lender.ref_count.canBorrow()) {
                 switch (lender.ref_count.state()) {
-                    .moved => return fail(
-                        .{ .expr_id = expr_id },
-                        "Can't borrow `{s}` because it has been moved",
-                        .{lender.name.?},
-                    ),
+                    .moved, .available => unreachable,
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it is already borrowed by TODO",
@@ -1987,7 +1974,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         "Can't borrow `{s}` because it is shared by TODO",
                         .{lender.name.?},
                     ),
-                    .available => unreachable,
                 }
             }
 
@@ -2008,17 +1994,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const lender = &c.stack.items[path.provenance.lender];
             if (!lender.ref_count.canShare()) {
                 switch (lender.ref_count.state()) {
-                    .moved => return fail(
-                        .{ .expr_id = expr_id },
-                        "Can't share `{s}` because it has been moved",
-                        .{lender.name.?},
-                    ),
+                    .moved, .available, .shared => unreachable,
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't share `{s}` because it is borrowed by TODO",
                         .{lender.name.?},
                     ),
-                    .shared, .available => unreachable,
                 }
             }
 
@@ -2177,7 +2158,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     if (path.value.type_id != arg1.value.type_id) {
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't assign a value of type `{f}` to a path of type `{f}`",
+                            "Can't assign a value of type `{f}` to a location of type `{f}`",
                             .{ arg1.value.type_id, path.value.type_id },
                         );
                     }
@@ -2199,8 +2180,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                     const elem_item = &c.stack.items[elem_provenance.lender];
                                     return fail(
                                         .{ .expr_id = expr_id },
-                                        "This value shares/borrows from `{s}`, which will be destroyed before `{s}` and so can't be owned by `{s}`",
-                                        .{ elem_item.name.?, ref_item.name.?, ref_item.name.? },
+                                        "This value can't be owned by `{s}` because it shares/borrows from `{s}`, which will be destroyed before `{s}`",
+                                        .{ ref_item.name.?, elem_item.name.?, ref_item.name.? },
                                     );
                                 }
                             },
