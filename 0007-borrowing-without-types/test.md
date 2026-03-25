@@ -35,7 +35,7 @@
 }
 
 Error at 1:1
-This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
+This value shares from `x`, but `x` will be destroyed at the end of this block
 ```
 
 ```test
@@ -45,7 +45,7 @@ This value shares/borrows from `x`, but `x` will be destroyed at the end of this
 }
 
 Error at 1:1
-This value shares/borrows from `x`, but `x` will be destroyed at the end of this block
+This value borrows from `x`, but `x` will be destroyed at the end of this block
 ```
 
 ```test
@@ -214,7 +214,7 @@ Can't assign to `b` because it is borrowed by TODO
 }
 
 Error at 5:3
-This value can't be owned by `b` because it shares/borrows from `c`, which will be destroyed before `b`
+This value can't be owned by `b` because it borrows from `c`, which will be destroyed before `b`
 ```
 
 ```test
@@ -391,7 +391,7 @@ Can't refer to `a` here because it is defined outside this function - try using 
 }
 
 Error at 1:1
-This value shares/borrows from `a`, but `a` will be destroyed at the end of this block
+This value shares from `a`, but `a` will be destroyed at the end of this block
 ```
 
 ```test
@@ -612,7 +612,7 @@ Can't assign to `b` because it is shared with TODO
 }
 
 Error at 3:3
-This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+This value shares from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -626,7 +626,7 @@ This value shares/borrows from `b`, but `b` will be destroyed at the end of this
 }
 
 Error at 3:3
-This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
+This value shares from `c`, but `c` will be destroyed at the end of this block
 ```
 
 ```test
@@ -640,7 +640,7 @@ This value shares/borrows from `c`, but `c` will be destroyed at the end of this
 }
 
 Error at 3:3
-This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+This value shares from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -653,7 +653,7 @@ This value shares/borrows from `b`, but `b` will be destroyed at the end of this
 }
 
 Error at 3:3
-This value shares/borrows from `b`, but `b` will be destroyed at the end of this block
+This value borrows from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -667,7 +667,7 @@ This value shares/borrows from `b`, but `b` will be destroyed at the end of this
 }
 
 Error at 3:3
-This value shares/borrows from `c`, but `c` will be destroyed at the end of this block
+This value borrows from `c`, but `c` will be destroyed at the end of this block
 ```
 
 ```test
@@ -727,7 +727,7 @@ ref(12)
 }
 
 Error at 6:5
-This value can't be owned by `a` because it shares/borrows from `c`, which will be destroyed before `a`
+This value can't be owned by `a` because it shares from `c`, which will be destroyed before `a`
 ```
 
 ```test
@@ -742,7 +742,7 @@ This value can't be owned by `a` because it shares/borrows from `c`, which will 
 }
 
 Error at 1:1
-This value shares/borrows from `z`, but `z` will be destroyed at the end of this block
+This value shares from `z`, but `z` will be destroyed at the end of this block
 ```
 
 ```test
@@ -857,5 +857,31 @@ let a = [1, 2, 3];
 a
 
 Error at 6:11
-This value shares/borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+This value borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+```
+
+```test
+let get = fn (tuple, index) {
+  tuple*[index]!
+};
+let a = [1, 2, 3];
+{
+  let b = get(a!, 1);
+  b* = 42;
+};
+a
+
+Error at 6:11
+This value borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+```
+
+```test
+let get = fn (tuple, index) {
+  tuple*[index]&
+};
+let a = [1, 2, 3];
+let b = get(a&, 1);
+b*
+
+2
 ```

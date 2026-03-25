@@ -1665,8 +1665,12 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
                     const item = &c.stack.items[provenance.lender];
                     return fail(
                         .{ .expr_id = expr_id },
-                        "This value shares/borrows from `{s}`, but `{s}` will be destroyed at the end of this block",
-                        .{ item.name.?, item.name.? },
+                        "This value {s} from `{s}`, but `{s}` will be destroyed at the end of this block",
+                        .{ switch (provenance.lease) {
+                            .not_a_ref, .owned => unreachable,
+                            .borrowed => "borrows",
+                            .shared => "shares",
+                        }, item.name.?, item.name.? },
                     );
                 }
             },
@@ -2180,8 +2184,17 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                     const elem_item = &c.stack.items[elem_provenance.lender];
                                     return fail(
                                         .{ .expr_id = expr_id },
-                                        "This value can't be owned by `{s}` because it shares/borrows from `{s}`, which will be destroyed before `{s}`",
-                                        .{ ref_item.name.?, elem_item.name.?, ref_item.name.? },
+                                        "This value can't be owned by `{s}` because it {s} from `{s}`, which will be destroyed before `{s}`",
+                                        .{
+                                            ref_item.name.?,
+                                            switch (elem_provenance.lease) {
+                                                .not_a_ref, .owned => unreachable,
+                                                .borrowed => "borrows",
+                                                .shared => "shares",
+                                            },
+                                            elem_item.name.?,
+                                            ref_item.name.?,
+                                        },
                                     );
                                 }
                             },
