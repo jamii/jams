@@ -611,8 +611,7 @@ Can't assign to `b` because it is shared with TODO
   };
 }
 
-Error at 3:3
-This value shares from `b`, but `b` will be destroyed at the end of this block
+[]
 ```
 
 ```test
@@ -626,7 +625,7 @@ This value shares from `b`, but `b` will be destroyed at the end of this block
 }
 
 Error at 3:3
-This value shares from `c`, but `c` will be destroyed at the end of this block
+This value borrows from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -652,8 +651,7 @@ This value shares from `b`, but `b` will be destroyed at the end of this block
   };
 }
 
-Error at 3:3
-This value borrows from `b`, but `b` will be destroyed at the end of this block
+[]
 ```
 
 ```test
@@ -666,8 +664,7 @@ This value borrows from `b`, but `b` will be destroyed at the end of this block
   };
 }
 
-Error at 3:3
-This value borrows from `c`, but `c` will be destroyed at the end of this block
+[]
 ```
 
 ```test
@@ -871,8 +868,7 @@ let a = [1, 2, 3];
 };
 a
 
-Error at 6:11
-This value borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+[1, 42, 3]
 ```
 
 ```test

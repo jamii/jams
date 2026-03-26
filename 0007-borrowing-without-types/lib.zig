@@ -1413,11 +1413,7 @@ const Value = struct {
                 @memcpy(to_provenance_slice, from_provenance_slice);
             } else {
                 for (args.to.type_id.getRefIndexes()) |ref_index| {
-                    to_provenance_slice[ref_index.word_offset] = .{
-                        .lease = .owned,
-                        .owner = 0,
-                        .lender = 0,
-                    };
+                    to_provenance_slice[ref_index.word_offset] = .owned;
                 }
             }
         }
@@ -1611,15 +1607,30 @@ const RefCount = packed struct {
 };
 
 const Provenance = packed struct {
+    // If `lease == .not_a_ref` then the remaining fields are meaningless.
     lease: Lease,
-    // `owner` and `lender` are only meaningful if `lease == .borrowed` or `lease == .shared`.
+    // The variable which owns this ref.
+    // Will be 0 for owned refs at rest - `evalPath` should fill this value in.
     owner: StackIndex,
+    // The variable whose refcount we should decrement on drop.
     lender: StackIndex,
+    // The ref from which this ref was re-borrowed, or 0 if this ref was not re-borrowed.
+    lender_ref: StackIndex,
+    // This is used to solve an awkward operation ordering during reparenting, and should be false at any other time.
+    was_reparented: bool = false,
 
     const not_a_ref = Provenance{
         .lease = .not_a_ref,
         .owner = 0,
         .lender = 0,
+        .lender_ref = 0,
+    };
+
+    const owned = Provenance{
+        .lease = .owned,
+        .owner = 0,
+        .lender = 0,
+        .lender_ref = 0,
     };
 };
 
@@ -1656,22 +1667,52 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     }
 
     for (result.value.type_id.getRefIndexes()) |ref_index| {
-        const provenance = result.value.getRefAtIndex(ref_index).getProvenance().?;
-        switch (provenance.lease) {
+        const prov_old = result.value.getRefAtIndex(ref_index).getProvenance().?;
+        switch (prov_old.lease) {
             .not_a_ref => unreachable,
             .owned => {},
             .borrowed, .shared => {
-                if (provenance.lender >= stack_start) {
-                    const item = &c.stack.items[provenance.lender];
-                    return fail(
-                        .{ .expr_id = expr_id },
-                        "This value {s} from `{s}`, but `{s}` will be destroyed at the end of this block",
-                        .{ switch (provenance.lease) {
-                            .not_a_ref, .owned => unreachable,
-                            .borrowed => "borrows",
-                            .shared => "shares",
-                        }, item.name.?, item.name.? },
-                    );
+                if (prov_old.lender >= stack_start) {
+                    // Try to reparent this ref.
+                    var prov_new = prov_old;
+                    while (prov_new.lender >= stack_start and prov_new.lender_ref != 0) {
+                        prov_new = &c.stack_provenance[prov_new.lender_ref];
+                    }
+                    if (prov_new.lender >= stack_start) {
+                        const item = &c.stack.items[prov_new.lender];
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This value {s} from `{s}`, but `{s}` will be destroyed at the end of this block",
+                            .{ switch (prov_new.lease) {
+                                .not_a_ref, .owned => unreachable,
+                                .borrowed => "borrows",
+                                .shared => "shares",
+                            }, item.name.?, item.name.? },
+                        );
+                    }
+                    switch (prov_old.lease) {
+                        .borrowed => {
+                            c.stack.items[prov_old.lender].ref_count.dropBorrow();
+                            prov_old.* = .{
+                                .lease = .borrowed,
+                                .owner = prov_new.owner,
+                                .lender = prov_new.lender,
+                                .lender_ref = prov_new.lender_ref,
+                                .was_reparented = true,
+                            };
+                        },
+                        .shared => {
+                            c.stack.items[prov_old.lender].ref_count.dropShare();
+                            prov_old.* = .{
+                                .lease = .shared,
+                                .owner = prov_new.owner,
+                                .lender = prov_new.lender,
+                                .lender_ref = prov_new.lender_ref,
+                                .was_reparented = true,
+                            };
+                        },
+                        .not_a_ref, .owned => unreachable,
+                    }
                 }
             },
         }
@@ -1679,6 +1720,21 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
 
     while (c.stack.len > stack_start) c.stack.pop().deinit();
     c.stack_top = stack_data_start;
+
+    for (result.value.type_id.getRefIndexes()) |ref_index| {
+        const provenance = result.value.getRefAtIndex(ref_index).getProvenance().?;
+        if (provenance.was_reparented) {
+            switch (provenance.lease) {
+                .borrowed => {
+                    c.stack.items[provenance.lender].ref_count.borrow();
+                },
+                .shared => {
+                    c.stack.items[provenance.lender].ref_count.share();
+                },
+                .not_a_ref, .owned => unreachable,
+            }
+        }
+    }
 
     const result_moved = Value.allocStackWithoutInit(result.value.type_id);
     // Can't use Value.copyData/Provenance here because the slices might overlap.
@@ -1747,6 +1803,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .lease = .owned,
                     .owner = stack_index,
                     .lender = stack_index,
+                    .lender_ref = 0,
                 },
             };
         },
@@ -1763,18 +1820,24 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .lease = .owned,
                     .owner = path.provenance.owner,
                     .lender = path.provenance.lender,
+                    .lender_ref = 0,
                 };
             const lender = if (ref_provenance.lease != .shared)
                 // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
                 path.provenance.lender
             else
                 ref_provenance.owner;
+            const lender_ref = if (ref_provenance.lease == .borrowed)
+                path.value.getStackIndex().?
+            else
+                0;
             return .{
                 .value = path.value.getRefElem(),
                 .provenance = .{
                     .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
                     .owner = ref_provenance.owner,
                     .lender = lender,
+                    .lender_ref = lender_ref,
                 },
             };
         },
@@ -1990,6 +2053,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 .lease = .borrowed,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
+                .lender_ref = path.provenance.lender_ref,
             };
             c.stack.push(.{ .name = null, .value = ref });
         },
@@ -2016,6 +2080,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 .lease = .shared,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
+                .lender_ref = path.provenance.lender_ref,
             };
             c.stack.push(.{ .name = null, .value = ref });
         },
@@ -2276,11 +2341,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const ref = Value.allocStack(Type.internRef(arg0.value.type_id));
                     ref.setRefElem(target);
-                    ref.getProvenance().?.* = .{
-                        .lease = .owned,
-                        .owner = 0,
-                        .lender = 0,
-                    };
+                    ref.getProvenance().?.* = .owned;
 
                     c.stack.push(.{ .name = null, .value = ref });
                 },
