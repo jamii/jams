@@ -51,6 +51,7 @@ async function load(wasm_url, CodeJar) {
     const source = pre.innerText.split("\n\n")[0];
     const result = run(source);
     const parent_node = document.createElement("div");
+    parent_node.className = "test";
     const source_node = document.createElement("div");
     source_node.jar = CodeJar(source_node, (editor) => {});
     source_node.className = "test-source";
