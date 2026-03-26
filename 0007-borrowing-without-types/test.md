@@ -881,3 +881,30 @@ b*
 
 2
 ```
+
+```test
+let a = ref_any(1);
+a = ref_any([1, 2, 3]);
+a*
+
+[1, 2, 3]
+```
+
+```test
+let f = fn (x) { x + 1 };
+let g = fn (x) { x + 1 + 1 };
+let a = ref_any(f);
+a = ref_any(g);
+a*(3)
+
+5
+```
+
+```test
+let a = ref_any(1);
+a* = [1, 2, 3];
+a*
+
+Error at 2:1
+Can't assign a value of type `[number, number, number]` to a location of type `number`
+```

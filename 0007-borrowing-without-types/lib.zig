@@ -61,6 +61,7 @@ const Compiler = struct {
     type_tuple_empty: ?TypeId,
     type_tuple: std.HashMap([]TypeId, TypeId, TypeIdsHashContext, std.hash_map.default_max_load_percentage),
     type_ref: std.AutoHashMap(TypeId, TypeId),
+    type_ref_any: ?TypeId,
     type_closure: std.AutoHashMap(FnId, TypeId),
 
     error_message: ?[]u8,
@@ -94,6 +95,7 @@ const Compiler = struct {
             .type_tuple_empty = null,
             .type_tuple = .init(allocator),
             .type_ref = .init(allocator),
+            .type_ref_any = null,
             .type_closure = .init(allocator),
 
             .error_message = null,
@@ -277,6 +279,7 @@ const Token = enum {
     @"while",
     @"fn",
     ref,
+    ref_any,
 
     // Tokens whose text matters.
     name,
@@ -334,6 +337,7 @@ pub fn tokenize() !void {
                     .@"while",
                     .@"fn",
                     .ref,
+                    .ref_any,
                 };
                 for (keywords) |keyword| {
                     if (std.mem.eql(u8, name, @tagName(keyword)))
@@ -459,6 +463,7 @@ const Builtin = enum {
     @"+",
     @"<",
     ref,
+    ref_any,
 };
 
 fn parse() error{Error}!ExprId {
@@ -599,7 +604,7 @@ fn parseExprBase() error{Error}!ExprId {
         .@"if" => parseIf(),
         .@"while" => parseWhile(),
         .@"fn" => parseFn(),
-        .ref => parseCallBuiltin(),
+        .ref, .ref_any => parseCallBuiltin(),
         else => failExpected("an expression"),
     };
 }
@@ -792,6 +797,7 @@ fn parseCallBuiltin() error{Error}!ExprId {
 
     const builtin: Builtin = switch (peek()) {
         .ref => .ref,
+        .ref_any => .ref_any,
         else => return failExpected("a builtin function"),
     };
     _ = take();
@@ -1021,7 +1027,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         .call_builtin => |call_builtin| {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
-                    .ref => 1,
+                    .ref, .ref_any => 1,
                     .@"=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1037,7 +1043,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .ref, .@"+", .@"<" => {
+                .ref, .ref_any, .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -1132,6 +1138,12 @@ const Type = union(enum) {
         const type_id = internUnchecked(.{ .ref = .{ .elem = .{ .known = elem } } });
         c.type_ref.putNoClobber(elem, type_id) catch oom();
         return type_id;
+    }
+
+    fn internRefAny() TypeId {
+        if (c.type_ref_any == null)
+            c.type_ref_any = internUnchecked(.{ .ref = .{ .elem = .any } });
+        return c.type_ref_any.?;
     }
 
     fn internClosure(fn_id: FnId) TypeId {
@@ -1342,10 +1354,15 @@ const Value = struct {
     fn setRefElem(value: Value, elem: Value) void {
         const ref = value.type_id.getType().ref;
         if (debug) switch (ref.elem) {
-            .known => |known| assert(known == elem.type_id),
-            .any => {},
+            .known => |known| {
+                assert(known == elem.type_id);
+                value.ptr[0] = @intFromPtr(elem.ptr);
+            },
+            .any => {
+                value.ptr[0] = @intFromPtr(elem.ptr);
+                value.ptr[1] = @bitCast(elem.type_id);
+            },
         };
-        value.ptr[0] = @intFromPtr(elem.ptr);
     }
 
     fn allocStackWithoutInit(type_id: TypeId) Value {
@@ -2314,7 +2331,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .name = null, .value = result });
                 },
-                .ref => {
+                .ref, .ref_any => {
                     try eval(call_builtin.args[0]);
 
                     const arg0 = c.stack.pop();
@@ -2339,7 +2356,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const target = Value.allocHeap(arg0.value.type_id);
                     Value.copyData(.{ .from = arg0.value, .to = target });
 
-                    const ref = Value.allocStack(Type.internRef(arg0.value.type_id));
+                    const ref = Value.allocStack(switch (call_builtin.builtin) {
+                        .ref => Type.internRef(arg0.value.type_id),
+                        .ref_any => Type.internRefAny(),
+                        else => unreachable,
+                    });
                     ref.setRefElem(target);
                     ref.getProvenance().?.* = .owned;
 
