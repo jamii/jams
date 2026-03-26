@@ -354,17 +354,6 @@ Can't refer to `a` here because it is defined outside this function - try using 
 
 ```test
 {
-  let a = 1;
-  let f = fn [a] () { a };
-  f()
-}
-
-Error at 3:23
-Can't refer to `a` here because it is defined outside this function - try using an explicit capture instead.
-```
-
-```test
-{
   let a = [1, 2, 3];
   let [b, c, d] = a;
   [b, c, d]
@@ -907,4 +896,26 @@ a*
 
 Error at 2:1
 Can't assign a value of type `[number, number, number]` to a location of type `number`
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [b] () { b };
+  f()
+}
+
+Error at 3:15
+Name `b` is not defined at this point
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a] () { a };
+  f()
+}
+
+Error at 3:15
+Can't refer to `a` here because it is defined outside this function - try using an explicit capture instead.
 ```

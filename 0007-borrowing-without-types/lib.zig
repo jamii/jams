@@ -44,7 +44,7 @@ const Compiler = struct {
     token_to_range: ArrayList([2]usize),
 
     // parse
-    expr_len: ?ExprId,
+    expr_top: ?ExprId,
     exprs: ArrayList(Expr),
     expr_to_tokens: ArrayList([2]TokenId),
     token_next: TokenId,
@@ -66,10 +66,10 @@ const Compiler = struct {
     type_to_ref_indexes: ArrayList([]RefIndex),
     type_number: ?TypeId,
     type_tuple_empty: ?TypeId,
-    type_tuple: std.HashMap([]TypeId, TypeId, TypeIdsHashContext, std.hash_map.default_max_load_percentage),
-    type_ref: std.AutoHashMap(TypeId, TypeId),
+    type_tuple: std.HashMap(TypeTuple, TypeId, TypeTupleHashContext, std.hash_map.default_max_load_percentage),
+    type_ref: std.AutoHashMap(TypeRef, TypeId),
     type_ref_any: ?TypeId,
-    type_closure: std.AutoHashMap(FnId, TypeId),
+    type_closure: std.HashMap(TypeClosure, TypeId, TypeClosureHashContext, std.hash_map.default_max_load_percentage),
 
     error_message: ?[]u8,
 
@@ -80,7 +80,7 @@ const Compiler = struct {
             .tokens = .{},
             .token_to_range = .{},
 
-            .expr_len = null,
+            .expr_top = null,
             .exprs = .{},
             .expr_to_tokens = .{},
             .token_next = .{ .id = 0 },
@@ -140,24 +140,24 @@ const Compiler = struct {
     }
 };
 
-const TypeIdsHashContext = struct {
-    pub fn eql(_: @This(), type_ids_a: []TypeId, type_ids_b: []TypeId) bool {
-        return std.mem.eql(TypeId, type_ids_a, type_ids_b);
+const TypeTupleHashContext = struct {
+    pub fn eql(_: @This(), tuple_a: TypeTuple, tuple_b: TypeTuple) bool {
+        return std.mem.eql(TypeId, tuple_a.elems, tuple_b.elems);
     }
 
-    pub fn hash(_: @This(), type_ids: []TypeId) u64 {
+    pub fn hash(_: @This(), tuple: TypeTuple) u64 {
         var hasher = std.hash.Wyhash.init(0);
-        for (type_ids) |type_id|
-            std.hash.autoHash(&hasher, type_id);
+        for (tuple.elems) |elem|
+            std.hash.autoHash(&hasher, elem);
         return hasher.final();
     }
 };
 
-const StackItemsHashContext = struct {
-    pub fn eql(_: @This(), items: []StackItem, type_ids: []TypeId) bool {
-        if (items.len != type_ids.len) return false;
-        for (items, type_ids) |item, type_id|
-            if (item.value.type_id != type_id) return false;
+const TypeTupleAdaptedHashContext = struct {
+    pub fn eql(_: @This(), items: []StackItem, tuple: TypeTuple) bool {
+        if (items.len != tuple.elems.len) return false;
+        for (items, tuple.elems) |item, elem|
+            if (item.value.type_id != elem) return false;
         return true;
     }
 
@@ -169,9 +169,49 @@ const StackItemsHashContext = struct {
     }
 };
 
+const TypeClosureHashContext = struct {
+    pub fn eql(_: @This(), closure_a: TypeClosure, closure_b: TypeClosure) bool {
+        if (closure_a.fn_id != closure_b.fn_id) return false;
+        return std.mem.eql(TypeId, closure_a.captures, closure_b.captures);
+    }
+
+    pub fn hash(_: @This(), closure: TypeClosure) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, closure.fn_id);
+        for (closure.captures) |capture|
+            std.hash.autoHash(&hasher, capture);
+        return hasher.final();
+    }
+};
+
+const TypeClosureAdaptedHashContext = struct {
+    const Key = struct {
+        fn_id: FnId,
+        captures_tuple: *StackItem,
+    };
+
+    pub fn eql(_: @This(), key: Key, closure: TypeClosure) bool {
+        if (key.fn_id != closure.fn_id) return false;
+        const tuple = key.captures_tuple.value.type_id.getType().tuple;
+        if (tuple.elems.len != closure.captures.len) return false;
+        for (tuple.elems, closure.captures) |elem, capture|
+            if (elem != capture) return false;
+        return true;
+    }
+
+    pub fn hash(_: @This(), key: Key) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, key.fn_id);
+        const tuple = key.captures_tuple.value.type_id.getType().tuple;
+        for (tuple.elems) |elem|
+            std.hash.autoHash(&hasher, elem);
+        return hasher.final();
+    }
+};
+
 const stack_size = 1024 * 1024;
 
-const StackIndex = std.math.IntFittingRange(0, stack_size);
+const StackIndex = std.math.IntFittingRange(0, stack_size - 1);
 
 fn Stack(comptime Item: type) type {
     return struct {
@@ -209,9 +249,9 @@ fn Stack(comptime Item: type) type {
 
 pub fn run() ![:0]u8 {
     try tokenize();
-    c.expr_len = try parse();
-    try analyze(c.expr_len.?);
-    try eval(c.expr_len.?);
+    c.expr_top = try parse();
+    try analyze(c.expr_top.?);
+    try eval(c.expr_top.?);
     assert(c.stack.len == 1);
     const result = c.stack.peek();
     return std.fmt.allocPrintSentinel(allocator, "{f}", .{result.value}, 0);
@@ -425,6 +465,7 @@ const Expr = union(enum) {
         capture_mode: CaptureMode,
         params: []ExprId,
         body: ExprId,
+        captures_expr: ?ExprId,
     },
     capture: struct {
         name: []const u8,
@@ -774,6 +815,8 @@ fn parseFn() error{Error}!ExprId {
             .capture_mode = capture_mode,
             .params = params.toOwnedSlice(allocator) catch oom(),
             .body = body,
+            // Filled in later by analyze.
+            .captures_expr = null,
         },
     });
 }
@@ -901,7 +944,7 @@ fn resolve(name: []const u8) ?usize {
 
 fn analyzePath(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get => |*get| {
+        .get => |get| {
             const scope_index = resolve(get.name) orelse
                 return failNotDefined(expr_id, get.name);
 
@@ -916,7 +959,7 @@ fn analyzePath(expr_id: ExprId) error{Error}!void {
                 }
             }
 
-            get.stack_reverse_index = @intCast(c.scope.len - scope_index);
+            c.exprs.items[expr_id.id].get.stack_reverse_index = @intCast(c.scope.len - scope_index);
         },
         .deref => |path| {
             try analyzePath(path);
@@ -1012,9 +1055,37 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
+            const capture_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
+            for (capture_exprs, @"fn".captures) |*capture_expr, capture_id| {
+                const capture = c.exprs.items[capture_id.id].capture;
+                const start = c.expr_to_tokens.items[capture_id.id][0];
+                const get = pushExpr(start, .{ .get = .{
+                    .name = capture.name,
+                    .stack_reverse_index = 0,
+                    .allow_moved = false,
+                } });
+                capture_expr.* = switch (capture.mode) {
+                    .move => pushExpr(start, .{ .move = get }),
+                    .borrow => pushExpr(start, .{ .borrow = get }),
+                    .share => pushExpr(start, .{ .share = get }),
+                    .copy => get,
+                };
+            }
+            const fn_start = c.expr_to_tokens.items[expr_id.id][0]; // TODO This is slightly off.
+            const captures_expr = pushExpr(fn_start, .{ .tuple = capture_exprs });
+            c.exprs.items[expr_id.id].@"fn".captures_expr = captures_expr;
+
+            try analyze(captures_expr);
+            _ = c.scope.pop();
+
             for (@"fn".params) |param_id| {
                 const param = c.exprs.items[param_id.id].param;
                 c.scope.push(.{ .name = param.name });
+            }
+
+            for (@"fn".captures) |capture_id| {
+                const capture = c.exprs.items[capture_id.id].capture;
+                c.scope.push(.{ .name = capture.name });
             }
 
             try analyze(@"fn".body);
@@ -1023,7 +1094,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             // Handled directly in @"fn" above.
             unreachable;
         },
-        .call => |*call| {
+        .call => |call| {
             try analyze(call.closure);
 
             for (call.args) |arg|
@@ -1135,18 +1206,20 @@ const Type = union(enum) {
 
     fn internTuple(items: []StackItem) TypeId {
         if (items.len == 0) return internTupleEmpty();
-        if (c.type_tuple.getAdapted(items, StackItemsHashContext{})) |type_id| return type_id;
+        if (c.type_tuple.getAdapted(items, TypeTupleAdaptedHashContext{})) |type_id| return type_id;
         const elems = allocator.alloc(TypeId, items.len) catch oom();
         for (elems, items) |*elem, item| elem.* = item.value.type_id;
-        const type_id = internUnchecked(.{ .tuple = .{ .elems = elems } });
-        c.type_tuple.putNoClobber(elems, type_id) catch oom();
+        const tuple = TypeTuple{ .elems = elems };
+        const type_id = internUnchecked(.{ .tuple = tuple });
+        c.type_tuple.putNoClobber(tuple, type_id) catch oom();
         return type_id;
     }
 
     fn internRef(elem: TypeId) TypeId {
-        if (c.type_ref.get(elem)) |type_id| return type_id;
-        const type_id = internUnchecked(.{ .ref = .{ .elem = .{ .known = elem } } });
-        c.type_ref.putNoClobber(elem, type_id) catch oom();
+        const ref = TypeRef{ .elem = .{ .known = elem } };
+        if (c.type_ref.get(ref)) |type_id| return type_id;
+        const type_id = internUnchecked(.{ .ref = ref });
+        c.type_ref.putNoClobber(ref, type_id) catch oom();
         return type_id;
     }
 
@@ -1156,10 +1229,16 @@ const Type = union(enum) {
         return c.type_ref_any.?;
     }
 
-    fn internClosure(fn_id: FnId) TypeId {
-        if (c.type_closure.get(fn_id)) |type_id| return type_id;
-        const type_id = internUnchecked(.{ .closure = .{ .fn_id = fn_id } });
-        c.type_closure.putNoClobber(fn_id, type_id) catch oom();
+    fn internClosure(fn_id: FnId, captures_tuple: *StackItem) TypeId {
+        if (c.type_closure.getAdapted(
+            TypeClosureAdaptedHashContext.Key{ .fn_id = fn_id, .captures_tuple = captures_tuple },
+            TypeClosureAdaptedHashContext{},
+        )) |type_id| return type_id;
+        const tuple = captures_tuple.value.type_id.getType().tuple;
+        const captures = allocator.dupe(TypeId, tuple.elems) catch oom();
+        const closure = TypeClosure{ .fn_id = fn_id, .captures = captures };
+        const type_id = internUnchecked(.{ .closure = closure });
+        c.type_closure.putNoClobber(closure, type_id) catch oom();
         return type_id;
     }
 
@@ -1313,8 +1392,11 @@ const TypeRef = struct {
 
 const TypeClosure = struct {
     fn_id: FnId,
+    captures: []TypeId,
 
-    fn deinit(_: TypeClosure) void {}
+    fn deinit(closure: TypeClosure) void {
+        allocator.free(closure.captures);
+    }
 };
 
 const RefIndex = struct {
@@ -2169,17 +2251,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
             }
             stackPushEmptyTuple();
         },
-        .@"fn" => {
-            errdefer comptime unreachable;
-
+        .@"fn" => |@"fn"| {
             const fn_id = c.expr_to_fn.get(expr_id).?;
-            c.stack.push(.{
-                .name = null,
-                .value = .{
-                    .ptr = c.stack_data.ptr,
-                    .type_id = Type.internClosure(fn_id),
-                },
-            });
+            try eval(@"fn".captures_expr.?);
+            const captures = c.stack.peek();
+            captures.value.type_id = Type.internClosure(fn_id, captures);
         },
         .capture, .param => {
             // Handled directly in .call below.
