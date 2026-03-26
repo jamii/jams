@@ -2,9 +2,12 @@ const std = @import("std");
 
 const lib = @import("./lib.zig");
 
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
 pub fn main() !void {
     const cwd = std.fs.cwd();
-    var args = try std.process.argsAlloc(lib.allocator);
+    var args = try std.process.argsAlloc(allocator);
     args = args[1..];
 
     var rewrite = false;
@@ -23,15 +26,15 @@ pub fn main() !void {
 
         var rewritten: std.ArrayList(u8) = .{};
 
-        const text = try file.readToEndAlloc(lib.allocator, std.math.maxInt(usize));
+        const text = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
 
         var cases = std.mem.splitSequence(u8, text, "```");
         while (true) {
             const not_case = cases.next().?;
-            try rewritten.appendSlice(lib.allocator, not_case);
+            try rewritten.appendSlice(allocator, not_case);
             const case = cases.next() orelse break;
             if (!std.mem.startsWith(u8, case, "test")) {
-                try rewritten.print(lib.allocator,
+                try rewritten.print(allocator,
                     \\```{s}```
                 , .{case});
                 continue;
@@ -43,34 +46,39 @@ pub fn main() !void {
 
             //std.debug.print("{s}\n\n", .{source});
 
-            lib.c = .init(source);
-            defer lib.c.deinit();
+            {
+                lib.c = .init(source);
+                defer lib.c.deinit();
 
-            const actual = lib.run() catch (lib.allocator.dupeZ(u8, lib.c.error_message.?) catch lib.oom());
-            defer lib.allocator.free(actual);
+                const actual = lib.run() catch (lib.allocator.dupeZ(u8, lib.c.error_message.?) catch lib.oom());
+                defer lib.allocator.free(actual);
 
-            //std.debug.print("{s}\n\n", .{actual});
+                //std.debug.print("{s}\n\n", .{actual});
 
-            if (!std.mem.eql(u8, expected, actual)) {
-                std.debug.print(
-                    \\=== source ===
-                    \\{s}
-                    \\--- expected ---
-                    \\{s}
-                    \\--- actual ---
+                if (!std.mem.eql(u8, expected, actual)) {
+                    std.debug.print(
+                        \\=== source ===
+                        \\{s}
+                        \\--- expected ---
+                        \\{s}
+                        \\--- actual ---
+                        \\{s}
+                        \\
+                        \\
+                    , .{ source, expected, actual });
+                    failures += 1;
+                }
+                try rewritten.print(allocator,
+                    \\```test
                     \\{s}
                     \\
-                    \\
-                , .{ source, expected, actual });
-                failures += 1;
+                    \\{s}
+                    \\```
+                , .{ source, actual });
             }
-            try rewritten.print(lib.allocator,
-                \\```test
-                \\{s}
-                \\
-                \\{s}
-                \\```
-            , .{ source, actual });
+
+            if (lib.debug_allocator.detectLeaks())
+                failures += 1;
         }
 
         if (rewrite) {

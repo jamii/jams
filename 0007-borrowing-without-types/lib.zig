@@ -3,9 +3,16 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const panic = std.debug.panic;
 
+pub var debug_allocator = std.heap.DebugAllocator(.{
+    .safety = true,
+    .never_unmap = true,
+    .retain_metadata = true,
+    .resize_stack_traces = true,
+}){};
+
 pub const allocator = switch (@import("builtin").target.cpu.arch) {
     .wasm32, .wasm64 => std.heap.wasm_allocator,
-    else => std.heap.c_allocator,
+    else => debug_allocator.allocator(),
 };
 
 pub fn oom() noreturn {
@@ -443,7 +450,10 @@ const Expr = union(enum) {
         switch (expr) {
             .tuple => |exprs| allocator.free(exprs),
             .block => |block| allocator.free(block.statements),
-            .@"fn" => |@"fn"| allocator.free(@"fn".params),
+            .@"fn" => |@"fn"| {
+                allocator.free(@"fn".captures);
+                allocator.free(@"fn".params);
+            },
             .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
             .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .capture, .param, .tuple_get => {},
