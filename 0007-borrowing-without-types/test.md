@@ -916,6 +916,5 @@ Name `b` is not defined at this point
   f()
 }
 
-Error at 3:15
-Can't refer to `a` here because it is defined outside this function - try using an explicit capture instead.
+1
 ```

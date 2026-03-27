@@ -437,8 +437,8 @@ const Expr = union(enum) {
     tuple: []ExprId,
     get: struct {
         name: []const u8,
-        stack_reverse_index: StackIndex,
-        allow_moved: bool,
+        stack_reverse_index: StackIndex = 0,
+        allow_moved: bool = false,
     },
     move: ExprId,
     borrow: ExprId,
@@ -702,12 +702,7 @@ fn parseGet() error{Error}!ExprId {
     const start = c.token_next;
     const name = try expectName();
     return pushExpr(start, .{
-        .get = .{
-            .name = name,
-            // These are filled in later by `analyze`.
-            .stack_reverse_index = 0,
-            .allow_moved = false,
-        },
+        .get = .{ .name = name },
     });
 }
 
@@ -1042,6 +1037,26 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             const scope_start = c.scope.len;
             defer c.scope.len = scope_start;
 
+            // Desugar the capture into an equivalent expression.
+            const capture_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
+            for (capture_exprs, @"fn".captures) |*capture_expr, capture_id| {
+                const capture = c.exprs.items[capture_id.id].capture;
+                const start = c.expr_to_tokens.items[capture_id.id][0];
+                const get = pushExpr(start, .{ .get = .{ .name = capture.name } });
+                capture_expr.* = switch (capture.mode) {
+                    .move => pushExpr(start, .{ .move = get }),
+                    .borrow => pushExpr(start, .{ .borrow = get }),
+                    .share => pushExpr(start, .{ .share = get }),
+                    .copy => get,
+                };
+            }
+            const fn_start = c.expr_to_tokens.items[expr_id.id][0]; // TODO This is slightly off.
+            const captures_expr = pushExpr(fn_start, .{ .tuple = capture_exprs });
+            c.exprs.items[expr_id.id].@"fn".captures_expr = captures_expr;
+
+            try analyze(captures_expr);
+            c.scope.peek().name = "<closure>";
+
             const fn_id = FnId{ .id = c.fns.items.len };
 
             const parent = c.fn_id_current;
@@ -1055,40 +1070,58 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             }) catch oom();
             c.expr_to_fn.put(expr_id, fn_id) catch oom();
 
-            const capture_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
-            for (capture_exprs, @"fn".captures) |*capture_expr, capture_id| {
-                const capture = c.exprs.items[capture_id.id].capture;
-                const start = c.expr_to_tokens.items[capture_id.id][0];
-                const get = pushExpr(start, .{ .get = .{
-                    .name = capture.name,
-                    .stack_reverse_index = 0,
-                    .allow_moved = false,
-                } });
-                capture_expr.* = switch (capture.mode) {
-                    .move => pushExpr(start, .{ .move = get }),
-                    .borrow => pushExpr(start, .{ .borrow = get }),
-                    .share => pushExpr(start, .{ .share = get }),
-                    .copy => get,
-                };
-            }
-            const fn_start = c.expr_to_tokens.items[expr_id.id][0]; // TODO This is slightly off.
-            const captures_expr = pushExpr(fn_start, .{ .tuple = capture_exprs });
-            c.exprs.items[expr_id.id].@"fn".captures_expr = captures_expr;
-
-            try analyze(captures_expr);
-            _ = c.scope.pop();
-
             for (@"fn".params) |param_id| {
                 const param = c.exprs.items[param_id.id].param;
                 c.scope.push(.{ .name = param.name });
             }
 
-            for (@"fn".captures) |capture_id| {
+            // Desugar a capture expression like [a, b&, c!, d^]! into:
+            // {
+            //   let [a, b, c, d] = captures;
+            //   let a = a*;
+            //   let b = b*&;
+            //   let c = c*!;
+            //   let d = d*!;
+            //   original_fn_body
+            // }
+            const let_exprs = allocator.alloc(ExprId, @"fn".captures.len + 2) catch oom();
+            const pattern_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
+            for (pattern_exprs, @"fn".captures) |*pattern_expr, capture_id| {
                 const capture = c.exprs.items[capture_id.id].capture;
-                c.scope.push(.{ .name = capture.name });
+                pattern_expr.* = pushExpr(fn_start, .{ .get = .{ .name = capture.name } });
             }
 
-            try analyze(@"fn".body);
+            let_exprs[0] = pushExpr(fn_start, .{ .let = .{
+                .pattern = pushExpr(fn_start, .{ .tuple = pattern_exprs }),
+                .value = pushExpr(fn_start, .{ .get = .{ .name = "<closure>" } }),
+            } });
+            for (@"fn".captures, 0..) |capture_id, i| {
+                const capture = c.exprs.items[capture_id.id].capture;
+                var reborrow_expr = pushExpr(fn_start, .{ .get = .{ .name = capture.name } });
+                switch (@"fn".capture_mode) {
+                    .copy, .move => {},
+                    .share, .borrow => {
+                        reborrow_expr = pushExpr(fn_start, .{ .deref = reborrow_expr });
+                    },
+                }
+                reborrow_expr = switch (@"fn".capture_mode) {
+                    .copy, .move => pushExpr(fn_start, .{ .move = reborrow_expr }),
+                    .share => pushExpr(fn_start, .{ .share = reborrow_expr }),
+                    .borrow => switch (capture.mode) {
+                        .share => pushExpr(fn_start, .{ .share = reborrow_expr }),
+                        else => pushExpr(fn_start, .{ .borrow = reborrow_expr }),
+                    },
+                };
+                let_exprs[i + 1] = pushExpr(fn_start, .{ .let = .{
+                    .pattern = pushExpr(fn_start, .{ .get = .{ .name = capture.name } }),
+                    .value = reborrow_expr,
+                } });
+            }
+            let_exprs[@"fn".captures.len + 1] = @"fn".body;
+            const body_new = pushExpr(fn_start, .{ .block = .{ .statements = let_exprs } });
+            c.exprs.items[expr_id.id].@"fn".body = body_new;
+
+            try analyze(body_new);
         },
         .capture, .param => {
             // Handled directly in @"fn" above.
@@ -1215,6 +1248,16 @@ const Type = union(enum) {
         return type_id;
     }
 
+    fn internCaptures(closure: TypeClosure) TypeId {
+        if (closure.captures.len == 0) return internTupleEmpty();
+        if (c.type_tuple.get(.{ .elems = closure.captures })) |type_id| return type_id;
+        const elems = allocator.dupe(TypeId, closure.captures) catch oom();
+        const tuple = TypeTuple{ .elems = elems };
+        const type_id = internUnchecked(.{ .tuple = tuple });
+        c.type_tuple.putNoClobber(tuple, type_id) catch oom();
+        return type_id;
+    }
+
     fn internRef(elem: TypeId) TypeId {
         const ref = TypeRef{ .elem = .{ .known = elem } };
         if (c.type_ref.get(ref)) |type_id| return type_id;
@@ -1267,7 +1310,13 @@ const Type = union(enum) {
                     .any => 2,
                 };
             },
-            .closure => return 0,
+            .closure => |closure| {
+                var size: usize = 0;
+                for (closure.captures) |capture| {
+                    size += capture.getWordSize();
+                }
+                return size;
+            },
         }
     }
 
@@ -1454,6 +1503,14 @@ const Value = struct {
                 value.ptr[0] = @intFromPtr(elem.ptr);
                 value.ptr[1] = @bitCast(elem.type_id);
             },
+        };
+    }
+
+    fn getClosureCaptures(value: Value) Value {
+        const closure = value.type_id.getType().closure;
+        return .{
+            .ptr = value.ptr,
+            .type_id = Type.internCaptures(closure),
         };
     }
 
@@ -2010,15 +2067,22 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
             c.stack.push(.{ .name = get.name, .value = ref });
         },
         .tuple => |elems| {
-            try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
-            if (elems.len != value.type_id.getType().tuple.elems.len)
-                return fail(
-                    .{ .expr_id = expr_id },
-                    "Expected a tuple of length {} but found {f}",
-                    .{ elems.len, value },
-                );
-            for (elems, 0..) |elem, i| {
-                try evalPatternRef(elem, value.getTupleElem(i), provenance);
+            switch (value.type_id.getType()) {
+                .tuple => {
+                    if (elems.len != value.type_id.getType().tuple.elems.len)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "Expected a tuple of length {} but found {f}",
+                            .{ elems.len, value },
+                        );
+                    for (elems, 0..) |elem, i| {
+                        try evalPatternRef(elem, value.getTupleElem(i), provenance);
+                    }
+                },
+                .closure => {
+                    try evalPatternRef(expr_id, value.getClosureCaptures(), provenance);
+                },
+                else => try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id }),
             }
         },
         else => unreachable,
@@ -2028,21 +2092,31 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
 fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => |get| {
+            const result = Value.allocStack(value.type_id);
+            Value.copyData(.{ .to = result, .from = value });
+            Value.copyProvenance(.{ .to = result, .from = value });
             c.stack.push(.{
                 .name = get.name,
                 .value = value,
             });
         },
         .tuple => |elems| {
-            try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id });
-            if (elems.len != value.type_id.getType().tuple.elems.len)
-                return fail(
-                    .{ .expr_id = expr_id },
-                    "Expected a tuple of length {} but found {f}",
-                    .{ elems.len, value },
-                );
-            for (elems, 0..) |elem, i| {
-                try evalPatternOwned(elem, value.getTupleElem(i));
+            switch (value.type_id.getType()) {
+                .tuple => {
+                    if (elems.len != value.type_id.getType().tuple.elems.len)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "Expected a tuple of length {} but found {f}",
+                            .{ elems.len, value },
+                        );
+                    for (elems, 0..) |elem, i| {
+                        try evalPatternOwned(elem, value.getTupleElem(i));
+                    }
+                },
+                .closure => {
+                    try evalPatternOwned(expr_id, value.getClosureCaptures());
+                },
+                else => try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id }),
             }
         },
         else => unreachable,
@@ -2266,12 +2340,78 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const stack_data_start = c.stack_top;
 
             try eval(call.closure);
-            const closure = c.stack.peek();
+            const closure_item = c.stack.peek();
+            closure_item.name = "<closure>";
 
-            try checkKind(call.closure, .{ .expected = .closure, .actual = closure.value.type_id });
-            const @"fn" = &c.fns.items[closure.value.type_id.getType().closure.fn_id.id];
+            const closure_type = closure_item.value.type_id.getType();
+            var fn_id: ?FnId = null;
+            // Expect either a closure or a ref to a closure.
+            switch (closure_type) {
+                .closure => |closure| {
+                    fn_id = closure.fn_id;
+                },
+                .ref => {
+                    const elem = closure_item.value.getRefElem();
+                    const elem_type = elem.type_id.getType();
+                    switch (elem_type) {
+                        .closure => |closure| {
+                            fn_id = closure.fn_id;
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+            if (fn_id == null)
+                return fail(
+                    .{ .expr_id = expr_id },
+                    "Expected a function but found {f}",
+                    .{closure_item.value},
+                );
 
+            const @"fn" = &c.fns.items[fn_id.?.id];
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
+
+            switch (fn_expr.capture_mode) {
+                .copy, .move => {
+                    if (closure_type != .closure)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This function expects to be called by move, but found a reference",
+                            .{},
+                        );
+                },
+                .borrow => {
+                    if (closure_type != .ref)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This function expects to be called by borrow, but found an owned function",
+                            .{},
+                        );
+                    const lease = if (closure_item.value.getProvenance()) |provenance| provenance.lease else .owned;
+                    if (lease != .borrowed)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This function expects to be called by borrow, but found a {s} reference",
+                            .{@tagName(lease)},
+                        );
+                },
+                .share => {
+                    if (closure_type != .ref)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This function expects to be called by share, but found an owned function",
+                            .{},
+                        );
+                    const lease = if (closure_item.value.getProvenance()) |provenance| provenance.lease else .owned;
+                    if (lease != .shared)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "This function expects to be called by share, but found a {s} reference",
+                            .{@tagName(lease)},
+                        );
+                },
+            }
 
             for (call.args) |arg_expr|
                 try eval(arg_expr);
