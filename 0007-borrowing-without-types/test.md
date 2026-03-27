@@ -918,3 +918,204 @@ Name `b` is not defined at this point
 
 1
 ```
+
+```test
+{
+  let a = 1;
+  let f = fn [a] () { a };
+  f&()
+}
+
+Error at 4:3
+This function expects to be called by move, but found a reference
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a] () { a };
+  f!()
+}
+
+Error at 4:3
+This function expects to be called by move, but found a reference
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a]! () {
+    a* = {a* + 1};
+    a*
+  };
+  f!();
+  f!();
+  f!()
+}
+
+4
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a]! () {
+    a* = {a* + 1};
+    a*
+  };
+  f&();
+  f&();
+  f&()
+}
+
+Error at 7:3
+This function expects to be called by borrow, but found a shared reference
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a]! () {
+    a* = {a* + 1};
+    a*
+  };
+  f^();
+  f^();
+  f^()
+}
+
+Error at 7:3
+This function expects to be called by borrow, but found an owned function
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a]! () {
+    a* = {a* + 1};
+    a*
+  };
+  f();
+  f();
+  f()
+}
+
+Error at 7:3
+This function expects to be called by borrow, but found an owned function
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a]& () {
+    a* + 1
+  };
+  f&()
+}
+
+2
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a&] () {
+    a*
+  };
+  f()
+}
+
+1
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a&]& () {
+    a**
+  };
+  f&()
+}
+
+1
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a&]& () {
+    a**
+  };
+  f;
+}
+
+[]
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a!] () {
+    a*
+  };
+  f();
+}
+
+Error at 6:3
+Can't copy a borrowed reference
+```
+
+```test
+{
+  let a = 1;
+  let b = 2;
+  let f = fn [a&]! (x) {
+    a* = x;
+  };
+  f!(b&);
+}
+
+[]
+```
+
+```test
+{
+  let a = 1;
+  let f = fn [a&]! (x) {
+    a* = x;
+  };
+  let b = 2;
+  f!(b&);
+}
+
+Error at 4:5
+This value can't be owned by `f` because it shares from `b`, which will be destroyed before `f`
+```
+
+```test
+{
+  let a = 1;
+  let b = 2;
+  let f = fn [a&, b&]! () {
+    a* = b*;
+  };
+  a = 3;
+}
+
+Error at 7:3
+Can't assign to `a` because it is shared with TODO
+```
+
+```test
+{
+  let a = 1;
+  let b = 2;
+  let f = fn [a&, b&]! () {
+    a* = b*;
+  };
+  f!();
+  a = 3;
+}
+
+[]
+```

@@ -1078,46 +1078,21 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             // Desugar a capture expression like [a, b&, c!, d^]! into:
             // {
             //   let [a, b, c, d] = captures;
-            //   let a = a*;
-            //   let b = b*&;
-            //   let c = c*!;
-            //   let d = d*!;
             //   original_fn_body
             // }
-            const let_exprs = allocator.alloc(ExprId, @"fn".captures.len + 2) catch oom();
             const pattern_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
             for (pattern_exprs, @"fn".captures) |*pattern_expr, capture_id| {
                 const capture = c.exprs.items[capture_id.id].capture;
                 pattern_expr.* = pushExpr(fn_start, .{ .get = .{ .name = capture.name } });
             }
-
+            const let_exprs = allocator.alloc(ExprId, 2) catch oom();
             let_exprs[0] = pushExpr(fn_start, .{ .let = .{
                 .pattern = pushExpr(fn_start, .{ .tuple = pattern_exprs }),
-                .value = pushExpr(fn_start, .{ .get = .{ .name = "<closure>" } }),
+                .value = pushExpr(fn_start, .{
+                    .move = pushExpr(fn_start, .{ .get = .{ .name = "<closure>" } }),
+                }),
             } });
-            for (@"fn".captures, 0..) |capture_id, i| {
-                const capture = c.exprs.items[capture_id.id].capture;
-                var reborrow_expr = pushExpr(fn_start, .{ .get = .{ .name = capture.name } });
-                switch (@"fn".capture_mode) {
-                    .copy, .move => {},
-                    .share, .borrow => {
-                        reborrow_expr = pushExpr(fn_start, .{ .deref = reborrow_expr });
-                    },
-                }
-                reborrow_expr = switch (@"fn".capture_mode) {
-                    .copy, .move => pushExpr(fn_start, .{ .move = reborrow_expr }),
-                    .share => pushExpr(fn_start, .{ .share = reborrow_expr }),
-                    .borrow => switch (capture.mode) {
-                        .share => pushExpr(fn_start, .{ .share = reborrow_expr }),
-                        else => pushExpr(fn_start, .{ .borrow = reborrow_expr }),
-                    },
-                };
-                let_exprs[i + 1] = pushExpr(fn_start, .{ .let = .{
-                    .pattern = pushExpr(fn_start, .{ .get = .{ .name = capture.name } }),
-                    .value = reborrow_expr,
-                } });
-            }
-            let_exprs[@"fn".captures.len + 1] = @"fn".body;
+            let_exprs[1] = @"fn".body;
             const body_new = pushExpr(fn_start, .{ .block = .{ .statements = let_exprs } });
             c.exprs.items[expr_id.id].@"fn".body = body_new;
 
@@ -1357,7 +1332,18 @@ const Type = union(enum) {
                     .type_id = type_id,
                 }) catch oom();
             },
-            .closure => {},
+            .closure => |closure| {
+                var word_offset: usize = 0;
+                for (closure.captures) |capture| {
+                    for (capture.getRefIndexes()) |ref_index| {
+                        indexes.append(allocator, .{
+                            .word_offset = word_offset + ref_index.word_offset,
+                            .type_id = ref_index.type_id,
+                        }) catch oom();
+                    }
+                    word_offset += capture.getWordSize();
+                }
+            },
         }
         return indexes.toOwnedSlice(allocator) catch oom();
     }
@@ -1686,9 +1672,7 @@ const StackItem = struct {
     value: Value,
     ref_count: RefCount = .{ .count = RefCount.available },
 
-    fn deinit(
-        stack_item: StackItem,
-    ) void {
+    fn deinit(stack_item: StackItem) void {
         if (debug) assert(switch (stack_item.ref_count.state()) {
             .available, .moved => true,
             .borrowed, .shared => false,
