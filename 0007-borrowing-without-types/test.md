@@ -464,8 +464,8 @@ Can't assign to `a` because it is shared with TODO
   b
 }
 
-Error at 4:3
-Can't copy a borrowed reference
+Error at 1:1
+This value borrows from `a`, but `a` will be destroyed at the end of this block
 ```
 
 ```test
@@ -1061,8 +1061,7 @@ This function expects to be called by borrow, but found an owned function
   f();
 }
 
-Error at 6:3
-Can't copy a borrowed reference
+[]
 ```
 
 ```test
@@ -1155,4 +1154,26 @@ Expected a tuple but found a number
 [1,2,3] == [1,2,3,4]
 
 0
+```
+
+```test
+let iter_borrowed = fn (tuple_ref) {
+  let index = 0;
+  fn [index^, tuple_ref^]! () {
+    if index* < len(tuple_ref**) {
+      let elem = tuple_ref**[index*]!;
+      index* = {index* + 1};
+      [elem^]
+    } else {
+      []
+    }
+  }
+};
+let a = [1,2];
+let b = [3,4];
+let next = iter_borrowed(a!);
+let a0 = next!();
+let a1 = next!();
+
+[]
 ```

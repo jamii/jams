@@ -1760,12 +1760,12 @@ const RefCount = packed struct {
     }
 
     fn splitBorrow(ref_count: *RefCount) void {
-        if (debug) assert(ref_count.state() == .borrowed);
+        if (debug) assert(ref_count.count <= available);
         ref_count.count -= 1;
     }
 
     fn splitShare(ref_count: *RefCount) void {
-        if (debug) assert(ref_count.state() == .shared);
+        if (debug) assert(ref_count.count >= available);
         ref_count.count += 1;
     }
 };
@@ -1890,13 +1890,14 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
         if (provenance.was_reparented) {
             switch (provenance.lease) {
                 .borrowed => {
-                    c.stack.items[provenance.lender].ref_count.borrow();
+                    c.stack.items[provenance.lender].ref_count.splitBorrow();
                 },
                 .shared => {
                     c.stack.items[provenance.lender].ref_count.share();
                 },
                 .not_a_ref, .owned => unreachable,
             }
+            provenance.was_reparented = false;
         }
     }
 
@@ -1994,7 +1995,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
             const lender_ref = if (ref_provenance.lease == .borrowed)
                 path.value.getStackIndex().?
             else
-                0;
+                path.provenance.lender_ref;
             return .{
                 .value = path.value.getRefElem(),
                 .provenance = .{
@@ -2130,7 +2131,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 const lease = if (ref.getProvenance()) |provenance| provenance.lease else .owned;
                 switch (lease) {
                     .not_a_ref => unreachable,
-                    .shared => {},
                     .owned => {
                         return fail(
                             .{ .expr_id = expr_id },
@@ -2139,12 +2139,31 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         );
                     },
                     .borrowed => {
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't copy a borrowed reference",
-                            .{},
-                        );
+                        if (path.provenance.lease == .shared) {
+                            return fail(
+                                .{ .expr_id = expr_id },
+                                "Can't copy a borrowed reference through a shared path",
+                                .{},
+                            );
+                        }
+                        const lender = &c.stack.items[path.provenance.lender];
+                        if (!lender.ref_count.canBorrow()) {
+                            switch (lender.ref_count.state()) {
+                                .moved, .available => unreachable,
+                                .borrowed => return fail(
+                                    .{ .expr_id = expr_id },
+                                    "Can't copy `{s}` because it contains borrowed references and is borrowed by TODO",
+                                    .{lender.name.?},
+                                ),
+                                .shared => return fail(
+                                    .{ .expr_id = expr_id },
+                                    "Can't copy `{s}` because it contains borrowed references and is shared by TODO",
+                                    .{lender.name.?},
+                                ),
+                            }
+                        }
                     },
+                    .shared => {},
                 }
             }
 
@@ -2156,8 +2175,17 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             for (result.type_id.getRefIndexes()) |ref_index| {
                 const provenance = result.getRefAtIndex(ref_index).getProvenance().?;
-                if (provenance.lease == .shared)
-                    c.stack.items[provenance.lender].ref_count.share();
+                switch (provenance.lease) {
+                    .not_a_ref, .owned => unreachable,
+                    .borrowed => {
+                        c.stack.items[path.provenance.lender].ref_count.borrow();
+                        provenance.*.lender = path.provenance.lender;
+                        provenance.*.lender_ref = path.value.getRefAtIndex(ref_index).getStackIndex().?;
+                    },
+                    .shared => {
+                        c.stack.items[provenance.lender].ref_count.share();
+                    },
+                }
             }
 
             c.stack.push(.{ .name = null, .value = result });
