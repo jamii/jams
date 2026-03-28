@@ -1119,3 +1119,16 @@ Can't assign to `a` because it is shared with TODO
 
 []
 ```
+
+```test
+[len([]), len([0]), len([0, 0])]
+
+[0, 1, 2]
+```
+
+```test
+len(0)
+
+Error at 1:5
+Expected a tuple but found a number
+```

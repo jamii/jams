@@ -327,6 +327,7 @@ const Token = enum {
     @"fn",
     ref,
     ref_any,
+    len,
 
     // Tokens whose text matters.
     name,
@@ -385,6 +386,7 @@ pub fn tokenize() !void {
                     .@"fn",
                     .ref,
                     .ref_any,
+                    .len,
                 };
                 for (keywords) |keyword| {
                     if (std.mem.eql(u8, name, @tagName(keyword)))
@@ -515,6 +517,7 @@ const Builtin = enum {
     @"<",
     ref,
     ref_any,
+    len,
 };
 
 fn parse() error{Error}!ExprId {
@@ -655,7 +658,7 @@ fn parseExprBase() error{Error}!ExprId {
         .@"if" => parseIf(),
         .@"while" => parseWhile(),
         .@"fn" => parseFn(),
-        .ref, .ref_any => parseCallBuiltin(),
+        .ref, .ref_any, .len => parseCallBuiltin(),
         else => failExpected("an expression"),
     };
 }
@@ -846,6 +849,7 @@ fn parseCallBuiltin() error{Error}!ExprId {
     const builtin: Builtin = switch (peek()) {
         .ref => .ref,
         .ref_any => .ref_any,
+        .len => .len,
         else => return failExpected("a builtin function"),
     };
     _ = take();
@@ -1116,7 +1120,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         .call_builtin => |call_builtin| {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
-                    .ref, .ref_any => 1,
+                    .ref, .ref_any, .len => 1,
                     .@"=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1132,7 +1136,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .ref, .ref_any, .@"+", .@"<" => {
+                .ref, .ref_any, .len, .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -2575,6 +2579,18 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     ref.getProvenance().?.* = .owned;
 
                     c.stack.push(.{ .name = null, .value = ref });
+                },
+                .len => {
+                    try eval(call_builtin.args[0]);
+
+                    const arg0 = c.stack.pop();
+                    errdefer arg0.deinit();
+
+                    try checkKind(call_builtin.args[0], .{ .expected = .tuple, .actual = arg0.value.type_id });
+
+                    const result = Value.allocStack(Type.internNumber());
+                    result.setNumber(@intCast(arg0.value.type_id.getType().tuple.elems.len));
+                    c.stack.push(.{ .name = null, .value = result });
                 },
             }
 
