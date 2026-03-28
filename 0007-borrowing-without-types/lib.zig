@@ -312,6 +312,7 @@ const Token = enum {
     @",",
     @";",
     @"=",
+    @"==",
     @"<",
     @"+",
     @"^",
@@ -353,7 +354,14 @@ pub fn tokenize() !void {
             '{' => .@"{",
             ',' => .@",",
             ';' => .@";",
-            '=' => .@"=",
+            '=' => token: {
+                if (pos < source.len and source[pos] == '=') {
+                    pos += 1;
+                    break :token .@"==";
+                } else {
+                    break :token .@"=";
+                }
+            },
             '<' => .@"<",
             '+' => .@"+",
             '^' => .@"^",
@@ -513,6 +521,7 @@ const CaptureMode = enum {
 
 const Builtin = enum {
     @"=",
+    @"==",
     @"+",
     @"<",
     ref,
@@ -533,9 +542,10 @@ fn parseExprLoose() error{Error}!ExprId {
     var last_op: ?Builtin = null;
     while (true) {
         switch (peek()) {
-            .@"=", .@"+", .@"<" => |token| {
+            .@"=", .@"==", .@"+", .@"<" => |token| {
                 const op: Builtin = switch (token) {
                     .@"=" => .@"=",
+                    .@"==" => .@"==",
                     .@"+" => .@"+",
                     .@"<" => .@"<",
                     else => unreachable,
@@ -1121,7 +1131,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
                     .ref, .ref_any, .len => 1,
-                    .@"=", .@"+", .@"<" => 2,
+                    .@"=", .@"==", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
             });
@@ -1136,7 +1146,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .ref, .ref_any, .len, .@"+", .@"<" => {
+                .ref, .ref_any, .len, .@"==", .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -2509,6 +2519,22 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     Value.copyProvenance(.{ .to = path.value, .from = arg1.value });
 
                     stackPushEmptyTuple();
+                },
+                .@"==" => {
+                    try eval(call_builtin.args[0]);
+                    try eval(call_builtin.args[1]);
+
+                    const arg1 = c.stack.pop();
+                    defer arg1.deinit();
+
+                    const arg0 = c.stack.pop();
+                    defer arg0.deinit();
+
+                    errdefer comptime unreachable;
+
+                    const result = Value.allocStack(Type.internNumber());
+                    result.setNumber(if (Value.order(arg0.value, arg1.value) == .eq) 1 else 0);
+                    c.stack.push(.{ .name = null, .value = result });
                 },
                 .@"+" => {
                     try eval(call_builtin.args[0]);
