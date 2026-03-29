@@ -1255,3 +1255,14 @@ a
 
 [1, 42, 3]
 ```
+
+```test
+let get = fn (tuple, index) {
+  tuple^*[index]!
+};
+let a = [1, 2, 3];
+get(a!, 1)* = 42;
+a
+
+[1, 42, 3]
+```

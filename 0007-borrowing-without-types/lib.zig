@@ -990,8 +990,14 @@ fn analyzePath(expr_id: ExprId) error{Error}!void {
 
             c.exprs.items[expr_id.id].get.stack_reverse_index = @intCast(c.scope.len - scope_index);
         },
-        .deref, .move_deref => |path| {
-            try analyzePath(path);
+        .deref => |deref| {
+            const scope_start = c.scope.len;
+            defer c.scope.len = scope_start;
+
+            try analyze(deref);
+        },
+        .move_deref => |move_deref| {
+            try analyzePath(move_deref);
         },
         .tuple_get => |tuple_get| {
             try analyzePath(tuple_get.tuple);
@@ -999,8 +1005,12 @@ fn analyzePath(expr_id: ExprId) error{Error}!void {
             try analyze(tuple_get.index);
             _ = c.scope.pop();
         },
-        else => |other| {
-            return fail(.{ .expr_id = expr_id }, "Not a valid path: {s}", .{@tagName(other)});
+        else => {
+            return fail(
+                .{ .expr_id = expr_id },
+                "For annoying stack management reasons, arbitrary expressions are only allowed inside path expressions if they are immediately followed by a dereference operator",
+                .{},
+            );
         },
     }
 }
@@ -1965,40 +1975,67 @@ fn evalPath(expr_id: ExprId) error{Error}!Path {
             };
         },
         .deref => |deref| {
-            const path = try evalPath(deref);
+            switch (c.exprs.items[deref.id]) {
+                .get, .deref, .move_deref, .tuple_get => {
+                    const path = try evalPath(deref);
 
-            try checkKind(deref, .{ .expected = .ref, .actual = path.value.type_id });
+                    try checkKind(deref, .{ .expected = .ref, .actual = path.value.type_id });
 
-            const ref_provenance = if (path.value.getProvenance()) |provenance|
-                provenance.*
-            else
-                // If ref is not on the stack then it must be owned by `path.owner`.
-                Provenance{
-                    .lease = .owned,
-                    .owner = path.provenance.owner,
-                    .lender = path.provenance.lender,
-                };
+                    const ref_provenance = if (path.value.getProvenance()) |provenance|
+                        provenance.*
+                    else
+                        // If ref is not on the stack then it must be owned by `path.owner`.
+                        Provenance{
+                            .lease = .owned,
+                            .owner = path.provenance.owner,
+                            .lender = path.provenance.lender,
+                        };
 
-            const lender = if (ref_provenance.lease != .shared)
-                // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
-                path.provenance.lender
-            else
-                ref_provenance.owner;
+                    const lender = if (ref_provenance.lease != .shared)
+                        // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
+                        path.provenance.lender
+                    else
+                        ref_provenance.owner;
 
-            const consumed_borrow = if (ref_provenance.lease != .shared)
-                path.consumed_borrow
-            else
-                false;
+                    const consumed_borrow = if (ref_provenance.lease != .shared)
+                        path.consumed_borrow
+                    else
+                        false;
 
-            return .{
-                .value = path.value.getRefElem(),
-                .provenance = .{
-                    .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
-                    .owner = ref_provenance.owner,
-                    .lender = lender,
+                    return .{
+                        .value = path.value.getRefElem(),
+                        .provenance = .{
+                            .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
+                            .owner = ref_provenance.owner,
+                            .lender = lender,
+                        },
+                        .consumed_borrow = consumed_borrow,
+                    };
                 },
-                .consumed_borrow = consumed_borrow,
-            };
+                else => {
+                    const stack_data_start = c.stack_top;
+                    defer c.stack_top = stack_data_start;
+
+                    try eval(deref);
+                    const item = c.stack.pop();
+                    defer item.deinit();
+
+                    const provenance = item.value.getProvenance().?.*;
+                    if (item.value.type_id.getType() != .ref or provenance.lease == .owned)
+                        return fail(
+                            .{ .expr_id = expr_id },
+                            "For annoying stack management reasons, arbitrary expressions are only allowed inside path expressions if they return a shared/borrowed reference. Found {f}.",
+                            .{item.value},
+                        );
+
+                    const value = item.value.getRefElem();
+                    return .{
+                        .value = value,
+                        .provenance = provenance,
+                        .consumed_borrow = provenance.lease == .borrowed,
+                    };
+                },
+            }
         },
         .move_deref => |move_deref| {
             const path = try evalPath(move_deref);
