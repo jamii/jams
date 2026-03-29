@@ -1055,7 +1055,10 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             const scope_start = c.scope.len;
             defer c.scope.len = scope_start;
 
-            // Desugar the capture into an equivalent expression.
+            // Desugar:
+            //   fn [a, b&, c!, d^]! () { ... }
+            // into:
+            //   [a, b&, c!, d^]
             const capture_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
             for (capture_exprs, @"fn".captures) |*capture_expr, capture_id| {
                 const capture = c.exprs.items[capture_id.id].capture;
@@ -1093,11 +1096,13 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                 c.scope.push(.{ .name = param.name });
             }
 
-            // Desugar a capture expression like [a, b&, c!, d^]! into:
-            // {
-            //   let [a, b, c, d] = captures;
-            //   original_fn_body
-            // }
+            // Desugar:
+            //   fn [a, b&, c!, d^]! () { ... }
+            // into:
+            //   fn (closure) {
+            //     let [a, b, c, d] = closure^;
+            //     { ... }
+            //   }
             const pattern_exprs = allocator.alloc(ExprId, @"fn".captures.len) catch oom();
             for (pattern_exprs, @"fn".captures) |*pattern_expr, capture_id| {
                 const capture = c.exprs.items[capture_id.id].capture;
