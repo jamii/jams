@@ -323,6 +323,7 @@ const Token = enum {
     @"!",
     @"&",
     @"*",
+    @"^*",
 
     // Keywords.
     let,
@@ -368,7 +369,14 @@ pub fn tokenize() !void {
             },
             '<' => .@"<",
             '+' => .@"+",
-            '^' => .@"^",
+            '^' => token: {
+                if (pos < source.len and source[pos] == '*') {
+                    pos += 1;
+                    break :token .@"^*";
+                } else {
+                    break :token .@"^";
+                }
+            },
             '!' => .@"!",
             '&' => .@"&",
             '*' => .@"*",
@@ -458,6 +466,7 @@ const Expr = union(enum) {
     borrow: ExprId,
     share: ExprId,
     deref: ExprId,
+    move_deref: ExprId,
     let: struct {
         pattern: ExprId,
         value: ExprId,
@@ -511,7 +520,7 @@ const Expr = union(enum) {
             },
             .call => |call| allocator.free(call.args),
             .call_builtin => |call_builtin| allocator.free(call_builtin.args),
-            .number, .get, .move, .borrow, .share, .deref, .let, .@"if", .@"while", .capture, .param, .tuple_get => {},
+            .number, .get, .move, .borrow, .share, .deref, .move_deref, .let, .@"if", .@"while", .capture, .param, .tuple_get => {},
         }
     }
 };
@@ -591,6 +600,7 @@ fn parseExprTight() error{Error}!ExprId {
             .@"!" => expr = try parseBorrow(expr),
             .@"&" => expr = try parseShare(expr),
             .@"*" => expr = try parseDeref(expr),
+            .@"^*" => expr = try parseMoveDeref(expr),
             else => break,
         }
     }
@@ -661,6 +671,12 @@ fn parseDeref(ref: ExprId) error{Error}!ExprId {
     const start = c.expr_to_tokens.items[ref.id][0];
     try expect(.@"*");
     return pushExpr(start, .{ .deref = ref });
+}
+
+fn parseMoveDeref(path: ExprId) error{Error}!ExprId {
+    const start = c.expr_to_tokens.items[path.id][0];
+    try expect(.@"^*");
+    return pushExpr(start, .{ .move_deref = path });
 }
 
 fn parseExprBase() error{Error}!ExprId {
@@ -974,7 +990,7 @@ fn analyzePath(expr_id: ExprId) error{Error}!void {
 
             c.exprs.items[expr_id.id].get.stack_reverse_index = @intCast(c.scope.len - scope_index);
         },
-        .deref => |path| {
+        .deref, .move_deref => |path| {
             try analyzePath(path);
         },
         .tuple_get => |tuple_get| {
@@ -1006,7 +1022,7 @@ fn analyzePattern(expr_id: ExprId) error{Error}!void {
 
 fn analyze(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get, .deref, .tuple_get => {
+        .get, .deref, .move_deref, .tuple_get => {
             try analyzePath(expr_id);
         },
         .move, .borrow, .share => |child| {
@@ -1918,8 +1934,15 @@ fn evalPopNumber(expr_id: ExprId) error{Error}!isize {
     return number;
 }
 
-fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Provenance } {
-    switch (c.exprs.items[expr_id.id]) {
+const Path = struct {
+    value: Value,
+    provenance: Provenance,
+    consumed_borrow: bool,
+};
+
+fn evalPath(expr_id: ExprId) error{Error}!Path {
+    const expr = c.exprs.items[expr_id.id];
+    switch (expr) {
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
             const item = &c.stack.items[stack_index];
@@ -1938,6 +1961,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .owner = stack_index,
                     .lender = stack_index,
                 },
+                .consumed_borrow = false,
             };
         },
         .deref => |deref| {
@@ -1954,11 +1978,18 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .owner = path.provenance.owner,
                     .lender = path.provenance.lender,
                 };
+
             const lender = if (ref_provenance.lease != .shared)
                 // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
                 path.provenance.lender
             else
                 ref_provenance.owner;
+
+            const consumed_borrow = if (ref_provenance.lease != .shared)
+                path.consumed_borrow
+            else
+                false;
+
             return .{
                 .value = path.value.getRefElem(),
                 .provenance = .{
@@ -1966,6 +1997,63 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
                     .owner = ref_provenance.owner,
                     .lender = lender,
                 },
+                .consumed_borrow = consumed_borrow,
+            };
+        },
+        .move_deref => |move_deref| {
+            const path = try evalPath(move_deref);
+
+            try checkKind(move_deref, .{ .expected = .ref, .actual = path.value.type_id });
+
+            const ref_provenance = if (path.value.getProvenance()) |provenance|
+                provenance.*
+            else
+                // If ref is not on the stack then it must be owned by `path.owner`.
+                Provenance{
+                    .lease = .owned,
+                    .owner = path.provenance.owner,
+                    .lender = path.provenance.lender,
+                };
+
+            if (ref_provenance.lease != .borrowed)
+                return fail(
+                    .{ .expr_id = expr_id },
+                    "Can only apply move_deref to a borrowed reference",
+                    .{},
+                );
+
+            const owner = &c.stack.items[path.provenance.owner];
+            if (!owner.ref_count.canMove()) {
+                switch (owner.ref_count.state()) {
+                    .moved, .available => unreachable,
+                    .borrowed => return fail(
+                        .{ .expr_id = expr_id },
+                        "Can't move out of `{s}` because it is borrowed by TODO",
+                        .{owner.name()},
+                    ),
+                    .shared => return fail(
+                        .{ .expr_id = expr_id },
+                        "Can't move out of `{s}` because it is shared by TODO",
+                        .{owner.name()},
+                    ),
+                }
+            }
+
+            errdefer comptime unreachable;
+
+            const value = path.value.getRefElem();
+            c.stack.items[ref_provenance.lender].ref_count.dropBorrow();
+            owner.ref_count.move();
+            path.value.setRefsToNull();
+
+            return .{
+                .value = value,
+                .provenance = .{
+                    .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
+                    .owner = ref_provenance.owner,
+                    .lender = ref_provenance.owner,
+                },
+                .consumed_borrow = true,
             };
         },
         .tuple_get => |tuple_get| {
@@ -1984,6 +2072,7 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
             return .{
                 .value = tuple.value.getTupleElem(@intCast(index)),
                 .provenance = tuple.provenance,
+                .consumed_borrow = tuple.consumed_borrow,
             };
         },
         else => unreachable,
@@ -2092,7 +2181,7 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
 
 fn eval(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get, .deref, .tuple_get => {
+        .get, .deref, .move_deref, .tuple_get => {
             const path = try evalPath(expr_id);
             for (path.value.type_id.getRefIndexes()) |ref_index| {
                 const ref = path.value.getRefAtIndex(ref_index);
@@ -2204,7 +2293,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 );
             }
             const lender = &c.stack.items[path.provenance.lender];
-            if (!lender.ref_count.canBorrow()) {
+            if (!path.consumed_borrow and !lender.ref_count.canBorrow()) {
                 switch (lender.ref_count.state()) {
                     .moved, .available => unreachable,
                     .borrowed => return fail(
@@ -2222,7 +2311,10 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             errdefer comptime unreachable;
 
-            lender.ref_count.borrow();
+            if (path.consumed_borrow)
+                lender.ref_count.splitBorrow()
+            else
+                lender.ref_count.borrow();
             const ref = Value.allocStack(Type.internRef(path.value.type_id));
             ref.setRefElem(path.value);
             ref.getProvenance().?.* = .{

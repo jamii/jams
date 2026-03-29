@@ -1182,3 +1182,76 @@ let a1 = next!();
 Error at 3:3
 This value borrows from `tuple_ref`, but `tuple_ref` will be destroyed at the end of this block
 ```
+
+```test
+let iter_borrowed = fn (tuple_ref) {
+  let index = 0;
+  fn [index^, tuple_ref^]! () {
+    if index* < len(tuple_ref**) {
+      let elem = tuple_ref^**[index*]!;
+      index* = {index* + 1};
+      [elem^]
+    } else {
+      []
+    }
+  }
+};
+let a = [1,2];
+let b = [3,4];
+let next = iter_borrowed(a!);
+let a0 = next!();
+let a1 = next!();
+
+Error at 17:10
+Can't borrow `next` because it is already borrowed by TODO
+```
+
+```test
+let iter_borrowed = fn (tuple_ref) {
+  let index = 0;
+  fn [index^, tuple_ref^]! () {
+    if index* < len(tuple_ref**) {
+      let elem = tuple_ref^**[index*]!;
+      index* = {index* + 1};
+      [elem^]
+    } else {
+      []
+    }
+  }
+};
+let a = [1,2];
+let b = [3,4];
+let next = iter_borrowed(a!);
+let a0 = next!();
+
+[]
+```
+
+```test
+let get = fn (tuple, index) {
+  tuple*[index]!
+};
+let a = [1, 2, 3];
+{
+  let b = get(a!, 1);
+  b* = 42;
+};
+a
+
+Error at 6:11
+This value borrows from `tuple`, but `tuple` will be destroyed at the end of this block
+```
+
+```test
+let get = fn (tuple, index) {
+  tuple^*[index]!
+};
+let a = [1, 2, 3];
+{
+  let b = get(a!, 1);
+  b* = 42;
+};
+a
+
+[1, 42, 3]
+```
