@@ -465,7 +465,7 @@ Can't assign to `a` because it is shared with TODO
 }
 
 Error at 1:1
-This value borrows from `a`, but `a` will be destroyed at the end of this block
+This value borrows from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -600,7 +600,8 @@ Can't assign to `b` because it is shared with TODO
   };
 }
 
-[]
+Error at 3:3
+This value shares from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -614,7 +615,7 @@ Can't assign to `b` because it is shared with TODO
 }
 
 Error at 3:3
-This value borrows from `b`, but `b` will be destroyed at the end of this block
+This value shares from `c`, but `c` will be destroyed at the end of this block
 ```
 
 ```test
@@ -640,7 +641,8 @@ This value shares from `b`, but `b` will be destroyed at the end of this block
   };
 }
 
-[]
+Error at 3:3
+This value borrows from `b`, but `b` will be destroyed at the end of this block
 ```
 
 ```test
@@ -653,7 +655,8 @@ This value shares from `b`, but `b` will be destroyed at the end of this block
   };
 }
 
-[]
+Error at 3:3
+This value borrows from `c`, but `c` will be destroyed at the end of this block
 ```
 
 ```test
@@ -857,7 +860,8 @@ let a = [1, 2, 3];
 };
 a
 
-[1, 42, 3]
+Error at 6:11
+This value borrows from `tuple`, but `tuple` will be destroyed at the end of this block
 ```
 
 ```test
@@ -1175,5 +1179,6 @@ let next = iter_borrowed(a!);
 let a0 = next!();
 let a1 = next!();
 
-[]
+Error at 3:3
+This value borrows from `tuple_ref`, but `tuple_ref` will be destroyed at the end of this block
 ```
