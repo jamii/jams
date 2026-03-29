@@ -1786,12 +1786,13 @@ const RefCount = packed struct {
 };
 
 const Provenance = packed struct {
-    // If `lease == .not_a_ref` then the remaining fields are meaningless.
     lease: Lease,
     // The variable which owns this ref.
     // Will be 0 for owned refs at rest - `evalPath` should fill this value in.
+    // Meaningless if `lease == .not_a_ref`.
     owner: StackIndex,
     // The variable whose refcount we should decrement on drop.
+    // Meaningless if `lease == .not_a_ref` or `lease == .owned`.
     lender: StackIndex,
 
     const not_a_ref = Provenance{
