@@ -31,6 +31,10 @@ fn pf(args: anytype) void {
     std.debug.print("{f}\n", .{args});
 }
 
+fn ps(args: anytype) void {
+    std.debug.print("{s}\n", .{args});
+}
+
 const debug = true;
 
 // Big 'ol production-quality global.
@@ -1069,7 +1073,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             c.exprs.items[expr_id.id].@"fn".captures_expr = captures_expr;
 
             try analyze(captures_expr);
-            c.scope.peek().name = "<closure>";
+            c.scope.peek().name = "<anon>"; // TODO This works but is kinda hacky.
 
             const fn_id = FnId{ .id = c.fns.items.len };
 
@@ -1103,7 +1107,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
             let_exprs[0] = pushExpr(fn_start, .{ .let = .{
                 .pattern = pushExpr(fn_start, .{ .tuple = pattern_exprs }),
                 .value = pushExpr(fn_start, .{
-                    .move = pushExpr(fn_start, .{ .get = .{ .name = "<closure>" } }),
+                    .move = pushExpr(fn_start, .{ .get = .{ .name = "<anon>" } }),
                 }),
             } });
             let_exprs[1] = @"fn".body;
@@ -1682,9 +1686,20 @@ const Value = struct {
 };
 
 const StackItem = struct {
-    name: ?[]const u8,
+    is_pattern: bool = false,
+    expr_id: ExprId,
     value: Value,
     ref_count: RefCount = .{ .count = RefCount.available },
+
+    fn name(stack_item: StackItem) []const u8 {
+        return if (stack_item.is_pattern)
+            switch (c.exprs.items[stack_item.expr_id.id]) {
+                inline .get, .param => |data| data.name,
+                else => unreachable,
+            }
+        else
+            "<anon>";
+    }
 
     fn deinit(stack_item: StackItem) void {
         if (debug) assert(switch (stack_item.ref_count.state()) {
@@ -1803,9 +1818,9 @@ const Lease = enum(u2) {
     }
 };
 
-fn stackPushEmptyTuple() void {
+fn stackPushEmptyTuple(expr_id: ExprId) void {
     c.stack.push(.{
-        .name = null,
+        .expr_id = expr_id,
         .value = .{
             .ptr = c.stack_data.ptr,
             .type_id = Type.internTupleEmpty(),
@@ -1820,7 +1835,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     errdefer result.deinit();
 
     if (debug) {
-        assert(result.name == null);
+        assert(!result.is_pattern);
         assert(result.ref_count.state() == .available);
     }
 
@@ -1839,7 +1854,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
                             .not_a_ref, .owned => unreachable,
                             .borrowed => "borrows",
                             .shared => "shares",
-                        }, item.name.?, item.name.? },
+                        }, item.name(), item.name() },
                     );
                 }
             },
@@ -1867,7 +1882,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
         @memset(c.stack_provenance[c.stack_top..stack_top], .not_a_ref);
     }
 
-    c.stack.push(.{ .name = null, .value = result_moved });
+    c.stack.push(.{ .expr_id = expr_id, .value = result_moved });
 }
 
 fn evalPopBool(expr_id: ExprId) error{Error}!bool {
@@ -1902,12 +1917,12 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
         .get => |get| {
             const stack_index: StackIndex = @intCast(c.stack.len - get.stack_reverse_index);
             const item = &c.stack.items[stack_index];
-            if (debug) assert(std.mem.eql(u8, item.name.?, get.name));
+            if (debug) assert(std.mem.eql(u8, item.name(), get.name));
             if (!get.allow_moved and item.ref_count.isMoved()) {
                 return fail(
                     .{ .expr_id = expr_id },
                     "Can't refer to `{s}` because it has been moved",
-                    .{item.name.?},
+                    .{item.name()},
                 );
             }
             return .{
@@ -1970,30 +1985,31 @@ fn evalPath(expr_id: ExprId) error{Error}!struct { value: Value, provenance: Pro
 }
 
 fn evalPattern(expr_id: ExprId) error{Error}!void {
+    const item = c.stack.pop();
     switch (c.exprs.items[expr_id.id]) {
-        // Optimize the most common case.
-        .get => |get| {
-            c.stack.peek().name = get.name;
+        .get => {
+            c.stack.push(.{
+                .is_pattern = true,
+                .expr_id = expr_id,
+                .value = item.value,
+            });
         },
-        else => {
-            const item = c.stack.pop();
-            switch (item.value.type_id.getType()) {
-                .ref => {
-                    defer item.deinit(); // If succesful, we make new refs and the original ref still needs to be cleaned up.
-                    try evalPatternRef(expr_id, item.value.getRefElem(), item.value.getProvenance().?.*);
-                },
-                else => {
-                    errdefer item.deinit(); // If succesful, value is totally consumed.
-                    try evalPatternOwned(expr_id, item.value);
-                },
-            }
+        else => switch (item.value.type_id.getType()) {
+            .ref => {
+                defer item.deinit(); // If succesful, we make new refs and the original ref still needs to be cleaned up.
+                try evalPatternRef(expr_id, item.value.getRefElem(), item.value.getProvenance().?.*);
+            },
+            else => {
+                errdefer item.deinit(); // If succesful, value is totally consumed.
+                try evalPatternOwned(expr_id, item.value);
+            },
         },
     }
 }
 
 fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get => |get| {
+        .get => {
             const lender = &c.stack.items[provenance.lender];
             switch (provenance.lease) {
                 .not_a_ref => unreachable,
@@ -2004,7 +2020,11 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
             const ref = Value.allocStack(Type.internRef(value.type_id));
             ref.setRefElem(value);
             ref.getProvenance().?.* = provenance;
-            c.stack.push(.{ .name = get.name, .value = ref });
+            c.stack.push(.{
+                .is_pattern = true,
+                .expr_id = expr_id,
+                .value = ref,
+            });
         },
         .tuple => |elems| {
             switch (value.type_id.getType()) {
@@ -2031,12 +2051,13 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
 
 fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
-        .get => |get| {
+        .get => {
             const result = Value.allocStack(value.type_id);
             Value.copyData(.{ .to = result, .from = value });
             Value.copyProvenance(.{ .to = result, .from = value });
             c.stack.push(.{
-                .name = get.name,
+                .is_pattern = true,
+                .expr_id = expr_id,
                 .value = value,
             });
         },
@@ -2094,12 +2115,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                 .borrowed => return fail(
                                     .{ .expr_id = expr_id },
                                     "Can't copy `{s}` because it contains borrowed references and is borrowed by TODO",
-                                    .{lender.name.?},
+                                    .{lender.name()},
                                 ),
                                 .shared => return fail(
                                     .{ .expr_id = expr_id },
                                     "Can't copy `{s}` because it contains borrowed references and is shared by TODO",
-                                    .{lender.name.?},
+                                    .{lender.name()},
                                 ),
                             }
                         }
@@ -2128,7 +2149,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 }
             }
 
-            c.stack.push(.{ .name = null, .value = result });
+            c.stack.push(.{ .expr_id = expr_id, .value = result });
         },
         .move => |move| {
             const path = try evalPath(move);
@@ -2146,12 +2167,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it is borrowed by TODO",
-                        .{owner.name.?},
+                        .{owner.name()},
                     ),
                     .shared => return fail(
                         .{ .expr_id = expr_id },
                         "Can't move out of `{s}` because it is shared by TODO",
-                        .{owner.name.?},
+                        .{owner.name()},
                     ),
                 }
             }
@@ -2165,7 +2186,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             Value.copyProvenance(.{ .to = result, .from = path.value });
             path.value.setRefsToNull(); // Avoid freeing this value twice.
 
-            c.stack.push(.{ .name = null, .value = result });
+            c.stack.push(.{ .expr_id = expr_id, .value = result });
         },
         .borrow => |borrow| {
             const path = try evalPath(borrow);
@@ -2183,12 +2204,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it is already borrowed by TODO",
-                        .{lender.name.?},
+                        .{lender.name()},
                     ),
                     .shared => return fail(
                         .{ .expr_id = expr_id },
                         "Can't borrow `{s}` because it is shared by TODO",
-                        .{lender.name.?},
+                        .{lender.name()},
                     ),
                 }
             }
@@ -2203,7 +2224,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
             };
-            c.stack.push(.{ .name = null, .value = ref });
+            c.stack.push(.{ .expr_id = expr_id, .value = ref });
         },
         .share => |share| {
             const path = try evalPath(share);
@@ -2214,7 +2235,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     .borrowed => return fail(
                         .{ .expr_id = expr_id },
                         "Can't share `{s}` because it is borrowed by TODO",
-                        .{lender.name.?},
+                        .{lender.name()},
                     ),
                 }
             }
@@ -2229,18 +2250,18 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
             };
-            c.stack.push(.{ .name = null, .value = ref });
+            c.stack.push(.{ .expr_id = expr_id, .value = ref });
         },
         .number => |number| {
             errdefer comptime unreachable;
 
             const value = Value.allocStack(Type.internNumber());
             value.setNumber(number);
-            c.stack.push(.{ .name = null, .value = value });
+            c.stack.push(.{ .expr_id = expr_id, .value = value });
         },
         .tuple => |exprs| {
             if (exprs.len == 0) {
-                stackPushEmptyTuple();
+                stackPushEmptyTuple(expr_id);
                 return;
             }
 
@@ -2255,13 +2276,19 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             // All the elems are now contiguous on the stack so we can just point at the first elem.
             c.stack.len = stack_start + 1;
-            const result = c.stack.peek();
-            result.value.type_id = type_tuple;
+            const elem0 = c.stack.pop();
+            c.stack.push(.{
+                .expr_id = expr_id,
+                .value = .{
+                    .ptr = elem0.value.ptr,
+                    .type_id = type_tuple,
+                },
+            });
         },
         .let => |let| {
             try eval(let.value);
             try evalPattern(let.pattern);
-            stackPushEmptyTuple();
+            stackPushEmptyTuple(expr_id);
         },
         .block => |block| {
             const stack_start = c.stack.len;
@@ -2287,7 +2314,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 try eval(@"while".body);
                 c.stack.pop().deinit();
             }
-            stackPushEmptyTuple();
+            stackPushEmptyTuple(expr_id);
         },
         .@"fn" => |@"fn"| {
             const fn_id = c.expr_to_fn.get(expr_id).?;
@@ -2305,7 +2332,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             try eval(call.closure);
             const closure_item = c.stack.peek();
-            closure_item.name = "<closure>";
 
             const closure_type = closure_item.value.type_id.getType();
             var fn_id: ?FnId = null;
@@ -2381,9 +2407,9 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 try eval(arg_expr);
 
             for (fn_expr.params, 0..) |param_id, i| {
-                const param = c.exprs.items[param_id.id].param;
                 const item = &c.stack.items[c.stack.len - fn_expr.params.len + i];
-                item.name = param.name;
+                item.is_pattern = true;
+                item.expr_id = param_id;
             }
 
             try eval(fn_expr.body);
@@ -2422,12 +2448,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         .shared => return fail(
                             .{ .expr_id = expr_id },
                             "Can't assign to `{s}` because it is shared with TODO",
-                            .{lender.name.?},
+                            .{lender.name()},
                         ),
                         .borrowed => return fail(
                             .{ .expr_id = expr_id },
                             "Can't assign to `{s}` because it is borrowed by TODO",
-                            .{lender.name.?},
+                            .{lender.name()},
                         ),
                     }
 
@@ -2458,14 +2484,14 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                         .{ .expr_id = expr_id },
                                         "This value can't be owned by `{s}` because it {s} from `{s}`, which will be destroyed before `{s}`",
                                         .{
-                                            ref_item.name.?,
+                                            ref_item.name(),
                                             switch (elem_provenance.lease) {
                                                 .not_a_ref, .owned => unreachable,
                                                 .borrowed => "borrows",
                                                 .shared => "shares",
                                             },
-                                            elem_item.name.?,
-                                            ref_item.name.?,
+                                            elem_item.name(),
+                                            ref_item.name(),
                                         },
                                     );
                                 }
@@ -2484,7 +2510,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     Value.copyData(.{ .to = path.value, .from = arg1.value });
                     Value.copyProvenance(.{ .to = path.value, .from = arg1.value });
 
-                    stackPushEmptyTuple();
+                    stackPushEmptyTuple(expr_id);
                 },
                 .@"==" => {
                     try eval(call_builtin.args[0]);
@@ -2500,7 +2526,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .eq) 1 else 0);
-                    c.stack.push(.{ .name = null, .value = result });
+                    c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .@"+" => {
                     try eval(call_builtin.args[0]);
@@ -2519,7 +2545,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
-                    c.stack.push(.{ .name = null, .value = result });
+                    c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .@"<" => {
                     try eval(call_builtin.args[0]);
@@ -2535,7 +2561,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
-                    c.stack.push(.{ .name = null, .value = result });
+                    c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .ref, .ref_any => {
                     try eval(call_builtin.args[0]);
@@ -2570,7 +2596,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     ref.setRefElem(target);
                     ref.getProvenance().?.* = .owned;
 
-                    c.stack.push(.{ .name = null, .value = ref });
+                    c.stack.push(.{ .expr_id = expr_id, .value = ref });
                 },
                 .len => {
                     try eval(call_builtin.args[0]);
@@ -2582,7 +2608,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(@intCast(arg0.value.type_id.getType().tuple.elems.len));
-                    c.stack.push(.{ .name = null, .value = result });
+                    c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
             }
 
