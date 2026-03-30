@@ -112,7 +112,7 @@ Can't assign a value of type `number` to a location of type `ref(number)`
 }
 
 Error at 5:3
-Can't assign to `b` because it is borrowed by TODO
+Can't assign to `b` because it is borrowed by `c`
 ```
 
 ```test
@@ -137,7 +137,7 @@ Can't assign to `b` because it is borrowed by TODO
 }
 
 Error at 5:3
-Can't share `a` because it is borrowed by TODO
+Can't share `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -149,7 +149,7 @@ Can't share `a` because it is borrowed by TODO
 }
 
 Error at 5:3
-Can't share `b` because it is borrowed by TODO
+Can't share `b` because it is borrowed by `c`
 ```
 
 ```test
@@ -202,7 +202,7 @@ Can't refer to `a` because it has been moved
 }
 
 Error at 4:3
-Can't assign to `b` because it is borrowed by TODO
+Can't assign this value to `b` because it borrows from `b`
 ```
 
 ```test
@@ -279,7 +279,7 @@ Can't assign a value of type `number` to a location of type `ref(number)`
 }
 
 Error at 4:10
-Can't borrow `a` because it is already borrowed by TODO
+Can't borrow `a` because it is already borrowed by `b`
 ```
 
 ```test
@@ -417,7 +417,7 @@ This value shares from `a`, but `a` will be destroyed at the end of this block
 }
 
 Error at 7:3
-Can't assign to `a` because it is borrowed by TODO
+Can't assign to `a` because it is borrowed by `d`
 ```
 
 ```test
@@ -444,7 +444,7 @@ Can't assign to `a` because it is borrowed by TODO
 }
 
 Error at 4:3
-Can't assign to `a` because it is shared with TODO
+Can't assign to `a` because it is shared by `d`
 ```
 
 ```test
@@ -562,7 +562,7 @@ Expected a tuple but found a ref
 }
 
 Error at 5:3
-Can't assign to `b` because it is shared with TODO
+Can't assign to `b` because it is shared by `e`
 ```
 
 ```test
@@ -1106,7 +1106,7 @@ This value can't be owned by `f` because it shares from `b`, which will be destr
 }
 
 Error at 7:3
-Can't assign to `a` because it is shared with TODO
+Can't assign to `a` because it is shared by `f`
 ```
 
 ```test
@@ -1203,7 +1203,7 @@ let a0 = next!();
 let a1 = next!();
 
 Error at 17:10
-Can't borrow `next` because it is already borrowed by TODO
+Can't borrow `next` because it is already borrowed by `a0`
 ```
 
 ```test
@@ -1273,7 +1273,7 @@ let [b,c] = a!;
 let d = b^*&;
 
 Error at 3:9
-Can't share `a` because it is borrowed by TODO
+Can't share `a` because it is borrowed by `c`
 ```
 
 ```test
@@ -1283,4 +1283,105 @@ c^;
 let d = b^*&;
 
 []
+```
+
+```test
+let a = 1;
+let b = a!;
+let c = b*!;
+b
+
+Error at 4:1
+Can't copy `b` because it contains borrowed references and is borrowed by `c`
+```
+
+```test
+let a = 1;
+let b = a!;
+let c = b*&;
+b
+
+Error at 4:1
+Can't copy `b` because it contains borrowed references and is shared by `c`
+```
+
+```test
+let a = 1;
+let b = a!;
+a^
+
+Error at 3:1
+Can't move out of `a` because it is borrowed by `b`
+```
+
+```test
+let a = 1;
+let b = a&;
+a^
+
+Error at 3:1
+Can't move out of `a` because it is shared by `b`
+```
+
+```test
+let a = 1;
+let b = a!;
+a!
+
+Error at 3:1
+Can't borrow `a` because it is already borrowed by `b`
+```
+
+```test
+let a = 1;
+let b = a&;
+a!
+
+Error at 3:1
+Can't borrow `a` because it is shared by `b`
+```
+
+```test
+let a = 1;
+let b = a!;
+a&
+
+Error at 3:1
+Can't share `a` because it is borrowed by `b`
+```
+
+```test
+let a = 1;
+let b = a&;
+a&
+
+Error at 1:1
+This value shares from `a`, but `a` will be destroyed at the end of this block
+```
+
+```test
+let a = 1;
+let b = a!;
+a = 2
+
+Error at 3:1
+Can't assign to `a` because it is borrowed by `b`
+```
+
+```test
+let a = 1;
+let b = a&;
+a = 2
+
+Error at 3:1
+Can't assign to `a` because it is shared by `b`
+```
+
+```test
+let a = 1;
+let b = a!;
+a = b^
+
+Error at 3:1
+Can't assign this value to `a` because it borrows from `a`
 ```
