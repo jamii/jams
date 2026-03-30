@@ -134,7 +134,10 @@ const Compiler = struct {
         compiler.type_to_word_size.deinit(allocator);
         for (compiler.type_to_word_offsets.items) |word_offsets| allocator.free(word_offsets);
         compiler.type_to_word_offsets.deinit(allocator);
-        for (compiler.type_to_ref_indexes.items) |ref_indexes| allocator.free(ref_indexes);
+        for (compiler.type_to_ref_indexes.items) |ref_indexes| {
+            for (ref_indexes) |ref_index| ref_index.deinit();
+            allocator.free(ref_indexes);
+        }
         compiler.type_to_ref_indexes.deinit(allocator);
         compiler.type_tuple.deinit();
         compiler.type_ref.deinit();
@@ -1356,11 +1359,13 @@ const Type = union(enum) {
             .number => {},
             .tuple => |tuple| {
                 var word_offset: usize = 0;
-                for (tuple.elems) |elem| {
+                for (tuple.elems, 0..) |elem, i| {
                     for (elem.getRefIndexes()) |ref_index| {
+                        const path = std.mem.concat(allocator, usize, &.{ &.{i}, ref_index.path }) catch oom();
                         indexes.append(allocator, .{
                             .word_offset = word_offset + ref_index.word_offset,
                             .type_id = ref_index.type_id,
+                            .path = path,
                         }) catch oom();
                     }
                     word_offset += elem.getWordSize();
@@ -1370,15 +1375,18 @@ const Type = union(enum) {
                 indexes.append(allocator, .{
                     .word_offset = 0,
                     .type_id = type_id,
+                    .path = &.{},
                 }) catch oom();
             },
             .closure => |closure| {
                 var word_offset: usize = 0;
-                for (closure.captures) |capture| {
+                for (closure.captures, 0..) |capture, i| {
                     for (capture.getRefIndexes()) |ref_index| {
+                        const path = std.mem.concat(allocator, usize, &.{ &.{i}, ref_index.path }) catch oom();
                         indexes.append(allocator, .{
                             .word_offset = word_offset + ref_index.word_offset,
                             .type_id = ref_index.type_id,
+                            .path = path,
                         }) catch oom();
                     }
                     word_offset += capture.getWordSize();
@@ -1477,6 +1485,16 @@ const TypeClosure = struct {
 const RefIndex = struct {
     word_offset: usize,
     type_id: TypeId,
+    path: []usize,
+
+    pub fn format(ref_index: RefIndex, writer: *std.io.Writer) std.io.Writer.Error!void {
+        for (ref_index.path) |index|
+            try writer.print("[{}]", .{index});
+    }
+
+    fn deinit(ref_index: RefIndex) void {
+        allocator.free(ref_index.path);
+    }
 };
 
 const Value = struct {
@@ -1678,16 +1696,15 @@ const Value = struct {
         }
     }
 
-    fn isLendee(value: Value, lender: StackIndex, lease: Lease) bool {
-        if (getStackIndex(value) == null) return false;
+    fn findLendee(value: Value, lender: StackIndex, lease: Lease) ?RefIndex {
+        if (getStackIndex(value) == null) return null;
         for (value.type_id.getRefIndexes()) |ref_index| {
-            const ref = value.getRefAtIndex(ref_index);
-            const provenance = ref.getProvenance().?;
+            const provenance = value.getRefAtIndex(ref_index).getProvenance().?;
             if (provenance.lender == lender and provenance.lease == lease) {
-                return true;
+                return ref_index;
             }
         }
-        return false;
+        return null;
     }
 
     pub fn format(value: Value, writer: *std.io.Writer) std.io.Writer.Error!void {
@@ -1920,12 +1937,12 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
     c.stack.push(.{ .expr_id = expr_id, .value = result_moved });
 }
 
-fn findLendee(lender: StackIndex, lease: Lease) StackIndex {
+fn findLendee(lender: StackIndex, lease: Lease) struct { *StackItem, RefIndex } {
     var i = c.stack.len;
     while (i > 0) : (i -= 1) {
-        const lendee = i - 1;
-        if (c.stack.items[lendee].value.isLendee(lender, lease))
-            return @intCast(lendee);
+        const item = &c.stack.items[i - 1];
+        if (item.value.findLendee(lender, lease)) |ref_index|
+            return .{ item, ref_index };
     }
     panic("Couldn't find lendee for {}", .{.{ .lender = lender, .lease = lease }});
 }
@@ -2202,19 +2219,19 @@ fn eval(expr_id: ExprId) error{Error}!void {
                             switch (lender.ref_count.state()) {
                                 .moved, .available => unreachable,
                                 .borrowed => {
-                                    const lendee = &c.stack.items[findLendee(path.provenance.lender, .borrowed)];
+                                    const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
                                     return fail(
                                         .{ .expr_id = expr_id },
-                                        "Can't copy `{s}` because it contains borrowed references and is borrowed by `{s}`",
-                                        .{ lender.name(), lendee.name() },
+                                        "Can't copy `{s}` because it contains borrowed references and is borrowed by `{s}{f}`",
+                                        .{ lender.name(), lendee.name(), lendee_ref_index },
                                     );
                                 },
                                 .shared => {
-                                    const lendee = &c.stack.items[findLendee(path.provenance.lender, .shared)];
+                                    const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
                                     return fail(
                                         .{ .expr_id = expr_id },
-                                        "Can't copy `{s}` because it contains borrowed references and is shared by `{s}`",
-                                        .{ lender.name(), lendee.name() },
+                                        "Can't copy `{s}` because it contains borrowed references and is shared by `{s}{f}`",
+                                        .{ lender.name(), lendee.name(), lendee_ref_index },
                                     );
                                 },
                             }
@@ -2260,19 +2277,19 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 switch (owner.ref_count.state()) {
                     .moved, .available => unreachable,
                     .borrowed => {
-                        const lendee = &c.stack.items[findLendee(path.provenance.owner, .borrowed)];
+                        const lendee, const lendee_ref_index = findLendee(path.provenance.owner, .borrowed);
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is borrowed by `{s}`",
-                            .{ owner.name(), lendee.name() },
+                            "Can't move out of `{s}` because it is borrowed by `{s}{f}`",
+                            .{ owner.name(), lendee.name(), lendee_ref_index },
                         );
                     },
                     .shared => {
-                        const lendee = &c.stack.items[findLendee(path.provenance.owner, .shared)];
+                        const lendee, const lendee_ref_index = findLendee(path.provenance.owner, .shared);
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is shared by `{s}`",
-                            .{ owner.name(), lendee.name() },
+                            "Can't move out of `{s}` because it is shared by `{s}{f}`",
+                            .{ owner.name(), lendee.name(), lendee_ref_index },
                         );
                     },
                 }
@@ -2303,19 +2320,19 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 switch (lender.ref_count.state()) {
                     .moved, .available => unreachable,
                     .borrowed => {
-                        const lendee = &c.stack.items[findLendee(path.provenance.lender, .borrowed)];
+                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it is already borrowed by `{s}`",
-                            .{ lender.name(), lendee.name() },
+                            "Can't borrow `{s}` because it is already borrowed by `{s}{f}`",
+                            .{ lender.name(), lendee.name(), lendee_ref_index },
                         );
                     },
                     .shared => {
-                        const lendee = &c.stack.items[findLendee(path.provenance.lender, .shared)];
+                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it is shared by `{s}`",
-                            .{ lender.name(), lendee.name() },
+                            "Can't borrow `{s}` because it is shared by `{s}{f}`",
+                            .{ lender.name(), lendee.name(), lendee_ref_index },
                         );
                     },
                 }
@@ -2343,11 +2360,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 switch (lender.ref_count.state()) {
                     .moved, .available, .shared => unreachable,
                     .borrowed => {
-                        const lendee = &c.stack.items[findLendee(path.provenance.lender, .borrowed)];
+                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
                         return fail(
                             .{ .expr_id = expr_id },
-                            "Can't share `{s}` because it is borrowed by `{s}`",
-                            .{ lender.name(), lendee.name() },
+                            "Can't share `{s}` because it is borrowed by `{s}{f}`",
+                            .{ lender.name(), lendee.name(), lendee_ref_index },
                         );
                     },
                 }
@@ -2559,31 +2576,31 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     switch (lender_state) {
                         .moved, .available => {},
                         .shared => {
-                            if (arg1.value.isLendee(path.provenance.lender, .shared))
+                            if (arg1.value.findLendee(path.provenance.lender, .shared)) |lendee_ref_index|
                                 return fail(
                                     .{ .expr_id = expr_id },
-                                    "Can't assign this value to `{s}` because it shares from `{s}`",
-                                    .{ lender.name(), lender.name() },
+                                    "Can't assign this value to `{s}` because value{f} shares from `{s}`",
+                                    .{ lender.name(), lendee_ref_index, lender.name() },
                                 );
-                            const lendee = &c.stack.items[findLendee(path.provenance.lender, .shared)];
+                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
                             return fail(
                                 .{ .expr_id = expr_id },
-                                "Can't assign to `{s}` because it is shared by `{s}`",
-                                .{ lender.name(), lendee.name() },
+                                "Can't assign to `{s}` because it is shared by `{s}{f}`",
+                                .{ lender.name(), lendee.name(), lendee_ref_index },
                             );
                         },
                         .borrowed => {
-                            if (arg1.value.isLendee(path.provenance.lender, .borrowed))
+                            if (arg1.value.findLendee(path.provenance.lender, .borrowed)) |lendee_ref_index|
                                 return fail(
                                     .{ .expr_id = expr_id },
-                                    "Can't assign this value to `{s}` because it borrows from `{s}`",
-                                    .{ lender.name(), lender.name() },
+                                    "Can't assign this value to `{s}` because value{f} borrows from `{s}`",
+                                    .{ lender.name(), lendee_ref_index, lender.name() },
                                 );
-                            const lendee = &c.stack.items[findLendee(path.provenance.lender, .borrowed)];
+                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
                             return fail(
                                 .{ .expr_id = expr_id },
-                                "Can't assign to `{s}` because it is borrowed by `{s}`",
-                                .{ lender.name(), lendee.name() },
+                                "Can't assign to `{s}` because it is borrowed by `{s}{f}`",
+                                .{ lender.name(), lendee.name(), lendee_ref_index },
                             );
                         },
                     }

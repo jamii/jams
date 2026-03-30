@@ -202,7 +202,7 @@ Can't refer to `a` because it has been moved
 }
 
 Error at 4:3
-Can't assign this value to `b` because it borrows from `b`
+Can't assign this value to `b` because value borrows from `b`
 ```
 
 ```test
@@ -279,7 +279,7 @@ Can't assign a value of type `number` to a location of type `ref(number)`
 }
 
 Error at 4:10
-Can't borrow `a` because it is already borrowed by `b`
+Can't borrow `a` because it is already borrowed by `b[0]`
 ```
 
 ```test
@@ -1106,7 +1106,7 @@ This value can't be owned by `f` because it shares from `b`, which will be destr
 }
 
 Error at 7:3
-Can't assign to `a` because it is shared by `f`
+Can't assign to `a` because it is shared by `f[0]`
 ```
 
 ```test
@@ -1203,7 +1203,7 @@ let a0 = next!();
 let a1 = next!();
 
 Error at 17:10
-Can't borrow `next` because it is already borrowed by `a0`
+Can't borrow `next` because it is already borrowed by `a0[0]`
 ```
 
 ```test
@@ -1383,5 +1383,5 @@ let b = a!;
 a = b^
 
 Error at 3:1
-Can't assign this value to `a` because it borrows from `a`
+Can't assign this value to `a` because value borrows from `a`
 ```
