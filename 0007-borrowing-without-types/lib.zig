@@ -1721,12 +1721,13 @@ const Value = struct {
                 }
                 try writer.print("]", .{});
             },
-            .ref => {
+            .ref => |ref| {
                 if (value.ptr[0] == 0) {
                     // This isn't reachable in valid programs, but it's useful when debugging.
                     try writer.print("null", .{});
-                } else {
-                    try writer.print("ref({f})", .{value.getRefElem()});
+                } else switch (ref.elem) {
+                    .known => try writer.print("ref({f})", .{value.getRefElem()}),
+                    .any => try writer.print("ref_any({f})", .{value.getRefElem()}),
                 }
             },
             .closure => |closure| {
