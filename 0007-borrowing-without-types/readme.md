@@ -16,5 +16,5 @@ To build wasm:
 
 ```sh
 nix-shell
-zig build-exe -target wasm32-freestanding -fno-entry -rdynamic -fllvm ./wasm.zig --name lib
+zig build-exe -target wasm32-freestanding -fno-entry -rdynamic -OReleaseSafe./wasm.zig --name lib
 ```

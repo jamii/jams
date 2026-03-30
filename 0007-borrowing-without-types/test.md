@@ -1266,3 +1266,21 @@ a
 
 [1, 42, 3]
 ```
+
+```test
+let a = [1,2];
+let [b,c] = a!;
+let d = b^*&;
+
+Error at 3:9
+Can't share `a` because it is borrowed by TODO
+```
+
+```test
+let a = [1,2];
+let [b,c] = a!;
+c^;
+let d = b^*&;
+
+[]
+```
