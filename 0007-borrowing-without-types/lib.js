@@ -33,8 +33,11 @@ async function load(wasm_url, CodeJar) {
 
   function refreshNode(parent_node) {
     const source = parent_node.querySelector(".test-source").jar.toString();
-    const result = run(source);
-    parent_node.querySelector(".test-result").innerText = result;
+    parent_node.querySelector(".test-result").innerText = "Running...";
+    setTimeout(() => {
+      const result = run(source);
+      parent_node.querySelector(".test-result").innerText = result;
+    });
   }
 
   instance = (await WebAssembly.instantiateStreaming(fetch(wasm_url))).instance;
