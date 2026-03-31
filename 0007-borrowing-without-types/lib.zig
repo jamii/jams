@@ -2206,7 +2206,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                             const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
                             return fail(
                                 .{ .expr_id = expr_id },
-                                "Can't copy through `{s}` because it is borrowed by `{s}{f}`",
+                                "Can't copy `{s}` because it is borrowed by `{s}{f}`",
                                 .{ lender.name(), lendee.name(), lendee_ref_index },
                             );
                         },

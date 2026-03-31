@@ -88,7 +88,7 @@ Can't assign a value of type `number` to a location of type `ref(number)`
 }
 
 Error at 5:3
-Can't copy through `a` because it is borrowed by `b`
+Can't copy `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -101,7 +101,7 @@ Can't copy through `a` because it is borrowed by `b`
 }
 
 Error at 6:3
-Can't copy through `a` because it is borrowed by `b`
+Can't copy `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -128,7 +128,7 @@ Can't assign to `b` because it is borrowed by `c`
 }
 
 Error at 7:3
-Can't copy through `a` because it is borrowed by `b`
+Can't copy `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -260,7 +260,7 @@ Can't assign a value of type `number` to a location of type `ref(number)`
 }
 
 Error at 5:3
-Can't copy through `a` because it is borrowed by `b`
+Can't copy `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -272,7 +272,7 @@ Can't copy through `a` because it is borrowed by `b`
 }
 
 Error at 5:3
-Can't copy through `a` because it is borrowed by `b[0]`
+Can't copy `a` because it is borrowed by `b[0]`
 ```
 
 ```test
@@ -310,7 +310,7 @@ Can't borrow `a` because it is already borrowed by `b[0]`
 }
 
 Error at 7:3
-Can't copy through `b` because it is borrowed by `d`
+Can't copy `b` because it is borrowed by `d`
 ```
 
 ```test
@@ -410,7 +410,7 @@ This value shares from `a`, but `a` will be destroyed at the end of this block
 }
 
 Error at 7:3
-Can't copy through `a` because it is borrowed by `d`
+Can't copy `a` because it is borrowed by `d`
 ```
 
 ```test
@@ -582,7 +582,7 @@ Can't assign to `b` because it is shared by `e`
 }
 
 Error at 6:3
-Can't copy through `a` because it is borrowed by `d`
+Can't copy `a` because it is borrowed by `d`
 ```
 
 ```test
@@ -1300,7 +1300,7 @@ let c = b*!;
 b
 
 Error at 4:1
-Can't copy through `b` because it is borrowed by `c`
+Can't copy `b` because it is borrowed by `c`
 ```
 
 ```test
@@ -1401,7 +1401,7 @@ x* = [5, 6];
 [x*, inner]
 
 Error at 4:6
-Can't copy through `inner` because it is borrowed by `x`
+Can't copy `inner` because it is borrowed by `x`
 ```
 
 ```test
