@@ -2015,12 +2015,12 @@ fn evalPath(expr_id: ExprId) error{Error}!Path {
                     const ref_provenance = if (path.value.getProvenance()) |provenance|
                         provenance.*
                     else
-                        // If ref is not on the stack then it must be owned by `path.owner`.
-                        Provenance{
-                            .lease = .owned,
-                            .owner = path.provenance.owner,
-                            .lender = path.provenance.lender,
-                        };
+                        Provenance.owned;
+
+                    const owner = if (ref_provenance.lease == .owned)
+                        path.provenance.owner
+                    else
+                        ref_provenance.owner;
 
                     const lender = if (ref_provenance.lease != .shared)
                         // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
@@ -2037,7 +2037,7 @@ fn evalPath(expr_id: ExprId) error{Error}!Path {
                         .value = path.value.getRefElem(),
                         .provenance = .{
                             .lease = Lease.weakest(path.provenance.lease, ref_provenance.lease),
-                            .owner = ref_provenance.owner,
+                            .owner = owner,
                             .lender = lender,
                         },
                         .consumed_borrow = consumed_borrow,

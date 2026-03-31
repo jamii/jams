@@ -1403,3 +1403,11 @@ x* = [5, 6];
 Error at 4:6
 Can't copy through `inner` because it is borrowed by `x`
 ```
+
+```test
+let inner = ref([1, [2, [3]]]);
+let x = inner^;
+let y = x*^
+
+[]
+```
