@@ -2195,6 +2195,25 @@ fn eval(expr_id: ExprId) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get, .deref, .tuple_get => {
             const path = try evalPath(expr_id);
+
+            {
+                const lender = &c.stack.items[path.provenance.lender];
+                if (!lender.ref_count.canShare()) {
+                    switch (lender.ref_count.state()) {
+                        .moved => unreachable,
+                        .available, .shared => {},
+                        .borrowed => {
+                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
+                            return fail(
+                                .{ .expr_id = expr_id },
+                                "Can't copy through `{s}` because it is borrowed by `{s}{f}`",
+                                .{ lender.name(), lendee.name(), lendee_ref_index },
+                            );
+                        },
+                    }
+                }
+            }
+
             for (path.value.type_id.getRefIndexes()) |ref_index| {
                 const ref = path.value.getRefAtIndex(ref_index);
                 const lease = if (ref.getProvenance()) |provenance| provenance.lease else .owned;
@@ -2218,15 +2237,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         const lender = &c.stack.items[path.provenance.lender];
                         if (!lender.ref_count.canBorrow()) {
                             switch (lender.ref_count.state()) {
-                                .moved, .available => unreachable,
-                                .borrowed => {
-                                    const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
-                                    return fail(
-                                        .{ .expr_id = expr_id },
-                                        "Can't copy `{s}` because it contains borrowed references and is borrowed by `{s}{f}`",
-                                        .{ lender.name(), lendee.name(), lendee_ref_index },
-                                    );
-                                },
+                                .moved, .borrowed, .available => unreachable,
                                 .shared => {
                                     const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
                                     return fail(

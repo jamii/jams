@@ -87,7 +87,8 @@ Can't assign a value of type `number` to a location of type `ref(number)`
   a
 }
 
-2
+Error at 5:3
+Can't copy through `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -99,7 +100,8 @@ Can't assign a value of type `number` to a location of type `ref(number)`
   a
 }
 
-2
+Error at 6:3
+Can't copy through `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -125,7 +127,8 @@ Can't assign to `b` because it is borrowed by `c`
   a
 }
 
-2
+Error at 7:3
+Can't copy through `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -256,7 +259,8 @@ Can't assign a value of type `number` to a location of type `ref(number)`
   a
 }
 
-[3, 11, 9]
+Error at 5:3
+Can't copy through `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -267,7 +271,8 @@ Can't assign a value of type `number` to a location of type `ref(number)`
   a
 }
 
-[3, 6, 11]
+Error at 5:3
+Can't copy through `a` because it is borrowed by `b[0]`
 ```
 
 ```test
@@ -304,7 +309,8 @@ Can't borrow `a` because it is already borrowed by `b[0]`
   b
 }
 
-[2, 11, 8]
+Error at 7:3
+Can't copy through `b` because it is borrowed by `d`
 ```
 
 ```test
@@ -403,7 +409,8 @@ This value shares from `a`, but `a` will be destroyed at the end of this block
   a
 }
 
-[3, 6, 9]
+Error at 7:3
+Can't copy through `a` because it is borrowed by `d`
 ```
 
 ```test
@@ -574,7 +581,8 @@ Can't assign to `b` because it is shared by `e`
   a
 }
 
-[1, 11, 3]
+Error at 6:3
+Can't copy through `a` because it is borrowed by `d`
 ```
 
 ```test
@@ -1292,7 +1300,7 @@ let c = b*!;
 b
 
 Error at 4:1
-Can't copy `b` because it contains borrowed references and is borrowed by `c`
+Can't copy through `b` because it is borrowed by `c`
 ```
 
 ```test
@@ -1384,4 +1392,14 @@ a = b^
 
 Error at 3:1
 Can't assign this value to `a` because value borrows from `a`
+```
+
+```test
+let inner = [3, [1, 2]];
+let x = inner[1]!;
+x* = [5, 6];
+[x*, inner]
+
+Error at 4:6
+Can't copy through `inner` because it is borrowed by `x`
 ```
