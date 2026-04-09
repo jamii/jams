@@ -2778,7 +2778,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     try eval(call_builtin.args[0]);
 
                     const arg0 = c.stack.pop();
-                    errdefer arg0.deinit();
+                    defer arg0.deinit();
 
                     try checkKind(call_builtin.args[0], .{ .expected = .tuple, .actual = arg0.value.type_id });
 
