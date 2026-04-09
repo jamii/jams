@@ -1538,16 +1538,16 @@ const Value = struct {
 
     fn setRefElem(value: Value, elem: Value) void {
         const ref = value.type_id.getType().ref;
-        if (debug) switch (ref.elem) {
+        switch (ref.elem) {
             .known => |known| {
-                assert(known == elem.type_id);
+                if (debug) assert(known == elem.type_id);
                 value.ptr[0] = @intFromPtr(elem.ptr);
             },
             .any => {
                 value.ptr[0] = @intFromPtr(elem.ptr);
                 value.ptr[1] = @bitCast(elem.type_id);
             },
-        };
+        }
     }
 
     fn getClosureCaptures(value: Value) Value {
@@ -1579,7 +1579,7 @@ const Value = struct {
 
     fn allocHeap(type_id: TypeId) Value {
         return .{
-            .ptr = @ptrCast(allocator.alloc(u64, type_id.getWordSize()) catch oom()),
+            .ptr = @ptrCast(allocator.alloc(usize, type_id.getWordSize()) catch oom()),
             .type_id = type_id,
         };
     }
@@ -2165,7 +2165,7 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
             c.stack.push(.{
                 .is_pattern = true,
                 .expr_id = expr_id,
-                .value = value,
+                .value = result,
             });
         },
         .tuple => |elems| {
