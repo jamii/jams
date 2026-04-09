@@ -1425,7 +1425,21 @@ const Type = union(enum) {
                     .known => return TypeId.order(a.ref.elem.known, b.ref.elem.known),
                 }
             },
-            .closure => return .eq,
+            .closure => {
+                switch (std.math.order(a.closure.fn_id.id, b.closure.fn_id.id)) {
+                    .lt => return .lt,
+                    .gt => return .gt,
+                    .eq => {},
+                }
+                for (0..@min(a.closure.captures.len, b.closure.captures.len)) |i| {
+                    switch (TypeId.order(a.closure.captures[i], b.closure.captures[i])) {
+                        .lt => return .lt,
+                        .gt => return .gt,
+                        .eq => {},
+                    }
+                }
+                return std.math.order(a.closure.captures.len, b.closure.captures.len);
+            },
         }
     }
 
@@ -1651,7 +1665,7 @@ const Value = struct {
                 return Value.order(a.getRefElem(), b.getRefElem());
             },
             .closure => {
-                return .eq;
+                return Value.order(a.getClosureCaptures(), b.getClosureCaptures());
             },
         }
     }

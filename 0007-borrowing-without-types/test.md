@@ -1429,3 +1429,33 @@ f(1, 2)
 Error at 2:1
 Expected 1 arguments but found 2 arguments
 ```
+
+```test
+let f = fn (a) { a };
+let g = fn (a) { a };
+f == g
+
+0
+```
+
+```test
+let f = fn (a) { a };
+let g = fn (a) { a };
+f == f
+
+1
+```
+
+```test
+let f = fn (a) { fn [a] () { a } };
+f(0) == f(0)
+
+1
+```
+
+```test
+let f = fn (a) { fn [a] () { a } };
+f(0) == f(1)
+
+0
+```
