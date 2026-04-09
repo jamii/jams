@@ -1803,7 +1803,7 @@ const RefCount = packed struct {
         return ref_count.count == moved;
     }
 
-    fn canMove(ref_count: *RefCount) bool {
+    fn canMove(ref_count: RefCount) bool {
         return ref_count.count == available;
     }
 
@@ -1812,7 +1812,7 @@ const RefCount = packed struct {
         ref_count.count = moved;
     }
 
-    fn canBorrow(ref_count: *RefCount) bool {
+    fn canBorrow(ref_count: RefCount) bool {
         return ref_count.count == available;
     }
 
