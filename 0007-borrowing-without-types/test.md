@@ -1421,3 +1421,11 @@ c
 Error at 1:1
 This value borrows from `c`, but `c` will be destroyed at the end of this block
 ```
+
+```test
+let f = fn (a) { a };
+f(1, 2)
+
+Error at 2:1
+Expected 1 arguments but found 2 arguments
+```

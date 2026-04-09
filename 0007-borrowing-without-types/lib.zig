@@ -2504,6 +2504,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
             const @"fn" = &c.fns.items[fn_id.?.id];
             const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
 
+            try checkArgCount(expr_id, .{ .expected = fn_expr.params.len, .actual = call.args.len });
+
             switch (fn_expr.capture_mode) {
                 .copy, .move => {
                     if (closure_type != .closure)
