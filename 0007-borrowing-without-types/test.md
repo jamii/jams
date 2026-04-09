@@ -1411,3 +1411,13 @@ let y = x*^
 
 []
 ```
+
+```test
+let a = 1;
+let b = 2;
+let c = [a!, b!];
+c
+
+Error at 1:1
+This value borrows from `c`, but `c` will be destroyed at the end of this block
+```

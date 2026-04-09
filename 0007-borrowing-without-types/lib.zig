@@ -2264,7 +2264,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 switch (provenance.lease) {
                     .not_a_ref, .owned => unreachable,
                     .borrowed => {
-                        c.stack.items[path.provenance.lender].ref_count.borrow();
+                        c.stack.items[path.provenance.lender].ref_count.splitBorrow();
                         provenance.*.lender = path.provenance.lender;
                     },
                     .shared => {
