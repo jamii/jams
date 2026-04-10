@@ -1315,9 +1315,9 @@ const Type = union(enum) {
     fn calculateWordSize(@"type": Type) usize {
         switch (@"type") {
             .number => return 1,
-            .tuple => |tuple| {
+            .tuple, .closure => {
                 var size: usize = 0;
-                for (tuple.elems) |elem| {
+                for (@"type".getElems()) |elem| {
                     size += elem.getWordSize();
                 }
                 return size;
@@ -1327,13 +1327,6 @@ const Type = union(enum) {
                     .known => 1,
                     .any => 2,
                 };
-            },
-            .closure => |closure| {
-                var size: usize = 0;
-                for (closure.captures) |capture| {
-                    size += capture.getWordSize();
-                }
-                return size;
             },
         }
     }
@@ -1357,9 +1350,9 @@ const Type = union(enum) {
         var indexes: ArrayList(RefIndex) = .{};
         switch (@"type") {
             .number => {},
-            .tuple => |tuple| {
+            .tuple, .closure => {
                 var word_offset: usize = 0;
-                for (tuple.elems, 0..) |elem, i| {
+                for (@"type".getElems(), 0..) |elem, i| {
                     for (elem.getRefIndexes()) |ref_index| {
                         const path = std.mem.concat(allocator, usize, &.{ &.{i}, ref_index.path }) catch oom();
                         indexes.append(allocator, .{
@@ -1378,22 +1371,17 @@ const Type = union(enum) {
                     .path = &.{},
                 }) catch oom();
             },
-            .closure => |closure| {
-                var word_offset: usize = 0;
-                for (closure.captures, 0..) |capture, i| {
-                    for (capture.getRefIndexes()) |ref_index| {
-                        const path = std.mem.concat(allocator, usize, &.{ &.{i}, ref_index.path }) catch oom();
-                        indexes.append(allocator, .{
-                            .word_offset = word_offset + ref_index.word_offset,
-                            .type_id = ref_index.type_id,
-                            .path = path,
-                        }) catch oom();
-                    }
-                    word_offset += capture.getWordSize();
-                }
-            },
         }
         return indexes.toOwnedSlice(allocator) catch oom();
+    }
+
+    // Helper function for shared tuple/closure logic.
+    fn getElems(@"type": Type) []TypeId {
+        return switch (@"type") {
+            .tuple => |t| t.elems,
+            .closure => |cl| cl.captures,
+            else => panic("No elems in {f}", .{@"type"}),
+        };
     }
 
     fn order(a: Type, b: Type) std.math.Order {
@@ -1834,7 +1822,7 @@ const RefCount = packed struct {
         ref_count.count -= 1;
     }
 
-    fn canShare(ref_count: *RefCount) bool {
+    fn canShare(ref_count: RefCount) bool {
         return ref_count.count >= available;
     }
 
@@ -1856,11 +1844,6 @@ const RefCount = packed struct {
     fn splitBorrow(ref_count: *RefCount) void {
         if (debug) assert(ref_count.count <= available);
         ref_count.count -= 1;
-    }
-
-    fn splitShare(ref_count: *RefCount) void {
-        if (debug) assert(ref_count.count >= available);
-        ref_count.count += 1;
     }
 };
 
@@ -2159,28 +2142,22 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
                 .not_a_ref => unreachable,
                 .owned => return fail(.{ .expr_id = expr_id }, "Can't destructure an owned ref", .{}),
                 .borrowed => lender.ref_count.splitBorrow(),
-                .shared => lender.ref_count.splitShare(),
+                .shared => lender.ref_count.share(),
             }
             stackPushRef(expr_id, value, provenance);
             c.stack.peek().is_pattern = true;
         },
         .tuple => |elems| {
-            switch (value.type_id.getType()) {
-                .tuple => {
-                    if (elems.len != value.type_id.getType().tuple.elems.len)
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Expected a tuple of length {} but found {f}",
-                            .{ elems.len, value },
-                        );
-                    for (elems, 0..) |elem, i| {
-                        try evalPatternRef(elem, value.getTupleElem(i), provenance);
-                    }
-                },
-                .closure => {
-                    try evalPatternRef(expr_id, value.getClosureCaptures(), provenance);
-                },
-                else => try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id }),
+            const tuple = if (value.type_id.getType() == .closure) value.getClosureCaptures() else value;
+            try checkKind(expr_id, .{ .expected = .tuple, .actual = tuple.type_id });
+            if (elems.len != tuple.type_id.getType().tuple.elems.len)
+                return fail(
+                    .{ .expr_id = expr_id },
+                    "Expected a tuple of length {} but found {f}",
+                    .{ elems.len, tuple },
+                );
+            for (elems, 0..) |elem, i| {
+                try evalPatternRef(elem, tuple.getTupleElem(i), provenance);
             }
         },
         else => unreachable,
@@ -2200,22 +2177,16 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
             });
         },
         .tuple => |elems| {
-            switch (value.type_id.getType()) {
-                .tuple => {
-                    if (elems.len != value.type_id.getType().tuple.elems.len)
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Expected a tuple of length {} but found {f}",
-                            .{ elems.len, value },
-                        );
-                    for (elems, 0..) |elem, i| {
-                        try evalPatternOwned(elem, value.getTupleElem(i));
-                    }
-                },
-                .closure => {
-                    try evalPatternOwned(expr_id, value.getClosureCaptures());
-                },
-                else => try checkKind(expr_id, .{ .expected = .tuple, .actual = value.type_id }),
+            const tuple = if (value.type_id.getType() == .closure) value.getClosureCaptures() else value;
+            try checkKind(expr_id, .{ .expected = .tuple, .actual = tuple.type_id });
+            if (elems.len != tuple.type_id.getType().tuple.elems.len)
+                return fail(
+                    .{ .expr_id = expr_id },
+                    "Expected a tuple of length {} but found {f}",
+                    .{ elems.len, tuple },
+                );
+            for (elems, 0..) |elem, i| {
+                try evalPatternOwned(elem, tuple.getTupleElem(i));
             }
         },
         else => unreachable,
