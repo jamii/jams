@@ -2063,21 +2063,12 @@ fn evalPath(expr_id: ExprId) error{Error}!Path {
                     else
                         Provenance.owned;
 
-                    const owner = if (ref_provenance.lease == .owned)
-                        path.provenance.owner
-                    else
-                        ref_provenance.owner;
-
-                    const lender = if (ref_provenance.lease != .shared)
-                        // We don't have exclusive access to this location, so we need to acquire it from the ref that does have exclusive access.
-                        path.provenance.lender
-                    else
-                        ref_provenance.owner;
-
-                    const consumed_borrow = if (ref_provenance.lease != .shared)
-                        path.consumed_borrow
-                    else
-                        false;
+                    const owner, const lender, const consumed_borrow = switch (ref_provenance.lease) {
+                        .owned => .{ path.provenance.owner, path.provenance.lender, path.consumed_borrow },
+                        .borrowed => .{ ref_provenance.owner, path.provenance.lender, path.consumed_borrow },
+                        .shared => .{ ref_provenance.owner, ref_provenance.owner, false },
+                        .not_a_ref => unreachable,
+                    };
 
                     return .{
                         .value = path.value.getRefElem(),
@@ -2236,11 +2227,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
         .get, .deref, .tuple_get => {
             const path = try evalPath(expr_id);
 
-            {
-                const lender = &c.stack.items[path.provenance.lender];
-                if (!lender.ref_count.canShare())
-                    return failLoanConflict(expr_id, path.provenance.lender, "copy");
-            }
+            if (!c.stack.items[path.provenance.lender].ref_count.canShare())
+                return failLoanConflict(expr_id, path.provenance.lender, "copy");
 
             for (path.value.type_id.getRefIndexes()) |ref_index| {
                 const ref = path.value.getRefAtIndex(ref_index);
@@ -2262,8 +2250,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                 .{},
                             );
                         }
-                        const lender = &c.stack.items[path.provenance.lender];
-                        if (!lender.ref_count.canBorrow())
+                        if (!c.stack.items[path.provenance.lender].ref_count.canBorrow())
                             return failLoanConflict(expr_id, path.provenance.lender, "copy borrowed references from");
                     },
                     .shared => {},
@@ -2477,34 +2464,23 @@ fn eval(expr_id: ExprId) error{Error}!void {
                             .{},
                         );
                 },
-                .borrow => {
+                .borrow, .share => {
                     if (closure_type != .ref)
                         return fail(
                             .{ .expr_id = expr_id },
-                            "This function expects to be called by borrow, but found an owned function",
-                            .{},
+                            "This function expects to be called by {s}, but found an owned function",
+                            .{@tagName(fn_expr.capture_mode)},
                         );
                     const lease = if (closure_item.value.getProvenance()) |provenance| provenance.lease else .owned;
-                    if (lease != .borrowed)
+                    if (lease != switch (fn_expr.capture_mode) {
+                        .borrow => Lease.borrowed,
+                        .share => Lease.shared,
+                        else => unreachable,
+                    })
                         return fail(
                             .{ .expr_id = expr_id },
-                            "This function expects to be called by borrow, but found a {s} reference",
-                            .{@tagName(lease)},
-                        );
-                },
-                .share => {
-                    if (closure_type != .ref)
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "This function expects to be called by share, but found an owned function",
-                            .{},
-                        );
-                    const lease = if (closure_item.value.getProvenance()) |provenance| provenance.lease else .owned;
-                    if (lease != .shared)
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "This function expects to be called by share, but found a {s} reference",
-                            .{@tagName(lease)},
+                            "This function expects to be called by {s}, but found a {s} reference",
+                            .{ @tagName(fn_expr.capture_mode), lease.ed() },
                         );
                 },
             }
@@ -2591,11 +2567,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                         "This value can't be owned by `{s}` because it {s} from `{s}`, which will be destroyed before `{s}`",
                                         .{
                                             ref_item.name(),
-                                            switch (elem_provenance.lease) {
-                                                .not_a_ref, .owned => unreachable,
-                                                .borrowed => "borrows",
-                                                .shared => "shares",
-                                            },
+                                            elem_provenance.lease.s(),
                                             elem_item.name(),
                                             ref_item.name(),
                                         },
@@ -2618,7 +2590,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     stackPushEmptyTuple(expr_id);
                 },
-                .@"==" => {
+                .@"==", .@"!=", .@"<" => {
                     try eval(call_builtin.args[0]);
                     try eval(call_builtin.args[1]);
 
@@ -2631,23 +2603,13 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     errdefer comptime unreachable;
 
                     const result = Value.allocStack(Type.internNumber());
-                    result.setNumber(if (Value.order(arg0.value, arg1.value) == .eq) 1 else 0);
-                    c.stack.push(.{ .expr_id = expr_id, .value = result });
-                },
-                .@"!=" => {
-                    try eval(call_builtin.args[0]);
-                    try eval(call_builtin.args[1]);
-
-                    const arg1 = c.stack.pop();
-                    defer arg1.deinit();
-
-                    const arg0 = c.stack.pop();
-                    defer arg0.deinit();
-
-                    errdefer comptime unreachable;
-
-                    const result = Value.allocStack(Type.internNumber());
-                    result.setNumber(if (Value.order(arg0.value, arg1.value) != .eq) 1 else 0);
+                    const result_bool = switch (call_builtin.builtin) {
+                        .@"==" => Value.order(arg0.value, arg1.value) == .eq,
+                        .@"!=" => Value.order(arg0.value, arg1.value) != .eq,
+                        .@"<" => Value.order(arg0.value, arg1.value) == .lt,
+                        else => unreachable,
+                    };
+                    result.setNumber(if (result_bool) 1 else 0);
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .@"+" => {
@@ -2667,22 +2629,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
-                    c.stack.push(.{ .expr_id = expr_id, .value = result });
-                },
-                .@"<" => {
-                    try eval(call_builtin.args[0]);
-                    try eval(call_builtin.args[1]);
-
-                    const arg1 = c.stack.pop();
-                    defer arg1.deinit();
-
-                    const arg0 = c.stack.pop();
-                    defer arg0.deinit();
-
-                    errdefer comptime unreachable;
-
-                    const result = Value.allocStack(Type.internNumber());
-                    result.setNumber(if (Value.order(arg0.value, arg1.value) == .lt) 1 else 0);
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .ref, .ref_any => {
