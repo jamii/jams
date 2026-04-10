@@ -1924,6 +1924,13 @@ fn stackPushEmptyTuple(expr_id: ExprId) void {
     });
 }
 
+fn stackPushRef(expr_id: ExprId, value: Value, provenance: Provenance) void {
+    const ref = Value.allocStack(Type.internRef(value.type_id));
+    ref.setRefElem(value);
+    ref.getProvenance().?.* = provenance;
+    c.stack.push(.{ .expr_id = expr_id, .value = ref });
+}
+
 fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) error{Error}!void {
     const stack_top = c.stack_top;
 
@@ -2163,14 +2170,8 @@ fn evalPatternRef(expr_id: ExprId, value: Value, provenance: Provenance) error{E
                 .borrowed => lender.ref_count.splitBorrow(),
                 .shared => lender.ref_count.splitShare(),
             }
-            const ref = Value.allocStack(Type.internRef(value.type_id));
-            ref.setRefElem(value);
-            ref.getProvenance().?.* = provenance;
-            c.stack.push(.{
-                .is_pattern = true,
-                .expr_id = expr_id,
-                .value = ref,
-            });
+            stackPushRef(expr_id, value, provenance);
+            c.stack.peek().is_pattern = true;
         },
         .tuple => |elems| {
             switch (value.type_id.getType()) {
@@ -2334,14 +2335,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 lender.ref_count.splitBorrow()
             else
                 lender.ref_count.borrow();
-            const ref = Value.allocStack(Type.internRef(path.value.type_id));
-            ref.setRefElem(path.value);
-            ref.getProvenance().?.* = .{
+            stackPushRef(expr_id, path.value, .{
                 .lease = .borrowed,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
-            };
-            c.stack.push(.{ .expr_id = expr_id, .value = ref });
+            });
         },
         .share => |share| {
             const path = try evalPath(share);
@@ -2352,14 +2350,11 @@ fn eval(expr_id: ExprId) error{Error}!void {
             errdefer comptime unreachable;
 
             lender.ref_count.share();
-            const ref = Value.allocStack(Type.internRef(path.value.type_id));
-            ref.setRefElem(path.value);
-            ref.getProvenance().?.* = .{
+            stackPushRef(expr_id, path.value, .{
                 .lease = .shared,
                 .owner = path.provenance.owner,
                 .lender = path.provenance.lender,
-            };
-            c.stack.push(.{ .expr_id = expr_id, .value = ref });
+            });
         },
         .number => |number| {
             errdefer comptime unreachable;
