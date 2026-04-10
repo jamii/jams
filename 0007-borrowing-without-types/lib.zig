@@ -1784,7 +1784,20 @@ const RefCount = packed struct {
     const available = 0;
     const moved = std.math.minInt(Count);
 
-    const State = enum { moved, borrowed, available, shared };
+    const State = enum {
+        moved,
+        borrowed,
+        available,
+        shared,
+
+        fn tryAsLease(s: State) Lease {
+            return switch (s) {
+                .borrowed => .borrowed,
+                .shared => .shared,
+                .moved, .available => panic("Expected a borrowed/shared item", .{}),
+            };
+        }
+    };
 
     fn state(ref_count: RefCount) State {
         if (ref_count.count == moved) return .moved;
@@ -1883,6 +1896,22 @@ const Lease = enum(u2) {
     fn weakest(a: Lease, b: Lease) Lease {
         return @enumFromInt(@max(@intFromEnum(a), @intFromEnum(b)));
     }
+
+    fn s(lease: Lease) []const u8 {
+        return switch (lease) {
+            .borrowed => "borrows",
+            .shared => "shares",
+            else => panic("No verb for {}", .{lease}),
+        };
+    }
+
+    fn ed(lease: Lease) []const u8 {
+        return switch (lease) {
+            .borrowed => "borrowed",
+            .shared => "shared",
+            else => panic("No verb for {}", .{lease}),
+        };
+    }
 };
 
 fn stackPushEmptyTuple(expr_id: ExprId) void {
@@ -1917,11 +1946,7 @@ fn stackCompact(expr_id: ExprId, stack_start: usize, stack_data_start: usize) er
                     return fail(
                         .{ .expr_id = expr_id },
                         "This value {s} from `{s}`, but `{s}` will be destroyed at the end of this block",
-                        .{ switch (provenance.lease) {
-                            .not_a_ref, .owned => unreachable,
-                            .borrowed => "borrows",
-                            .shared => "shares",
-                        }, item.name(), item.name() },
+                        .{ provenance.lease.s(), item.name(), item.name() },
                     );
                 }
             },
@@ -2212,20 +2237,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             {
                 const lender = &c.stack.items[path.provenance.lender];
-                if (!lender.ref_count.canShare()) {
-                    switch (lender.ref_count.state()) {
-                        .moved => unreachable,
-                        .available, .shared => {},
-                        .borrowed => {
-                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
-                            return fail(
-                                .{ .expr_id = expr_id },
-                                "Can't copy `{s}` because it is borrowed by `{s}{f}`",
-                                .{ lender.name(), lendee.name(), lendee_ref_index },
-                            );
-                        },
-                    }
-                }
+                if (!lender.ref_count.canShare())
+                    return failLoanConflict(expr_id, path.provenance.lender, "copy");
             }
 
             for (path.value.type_id.getRefIndexes()) |ref_index| {
@@ -2249,19 +2262,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
                             );
                         }
                         const lender = &c.stack.items[path.provenance.lender];
-                        if (!lender.ref_count.canBorrow()) {
-                            switch (lender.ref_count.state()) {
-                                .moved, .borrowed, .available => unreachable,
-                                .shared => {
-                                    const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
-                                    return fail(
-                                        .{ .expr_id = expr_id },
-                                        "Can't copy `{s}` because it contains borrowed references and is shared by `{s}{f}`",
-                                        .{ lender.name(), lendee.name(), lendee_ref_index },
-                                    );
-                                },
-                            }
-                        }
+                        if (!lender.ref_count.canBorrow())
+                            return failLoanConflict(expr_id, path.provenance.lender, "copy borrowed references from");
                     },
                     .shared => {},
                 }
@@ -2299,27 +2301,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 );
             }
             const owner = &c.stack.items[path.provenance.owner];
-            if (!owner.ref_count.canMove()) {
-                switch (owner.ref_count.state()) {
-                    .moved, .available => unreachable,
-                    .borrowed => {
-                        const lendee, const lendee_ref_index = findLendee(path.provenance.owner, .borrowed);
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is borrowed by `{s}{f}`",
-                            .{ owner.name(), lendee.name(), lendee_ref_index },
-                        );
-                    },
-                    .shared => {
-                        const lendee, const lendee_ref_index = findLendee(path.provenance.owner, .shared);
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't move out of `{s}` because it is shared by `{s}{f}`",
-                            .{ owner.name(), lendee.name(), lendee_ref_index },
-                        );
-                    },
-                }
-            }
+            if (!owner.ref_count.canMove())
+                return failLoanConflict(expr_id, path.provenance.owner, "move out of");
 
             errdefer comptime unreachable;
 
@@ -2342,27 +2325,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
                 );
             }
             const lender = &c.stack.items[path.provenance.lender];
-            if (!path.consumed_borrow and !lender.ref_count.canBorrow()) {
-                switch (lender.ref_count.state()) {
-                    .moved, .available => unreachable,
-                    .borrowed => {
-                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it is already borrowed by `{s}{f}`",
-                            .{ lender.name(), lendee.name(), lendee_ref_index },
-                        );
-                    },
-                    .shared => {
-                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't borrow `{s}` because it is shared by `{s}{f}`",
-                            .{ lender.name(), lendee.name(), lendee_ref_index },
-                        );
-                    },
-                }
-            }
+            if (!path.consumed_borrow and !lender.ref_count.canBorrow())
+                return failLoanConflict(expr_id, path.provenance.lender, "borrow");
 
             errdefer comptime unreachable;
 
@@ -2382,19 +2346,8 @@ fn eval(expr_id: ExprId) error{Error}!void {
         .share => |share| {
             const path = try evalPath(share);
             const lender = &c.stack.items[path.provenance.lender];
-            if (!lender.ref_count.canShare()) {
-                switch (lender.ref_count.state()) {
-                    .moved, .available, .shared => unreachable,
-                    .borrowed => {
-                        const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
-                        return fail(
-                            .{ .expr_id = expr_id },
-                            "Can't share `{s}` because it is borrowed by `{s}{f}`",
-                            .{ lender.name(), lendee.name(), lendee_ref_index },
-                        );
-                    },
-                }
-            }
+            if (!lender.ref_count.canShare())
+                return failLoanConflict(expr_id, path.provenance.lender, "share");
 
             errdefer comptime unreachable;
 
@@ -2603,33 +2556,15 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const lender_state = lender.ref_count.state();
                     switch (lender_state) {
                         .moved, .available => {},
-                        .shared => {
-                            if (arg1.value.findLendee(path.provenance.lender, .shared)) |lendee_ref_index|
+                        .shared, .borrowed => {
+                            const lease = lender_state.tryAsLease();
+                            if (arg1.value.findLendee(path.provenance.lender, lease)) |lendee_ref_index|
                                 return fail(
                                     .{ .expr_id = expr_id },
-                                    "Can't assign this value to `{s}` because value{f} shares from `{s}`",
-                                    .{ lender.name(), lendee_ref_index, lender.name() },
+                                    "Can't assign value to `{s}` because value{f} {s} from `{s}`",
+                                    .{ lender.name(), lendee_ref_index, lease.s(), lender.name() },
                                 );
-                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .shared);
-                            return fail(
-                                .{ .expr_id = expr_id },
-                                "Can't assign to `{s}` because it is shared by `{s}{f}`",
-                                .{ lender.name(), lendee.name(), lendee_ref_index },
-                            );
-                        },
-                        .borrowed => {
-                            if (arg1.value.findLendee(path.provenance.lender, .borrowed)) |lendee_ref_index|
-                                return fail(
-                                    .{ .expr_id = expr_id },
-                                    "Can't assign this value to `{s}` because value{f} borrows from `{s}`",
-                                    .{ lender.name(), lendee_ref_index, lender.name() },
-                                );
-                            const lendee, const lendee_ref_index = findLendee(path.provenance.lender, .borrowed);
-                            return fail(
-                                .{ .expr_id = expr_id },
-                                "Can't assign to `{s}` because it is borrowed by `{s}{f}`",
-                                .{ lender.name(), lendee.name(), lendee_ref_index },
-                            );
+                            return failLoanConflict(expr_id, path.provenance.lender, "assign to");
                         },
                     }
 
@@ -2826,4 +2761,15 @@ fn checkKind(expr_id: ExprId, opts: struct { expected: std.meta.Tag(Type), actua
             "Expected a {s} but found a {s}",
             .{ @tagName(opts.expected), @tagName(actual_type) },
         );
+}
+
+fn failLoanConflict(expr_id: ExprId, stack_index: StackIndex, failed_action: []const u8) error{Error} {
+    const item = &c.stack.items[stack_index];
+    const lease = item.ref_count.state().tryAsLease();
+    const lendee, const ref_index = findLendee(stack_index, lease);
+    return fail(
+        .{ .expr_id = expr_id },
+        "Can't {s} `{s}` because it is {s} by `{s}{f}`",
+        .{ failed_action, item.name(), lease.ed(), lendee.name(), ref_index },
+    );
 }

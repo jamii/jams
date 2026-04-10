@@ -205,7 +205,7 @@ Can't refer to `a` because it has been moved
 }
 
 Error at 4:3
-Can't assign this value to `b` because value borrows from `b`
+Can't assign value to `b` because value borrows from `b`
 ```
 
 ```test
@@ -284,7 +284,7 @@ Can't copy `a` because it is borrowed by `b[0]`
 }
 
 Error at 4:10
-Can't borrow `a` because it is already borrowed by `b[0]`
+Can't borrow `a` because it is borrowed by `b[0]`
 ```
 
 ```test
@@ -1211,7 +1211,7 @@ let a0 = next!();
 let a1 = next!();
 
 Error at 17:10
-Can't borrow `next` because it is already borrowed by `a0[0]`
+Can't borrow `next` because it is borrowed by `a0[0]`
 ```
 
 ```test
@@ -1310,7 +1310,7 @@ let c = b*&;
 b
 
 Error at 4:1
-Can't copy `b` because it contains borrowed references and is shared by `c`
+Can't copy borrowed references from `b` because it is shared by `c`
 ```
 
 ```test
@@ -1337,7 +1337,7 @@ let b = a!;
 a!
 
 Error at 3:1
-Can't borrow `a` because it is already borrowed by `b`
+Can't borrow `a` because it is borrowed by `b`
 ```
 
 ```test
@@ -1391,7 +1391,7 @@ let b = a!;
 a = b^
 
 Error at 3:1
-Can't assign this value to `a` because value borrows from `a`
+Can't assign value to `a` because value borrows from `a`
 ```
 
 ```test
