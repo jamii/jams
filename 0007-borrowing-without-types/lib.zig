@@ -559,14 +559,7 @@ fn parseExprLoose() error{Error}!ExprId {
     while (true) {
         switch (peek()) {
             .@"=", .@"==", .@"!=", .@"+", .@"<" => |token| {
-                const op: Builtin = switch (token) {
-                    .@"=" => .@"=",
-                    .@"==" => .@"==",
-                    .@"!=" => .@"!=",
-                    .@"+" => .@"+",
-                    .@"<" => .@"<",
-                    else => unreachable,
-                };
+                const op = std.meta.stringToEnum(Builtin, @tagName(token)).?;
                 if (last_op != null and last_op.? != op) {
                     return fail(
                         .{ .token_id = c.token_next },
