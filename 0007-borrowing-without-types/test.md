@@ -1459,3 +1459,99 @@ f(0) == f(1)
 
 0
 ```
+
+```test
+let a = 1;
+with_new_stack(fn [a] () {
+  a
+})
+
+1
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a] () {
+  a
+})
+
+[1, 2, 3]
+```
+
+```test
+let a = [1, 2, 3];
+let b = [a&, a&];
+with_new_stack(fn [b] () {
+  b[0]*
+})
+
+[1, 2, 3]
+```
+
+```test
+let a = [1, 2, 3];
+let b = [a&, a&];
+with_new_stack(fn [b] () {
+  b
+})
+
+Error at 3:1
+Can't return a shared reference from `with_new_stack`.
+```
+
+```test
+let a = [1, 2, 3];
+let b = [a&, a&];
+with_new_stack(fn [b] () {
+  b[0]* = [4, 5, 6]
+})
+
+Error at 4:3
+Can't assign through a shared reference
+```
+
+```test
+let a = [1, 2, 3];
+let b = [a!];
+with_new_stack(fn [b] () {
+  b[0]* = [4, 5, 6]
+});
+b^;
+a
+
+[4, 5, 6]
+```
+
+```test
+let a = [1, 2, 3];
+let b = [a!];
+with_new_stack(fn [b^] () {
+  b[0]* = [4, 5, 6]
+});
+a
+
+[4, 5, 6]
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!] () {
+  a* = [4, 5, 6]
+});
+a
+
+[4, 5, 6]
+```
+
+```test
+let a = [1, 2, 3];
+let b = a!;
+let c = b*!;
+with_new_stack(fn [c^] () {
+  c* = [4, 5, 6]
+});
+b^;
+a
+
+[4, 5, 6]
+```

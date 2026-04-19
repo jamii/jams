@@ -125,10 +125,7 @@ const Compiler = struct {
         compiler.expr_to_fn.deinit();
         compiler.scope.deinit();
 
-        while (compiler.stack.len > 0) compiler.stack.pop().deinit();
-        compiler.stack.deinit();
-        allocator.free(compiler.stack_data);
-        allocator.free(compiler.stack_provenance);
+        compiler.deinitStacks();
         for (compiler.types.items) |@"type"| @"type".deinit();
         compiler.types.deinit(allocator);
         compiler.type_to_word_size.deinit(allocator);
@@ -145,6 +142,34 @@ const Compiler = struct {
 
         if (compiler.error_message) |err| allocator.free(err);
     }
+
+    fn deinitStacks(compiler: *Compiler) void {
+        while (compiler.stack.len > 0) compiler.stack.pop().deinit();
+        compiler.stack.deinit();
+        allocator.free(compiler.stack_data);
+        allocator.free(compiler.stack_provenance);
+    }
+
+    fn replaceStacks(compiler: *Compiler, stacks: Stacks) Stacks {
+        const old = Stacks{
+            .stack = compiler.stack,
+            .stack_top = compiler.stack_top,
+            .stack_data = compiler.stack_data,
+            .stack_provenance = compiler.stack_provenance,
+        };
+        compiler.stack = stacks.stack;
+        compiler.stack_top = stacks.stack_top;
+        compiler.stack_data = stacks.stack_data;
+        compiler.stack_provenance = stacks.stack_provenance;
+        return old;
+    }
+};
+
+const Stacks = struct {
+    stack: Stack(StackItem),
+    stack_top: usize,
+    stack_data: []usize,
+    stack_provenance: []Provenance,
 };
 
 const TypeTupleHashContext = struct {
@@ -337,6 +362,7 @@ const Token = enum {
     ref,
     ref_any,
     len,
+    with_new_stack,
 
     // Tokens whose text matters.
     name,
@@ -410,6 +436,7 @@ pub fn tokenize() !void {
                     .ref,
                     .ref_any,
                     .len,
+                    .with_new_stack,
                 };
                 for (keywords) |keyword| {
                     if (std.mem.eql(u8, name, @tagName(keyword)))
@@ -543,6 +570,7 @@ const Builtin = enum {
     ref,
     ref_any,
     len,
+    with_new_stack,
 };
 
 fn parse() error{Error}!ExprId {
@@ -678,7 +706,7 @@ fn parseExprBase() error{Error}!ExprId {
         .@"if" => parseIf(),
         .@"while" => parseWhile(),
         .@"fn" => parseFn(),
-        .ref, .ref_any, .len => parseCallBuiltin(),
+        .ref, .ref_any, .len, .with_new_stack => parseCallBuiltin(),
         else => failExpected("an expression"),
     };
 }
@@ -870,6 +898,7 @@ fn parseCallBuiltin() error{Error}!ExprId {
         .ref => .ref,
         .ref_any => .ref_any,
         .len => .len,
+        .with_new_stack => .with_new_stack,
         else => return failExpected("a builtin function"),
     };
     _ = take();
@@ -1152,7 +1181,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         .call_builtin => |call_builtin| {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
-                    .ref, .ref_any, .len => 1,
+                    .ref, .ref_any, .len, .with_new_stack => 1,
                     .@"=", .@"==", .@"!=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1168,7 +1197,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .ref, .ref_any, .len, .@"==", .@"!=", .@"+", .@"<" => {
+                .ref, .ref_any, .len, .with_new_stack, .@"==", .@"!=", .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -1566,8 +1595,8 @@ const Value = struct {
     fn allocStack(type_id: TypeId) Value {
         const value = allocStackWithoutInit(type_id);
         if (debug) {
-            @memset(getDataSlice(value), 0xCC);
-            @memset(getProvenanceSlice(value).?, .not_a_ref);
+            @memset(getDataSlice(value), undefined);
+            @memset(getProvenanceSlice(value).?, undefined);
         }
         return value;
     }
@@ -1617,6 +1646,7 @@ const Value = struct {
             if (getProvenanceSlice(args.from)) |from_provenance_slice| {
                 @memcpy(to_provenance_slice, from_provenance_slice);
             } else {
+                @memset(to_provenance_slice, .not_a_ref);
                 for (args.to.type_id.getRefIndexes()) |ref_index| {
                     to_provenance_slice[ref_index.word_offset] = .owned;
                 }
@@ -1726,7 +1756,7 @@ const Value = struct {
                 }
             },
             .closure => |closure| {
-                try writer.print("fn({})", .{closure.fn_id});
+                try writer.print("fn({})", .{closure.fn_id.id});
             },
         }
     }
@@ -2312,6 +2342,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
             const value = Value.allocStack(Type.internNumber());
             value.setNumber(number);
+            value.getProvenanceSlice().?[0] = .not_a_ref;
             c.stack.push(.{ .expr_id = expr_id, .value = value });
         },
         .tuple => |exprs| {
@@ -2574,6 +2605,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         else => unreachable,
                     };
                     result.setNumber(if (result_bool) 1 else 0);
+                    result.getProvenanceSlice().?[0] = .not_a_ref;
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .@"+" => {
@@ -2593,6 +2625,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
+                    result.getProvenanceSlice().?[0] = .not_a_ref;
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .ref, .ref_any => {
@@ -2640,7 +2673,114 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     const result = Value.allocStack(Type.internNumber());
                     result.setNumber(@intCast(arg0.value.type_id.getType().tuple.elems.len));
+                    result.getProvenanceSlice().?[0] = .not_a_ref;
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
+                },
+                .with_new_stack => {
+                    try eval(call_builtin.args[0]);
+
+                    const arg0 = c.stack.pop();
+                    defer arg0.deinit();
+
+                    try checkKind(call_builtin.args[0], .{ .expected = .closure, .actual = arg0.value.type_id });
+
+                    const closure_old = arg0.value;
+                    const closure_old_provenance_maybe = closure_old.getProvenanceSlice();
+
+                    var stacks_old = c.replaceStacks(.{
+                        .stack = .init(stack_size),
+                        .stack_top = 0,
+                        .stack_data = allocator.alloc(usize, stack_size) catch oom(),
+                        .stack_provenance = allocator.alloc(Provenance, stack_size) catch oom(),
+                    });
+                    defer {
+                        c.deinitStacks();
+                        _ = c.replaceStacks(stacks_old);
+                    }
+
+                    const fn_id = closure_old.type_id.getType().closure.fn_id;
+                    const @"fn" = &c.fns.items[fn_id.id];
+                    const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
+
+                    try checkArgCount(expr_id, .{ .expected = fn_expr.params.len, .actual = 0 });
+
+                    const closure = Value.allocStack(closure_old.type_id);
+                    Value.copyData(.{ .to = closure, .from = closure_old });
+                    const closure_provenance = closure.getProvenanceSlice().?;
+                    @memset(closure_provenance, .not_a_ref);
+                    if (closure_old_provenance_maybe) |closure_old_provenance| {
+                        for (closure.type_id.getRefIndexes()) |ref_index| {
+                            const ref_provenance = closure_old_provenance[ref_index.word_offset];
+                            switch (ref_provenance.lease) {
+                                .not_a_ref => unreachable,
+                                .owned => {
+                                    closure_provenance[ref_index.word_offset] = ref_provenance;
+                                },
+                                .borrowed, .shared => {
+                                    const target = closure_old.getRefAtIndex(ref_index).getRefElem();
+                                    for (target.type_id.getRefIndexes()) |target_ref_index| {
+                                        const target_ref_lease = target.getRefAtIndex(target_ref_index).getProvenance().?.lease;
+                                        if (target_ref_lease != .owned)
+                                            return fail(
+                                                .{ .expr_id = expr_id },
+                                                "The closure passed to `with_new_stack` contains a {s} reference to a {s} reference.",
+                                                .{
+                                                    ref_provenance.lease.ed(),
+                                                    target_ref_lease.ed(),
+                                                },
+                                            );
+                                    }
+                                    const owner = c.stack.len;
+                                    stackPushEmptyTuple(stacks_old.stack.items[ref_provenance.owner].expr_id);
+                                    const lender = c.stack.len;
+                                    stackPushEmptyTuple(stacks_old.stack.items[ref_provenance.lender].expr_id);
+                                    switch (ref_provenance.lease) {
+                                        .not_a_ref, .owned => unreachable,
+                                        .borrowed => c.stack.peek().ref_count.borrow(),
+                                        .shared => c.stack.peek().ref_count.share(),
+                                    }
+                                    closure_provenance[ref_index.word_offset] = .{
+                                        .lease = ref_provenance.lease,
+                                        .owner = @intCast(owner),
+                                        .lender = @intCast(lender),
+                                    };
+                                },
+                            }
+                        }
+                    } else {
+                        for (closure.type_id.getRefIndexes()) |ref_index| {
+                            closure_provenance[ref_index.word_offset] = .owned;
+                        }
+                    }
+                    c.stack.push(.{ .expr_id = arg0.expr_id, .value = closure });
+
+                    try eval(fn_expr.body);
+
+                    const result = c.stack.pop();
+                    errdefer result.deinit();
+
+                    for (result.value.type_id.getRefIndexes()) |ref_index| {
+                        const ref_lease = result.value.getRefAtIndex(ref_index).getProvenance().?.lease;
+                        if (ref_lease != .owned)
+                            return fail(
+                                .{ .expr_id = expr_id },
+                                "Can't return a {s} reference from `with_new_stack`.",
+                                .{ref_lease.ed()},
+                            );
+                    }
+
+                    {
+                        stacks_old = c.replaceStacks(stacks_old);
+                        defer stacks_old = c.replaceStacks(stacks_old);
+
+                        const result_old = Value.allocStack(result.value.type_id);
+                        Value.copyData(.{ .to = result_old, .from = result.value });
+                        const result_old_provenance = result_old.getProvenanceSlice().?;
+                        for (result_old.type_id.getRefIndexes()) |ref_index| {
+                            result_old_provenance[ref_index.word_offset] = .owned;
+                        }
+                        c.stack.push(.{ .expr_id = result.expr_id, .value = result_old });
+                    }
                 },
             }
 
