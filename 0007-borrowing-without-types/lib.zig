@@ -2701,7 +2701,14 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const fn_id = closure_old.type_id.getType().closure.fn_id;
                     const @"fn" = &c.fns.items[fn_id.id];
                     const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
-
+                    switch (fn_expr.capture_mode) {
+                        .move, .copy => {},
+                        .borrow, .share => return fail(
+                            .{ .expr_id = expr_id },
+                            "The closure passed to `with_new_stack` should expect to be called by move, not by {s}",
+                            .{@tagName(fn_expr.capture_mode)},
+                        ),
+                    }
                     try checkArgCount(expr_id, .{ .expected = fn_expr.params.len, .actual = 0 });
 
                     const closure = Value.allocStack(closure_old.type_id);

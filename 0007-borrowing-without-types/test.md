@@ -1555,3 +1555,48 @@ a
 
 [4, 5, 6]
 ```
+
+```test
+let a = [1, 2, 3];
+let b = [a!];
+with_new_stack(fn [b^] () {
+  let c = b[0]*!;
+  b[0]* = [4, 5, 6]
+});
+a
+
+Error at 5:3
+Can't assign to `b` because it is borrowed by `c`
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!]^ () {
+  a* = [4, 5, 6]
+});
+a
+
+[4, 5, 6]
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!]! () {
+  a* = [4, 5, 6]
+});
+a
+
+Error at 2:1
+The closure passed to `with_new_stack` should expect to be called by move, not by borrow
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!]& () {
+  a* = [4, 5, 6]
+});
+a
+
+Error at 2:1
+The closure passed to `with_new_stack` should expect to be called by move, not by share
+```
