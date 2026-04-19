@@ -942,9 +942,9 @@ fn take() Token {
 }
 
 fn takeIf(expected: Token) bool {
-    const token = peek();
-    if (token == expected) c.token_next.id += 1;
-    return token == expected;
+    if (peek() != expected) return false;
+    c.token_next.id += 1;
+    return true;
 }
 
 fn pushExpr(start: TokenId, expr: Expr) ExprId {
