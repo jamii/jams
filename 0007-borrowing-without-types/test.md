@@ -885,8 +885,8 @@ b*
 ```
 
 ```test
-let a = ref_any(1);
-a = ref_any([1, 2, 3]);
+let a = any(box(1));
+a = any(box([1, 2, 3]));
 a*
 
 [1, 2, 3]
@@ -895,20 +895,51 @@ a*
 ```test
 let f = fn (x) { x + 1 };
 let g = fn (x) { x + 1 + 1 };
-let a = ref_any(f);
-a = ref_any(g);
+let a = any(box(f));
+a = any(box(g));
 a*(3)
 
 5
 ```
 
 ```test
-let a = ref_any(1);
+let a = any(box(1));
 a* = [1, 2, 3];
 a*
 
 Error at 2:1
 Can't assign a value of type `[number, number, number]` to a location of type `number`
+```
+
+```test
+let a = 1;
+let b = [1, 2, 3];
+let c = any(a&);
+c = any(b&);
+c*
+
+[1, 2, 3]
+```
+
+```test
+let a = 1;
+let b = [1, 2, 3];
+let c = any(a!);
+c = any(b!);
+c*
+
+[1, 2, 3]
+```
+
+```test
+let a = 1;
+let b = [1, 2, 3];
+let c = any(a&);
+c = any(b!);
+c*
+
+Error at 4:1
+Can't assign a value of type `any!` to a location of type `any&`
 ```
 
 ```test

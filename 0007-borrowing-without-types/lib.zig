@@ -352,7 +352,7 @@ const Token = enum {
     @"while",
     @"fn",
     box,
-    ref_any,
+    any,
     len,
     with_new_stack,
 
@@ -426,7 +426,7 @@ pub fn tokenize() !void {
                     .@"while",
                     .@"fn",
                     .box,
-                    .ref_any,
+                    .any,
                     .len,
                     .with_new_stack,
                 };
@@ -560,7 +560,7 @@ const Builtin = enum {
     @"+",
     @"<",
     box,
-    ref_any,
+    any,
     len,
     with_new_stack,
 };
@@ -698,7 +698,7 @@ fn parseExprBase() error{Error}!ExprId {
         .@"if" => parseIf(),
         .@"while" => parseWhile(),
         .@"fn" => parseFn(),
-        .box, .ref_any, .len, .with_new_stack => parseCallBuiltin(),
+        .box, .any, .len, .with_new_stack => parseCallBuiltin(),
         else => failExpected("an expression"),
     };
 }
@@ -888,7 +888,7 @@ fn parseCallBuiltin() error{Error}!ExprId {
 
     const builtin: Builtin = switch (peek()) {
         .box => .box,
-        .ref_any => .ref_any,
+        .any => .any,
         .len => .len,
         .with_new_stack => .with_new_stack,
         else => return failExpected("a builtin function"),
@@ -1173,7 +1173,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         .call_builtin => |call_builtin| {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
-                    .box, .ref_any, .len, .with_new_stack => 1,
+                    .box, .any, .len, .with_new_stack => 1,
                     .@"=", .@"==", .@"!=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1189,7 +1189,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .box, .ref_any, .len, .with_new_stack, .@"==", .@"!=", .@"+", .@"<" => {
+                .box, .any, .len, .with_new_stack, .@"==", .@"!=", .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -1298,8 +1298,8 @@ const Type = union(enum) {
         return type_id;
     }
 
-    fn internRefAny() TypeId {
-        const ref = TypeRef{ .lease = .owned, .elem = .any };
+    fn internRefAny(lease: Lease) TypeId {
+        const ref = TypeRef{ .lease = lease, .elem = .any };
         if (c.type_ref.get(ref)) |type_id| return type_id;
         const type_id = internUnchecked(.{ .ref = ref });
         c.type_ref.putNoClobber(ref, type_id) catch oom();
@@ -1604,7 +1604,12 @@ const Value = struct {
             },
             .any => {
                 value.ptr[0] = @intFromPtr(elem.ptr);
-                value.ptr[1] = @bitCast(elem.type_id);
+                value.ptr[
+                    switch (ref.lease) {
+                        .owned => 1,
+                        .borrowed, .shared => 2,
+                    }
+                ] = @bitCast(elem.type_id);
             },
         }
     }
@@ -2623,7 +2628,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
-                .box, .ref_any => {
+                .box => {
                     try eval(call_builtin.args[0]);
 
                     const arg0 = c.stack.pop();
@@ -2649,14 +2654,26 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     const target = Value.allocHeap(arg0.value.type_id);
                     Value.copyData(.{ .from = arg0.value, .to = target });
 
-                    const ref = Value.allocStack(switch (call_builtin.builtin) {
-                        .box => Type.internRef(.owned, arg0.value.type_id),
-                        .ref_any => Type.internRefAny(),
-                        else => unreachable,
-                    });
+                    const ref = Value.allocStack(Type.internRef(.owned, arg0.value.type_id));
                     ref.setRefElem(target);
-
                     c.stack.push(.{ .expr_id = expr_id, .value = ref });
+                },
+                .any => {
+                    try eval(call_builtin.args[0]);
+
+                    const arg0 = c.stack.pop();
+                    errdefer arg0.deinit();
+
+                    try checkKind(call_builtin.args[0], .{ .expected = .ref, .actual = arg0.value.type_id });
+
+                    errdefer comptime unreachable;
+
+                    const type_ref = arg0.value.type_id.getType().ref;
+                    const result = Value.allocStack(Type.internRefAny(type_ref.lease));
+                    result.setRefElem(arg0.value.getRefElem());
+                    if (type_ref.lease != .owned)
+                        result.setRefProvenance(arg0.value.getRefProvenance());
+                    c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
                 .len => {
                     try eval(call_builtin.args[0]);
