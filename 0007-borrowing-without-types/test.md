@@ -1711,3 +1711,18 @@ b*
 Error at 5:3
 Can't assign a value of type `[number, number, number]&` to a location of type `box([number, number, number])`
 ```
+
+```test
+let [a, [b, c]] = [box(1), 2];
+
+Error at 1:9
+Expected a tuple but found a number
+```
+
+```test
+let z = [box(1), 2];
+let [a, [b, c]] = z&;
+
+Error at 2:9
+Expected a tuple but found a number
+```

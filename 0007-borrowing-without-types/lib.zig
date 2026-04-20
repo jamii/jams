@@ -2221,6 +2221,7 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
         .get => {
             const result = Value.allocStack(value.type_id);
             Value.copyData(.{ .to = result, .from = value });
+            value.setRefsToNull();
             c.stack.push(.{
                 .is_pattern = true,
                 .expr_id = expr_id,
