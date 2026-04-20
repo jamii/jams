@@ -351,7 +351,7 @@ const Token = enum {
     @"else",
     @"while",
     @"fn",
-    ref,
+    box,
     ref_any,
     len,
     with_new_stack,
@@ -425,7 +425,7 @@ pub fn tokenize() !void {
                     .@"else",
                     .@"while",
                     .@"fn",
-                    .ref,
+                    .box,
                     .ref_any,
                     .len,
                     .with_new_stack,
@@ -559,7 +559,7 @@ const Builtin = enum {
     @"!=",
     @"+",
     @"<",
-    ref,
+    box,
     ref_any,
     len,
     with_new_stack,
@@ -698,7 +698,7 @@ fn parseExprBase() error{Error}!ExprId {
         .@"if" => parseIf(),
         .@"while" => parseWhile(),
         .@"fn" => parseFn(),
-        .ref, .ref_any, .len, .with_new_stack => parseCallBuiltin(),
+        .box, .ref_any, .len, .with_new_stack => parseCallBuiltin(),
         else => failExpected("an expression"),
     };
 }
@@ -887,7 +887,7 @@ fn parseCallBuiltin() error{Error}!ExprId {
     const start = c.token_next;
 
     const builtin: Builtin = switch (peek()) {
-        .ref => .ref,
+        .box => .box,
         .ref_any => .ref_any,
         .len => .len,
         .with_new_stack => .with_new_stack,
@@ -1173,7 +1173,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
         .call_builtin => |call_builtin| {
             try checkArgCount(expr_id, .{
                 .expected = switch (call_builtin.builtin) {
-                    .ref, .ref_any, .len, .with_new_stack => 1,
+                    .box, .ref_any, .len, .with_new_stack => 1,
                     .@"=", .@"==", .@"!=", .@"+", .@"<" => 2,
                 },
                 .actual = call_builtin.args.len,
@@ -1189,7 +1189,7 @@ fn analyze(expr_id: ExprId) error{Error}!void {
                         arg0.get.allow_moved = true;
                     try analyzePath(call_builtin.args[0]);
                 },
-                .ref, .ref_any, .len, .with_new_stack, .@"==", .@"!=", .@"+", .@"<" => {
+                .box, .ref_any, .len, .with_new_stack, .@"==", .@"!=", .@"+", .@"<" => {
                     for (call_builtin.args) |arg|
                         try analyze(arg);
 
@@ -2623,7 +2623,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     result.setNumber(arg0.value.getNumber() +% arg1.value.getNumber());
                     c.stack.push(.{ .expr_id = expr_id, .value = result });
                 },
-                .ref, .ref_any => {
+                .box, .ref_any => {
                     try eval(call_builtin.args[0]);
 
                     const arg0 = c.stack.pop();
@@ -2650,7 +2650,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     Value.copyData(.{ .from = arg0.value, .to = target });
 
                     const ref = Value.allocStack(switch (call_builtin.builtin) {
-                        .ref => Type.internRef(.owned, arg0.value.type_id),
+                        .box => Type.internRef(.owned, arg0.value.type_id),
                         .ref_any => Type.internRefAny(),
                         else => unreachable,
                     });

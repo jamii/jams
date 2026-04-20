@@ -669,7 +669,7 @@ This value borrows from `c`, but `c` will be destroyed at the end of this block
 
 ```test
 {
-  let a = ref(42);
+  let a = box(42);
   a
 }
 
@@ -679,7 +679,7 @@ Can't copy an owned reference
 
 ```test
 {
-  let a = ref(42);
+  let a = box(42);
   a^
 }
 
@@ -688,7 +688,7 @@ box(42)
 
 ```test
 {
-  let a = ref(42);
+  let a = box(42);
   {
     let b = a*!;
     b* = 12;
@@ -701,10 +701,10 @@ box(12)
 
 ```test
 {
-  let a = ref(42);
+  let a = box(42);
   {
     let b = a!;
-    b* = ref(12);
+    b* = box(12);
   };
   a^
 }
@@ -714,7 +714,7 @@ box(12)
 
 ```test
 {
-  let a = ref(42);
+  let a = box(42);
   {
     let b = a!;
     let c = 12;
@@ -730,7 +730,7 @@ Can't assign a value of type `number&` to a location of type `box(number)`
 ```test
 {
   let z = 12;
-  let a = ref(42);
+  let a = box(42);
   {
     let b = a!;
     b* = z&;
@@ -745,7 +745,7 @@ Can't assign a value of type `number&` to a location of type `box(number)`
 ```test
 {
   let z = 12;
-  let a = ref(42);
+  let a = box(42);
   {
     let b = a!;
     b* = z&;
@@ -760,7 +760,7 @@ Can't assign a value of type `number&` to a location of type `box(number)`
 ```test
 {
   let z = 12;
-  let a = ref(z&);
+  let a = box(z&);
 }
 
 Error at 3:11
@@ -770,7 +770,7 @@ Can't box a shared ref
 ```test
 {
   let z = 12;
-  let a = ref(ref(1));
+  let a = box(box(1));
   {
     let b = a*!;
     b* = z&;
@@ -784,7 +784,7 @@ Can't assign a value of type `number&` to a location of type `box(number)`
 
 ```test
 {
-  let a = ref(ref(1));
+  let a = box(box(1));
   a*
 }
 
@@ -794,7 +794,7 @@ Can't copy an owned reference
 
 ```test
 {
-  let a = ref(ref(1));
+  let a = box(box(1));
   a*^
 }
 
@@ -810,8 +810,8 @@ b + 1
 ```
 
 ```test
-let a = ref(1);
-a* = { a = ref(2); 3 };
+let a = box(1);
+a* = { a = box(2); 3 };
 a^
 
 box(3)
@@ -837,7 +837,7 @@ nums
 ```
 
 ```test
-let a = ref([1, 2, 3]);
+let a = box([1, 2, 3]);
 a*
 
 [1, 2, 3]
@@ -1406,7 +1406,7 @@ Can't copy `inner` because it is borrowed by `x`
 ```
 
 ```test
-let inner = ref([1, [2, [3]]]);
+let inner = box([1, [2, [3]]]);
 let x = inner^;
 let y = x*^
 
@@ -1670,7 +1670,7 @@ The closure passed to `with_new_stack` contains a borrowed reference to a shared
 
 ```test
 let a = [1, 2, 3];
-let b = ref(a);
+let b = box(a);
 let c = [4, 5, 6];
 with_new_stack(fn [b!, c&] () {
   b* = c;
