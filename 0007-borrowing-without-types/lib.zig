@@ -1345,7 +1345,7 @@ const Type = union(enum) {
                     // provenance
                     @as(usize, switch (ref.lease) {
                         .owned => 0,
-                        .borrowed, .shared => 1,
+                        .borrowed, .shared => Provenance.wordSize,
                     }) +
                     // type id
                     @as(usize, switch (ref.elem) {
@@ -1512,6 +1512,27 @@ const TypeRef = struct {
     },
 
     fn deinit(_: TypeRef) void {}
+
+    fn elemOffset(_: TypeRef) usize {
+        return 0;
+    }
+
+    fn provenanceOffset(ref: TypeRef) usize {
+        if (debug) assert(ref.lease != .owned);
+        return 1;
+    }
+
+    fn typeIdOffset(ref: TypeRef) usize {
+        if (debug) assert(ref.elem == .any);
+        return
+        // ptr
+        1 +
+            // provenance
+            switch (ref.lease) {
+                .owned => @as(usize, 0),
+                .borrowed, .shared => Provenance.wordSize,
+            };
+    }
 };
 
 const TypeClosure = struct {
@@ -1567,18 +1588,23 @@ const Value = struct {
     }
 
     fn getRefElem(value: Value) Value {
-        _ = value.type_id.getType().ref;
+        const ref = value.type_id.getType().ref;
         return .{
-            .ptr = @ptrFromInt(value.ptr[0]),
+            .ptr = @ptrFromInt(value.ptr[ref.elemOffset()]),
             .type_id = value.getRefTypeId(),
         };
+    }
+
+    fn getRefProvenancePtr(value: Value) *align(@sizeOf(usize)) Provenance {
+        const ref = value.type_id.getType().ref;
+        return @ptrCast(@alignCast(&value.ptr[ref.provenanceOffset()]));
     }
 
     fn getRefProvenance(value: Value) Provenance {
         const ref = value.type_id.getType().ref;
         return switch (ref.lease) {
             .owned => Provenance.owned,
-            .borrowed, .shared => @bitCast(value.ptr[1]),
+            .borrowed, .shared => value.getRefProvenancePtr().*,
         };
     }
 
@@ -1586,12 +1612,7 @@ const Value = struct {
         const ref = value.type_id.getType().ref;
         return switch (ref.elem) {
             .known => |known| known,
-            .any => @bitCast(value.ptr[
-                switch (ref.lease) {
-                    .owned => 1,
-                    .borrowed, .shared => 2,
-                }
-            ]),
+            .any => @bitCast(value.ptr[ref.typeIdOffset()]),
         };
     }
 
@@ -1600,16 +1621,11 @@ const Value = struct {
         switch (ref.elem) {
             .known => |known| {
                 if (debug) assert(known == elem.type_id);
-                value.ptr[0] = @intFromPtr(elem.ptr);
+                value.ptr[ref.elemOffset()] = @intFromPtr(elem.ptr);
             },
             .any => {
-                value.ptr[0] = @intFromPtr(elem.ptr);
-                value.ptr[
-                    switch (ref.lease) {
-                        .owned => 1,
-                        .borrowed, .shared => 2,
-                    }
-                ] = @bitCast(elem.type_id);
+                value.ptr[ref.elemOffset()] = @intFromPtr(elem.ptr);
+                value.ptr[ref.typeIdOffset()] = @bitCast(elem.type_id);
             },
         }
     }
@@ -1617,7 +1633,7 @@ const Value = struct {
     fn setRefProvenance(value: Value, provenance: Provenance) void {
         const ref = value.type_id.getType().ref;
         if (debug) assert(ref.lease != .owned);
-        value.ptr[1] = @bitCast(provenance);
+        value.getRefProvenancePtr().* = provenance;
     }
 
     fn getClosureCaptures(value: Value) Value {
@@ -1763,7 +1779,7 @@ const Value = struct {
                 try writer.print("]", .{});
             },
             .ref => |ref| {
-                if (value.ptr[0] == 0) {
+                if (value.ptr[ref.elemOffset()] == 0) {
                     // This isn't reachable in valid programs, but it's useful when debugging.
                     try writer.print("null", .{});
                 } else {
@@ -1911,6 +1927,8 @@ const Provenance = packed struct(u64) {
         .owner = 0,
         .lender = 0,
     };
+
+    const wordSize = @divExact(@sizeOf(Provenance), @sizeOf(usize));
 };
 
 const Lease = enum {
