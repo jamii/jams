@@ -1600,3 +1600,44 @@ a
 Error at 2:1
 The closure passed to `with_new_stack` should expect to be called by move, not by share
 ```
+
+TODO below are all wrong
+
+```test
+let a = [1, 2, 3];
+let b = a&;
+with_new_stack(fn [b!] () {
+  let c = [1, 2, 3];
+  b* = c&;
+});
+b*
+
+Error at 5:3
+Can't write a borrowed/shared reference to an owned ref
+```
+
+```test
+let a = [1, 2, 3];
+let b = a&;
+let c = [4, 5, 6];
+with_new_stack(fn [b!, c&] () {
+  b* = c;
+});
+b*
+
+Error at 5:3
+Can't write a borrowed/shared reference to an owned ref
+```
+
+```test
+let a = [1, 2, 3];
+let b = ref(a);
+let c = [4, 5, 6];
+with_new_stack(fn [b!, c&] () {
+  b* = c;
+});
+b*
+
+Error at 5:3
+Can't write a borrowed/shared reference to an owned ref
+```

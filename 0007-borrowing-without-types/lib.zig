@@ -2726,7 +2726,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                                 .borrowed, .shared => {
                                     const target = closure_old.getRefAtIndex(ref_index).getRefElem();
                                     for (target.type_id.getRefIndexes()) |target_ref_index| {
-                                        const target_ref_lease = target.getRefAtIndex(target_ref_index).getProvenance().?.lease;
+                                        const target_ref_lease = if (target.getRefAtIndex(target_ref_index).getProvenance()) |target_provenance| target_provenance.lease else .owned;
                                         if (target_ref_lease != .owned)
                                             return fail(
                                                 .{ .expr_id = expr_id },
