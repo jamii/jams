@@ -1601,6 +1601,43 @@ Error at 2:1
 The closure passed to `with_new_stack` should expect to be called by move, not by share
 ```
 
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a&] () {
+  a*&;
+});
+
+[]
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!] () {
+  a*&;
+});
+
+[]
+```
+
+```test
+let a = [1, 2, 3];
+with_new_stack(fn [a!] () {
+  a*!;
+});
+
+[]
+```
+
+```test
+let a = [1, 2, 3];
+let b = a&;
+with_new_stack(fn [b&] () {
+  b**&;
+});
+
+[]
+```
+
 TODO below are all wrong
 
 ```test
