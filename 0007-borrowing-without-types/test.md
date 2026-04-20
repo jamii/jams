@@ -76,7 +76,7 @@ This value borrows from `x`, but `x` will be destroyed at the end of this block
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a location of type `ref(number)`
+Can't assign a value of type `number` to a location of type `number!`
 ```
 
 ```test
@@ -248,7 +248,7 @@ This value can't be owned by `b` because it borrows from `c`, which will be dest
 }
 
 Error at 4:3
-Can't assign a value of type `number` to a location of type `ref(number)`
+Can't assign a value of type `number` to a location of type `number!`
 ```
 
 ```test
@@ -683,7 +683,7 @@ Can't copy an owned reference
   a^
 }
 
-ref(42)
+box(42)
 ```
 
 ```test
@@ -696,7 +696,7 @@ ref(42)
   a^
 }
 
-ref(12)
+box(12)
 ```
 
 ```test
@@ -709,7 +709,7 @@ ref(12)
   a^
 }
 
-ref(12)
+box(12)
 ```
 
 ```test
@@ -724,7 +724,7 @@ ref(12)
 }
 
 Error at 6:5
-This value can't be owned by `a` because it shares from `c`, which will be destroyed before `a`
+Can't assign a value of type `number&` to a location of type `box(number)`
 ```
 
 ```test
@@ -738,8 +738,8 @@ This value can't be owned by `a` because it shares from `c`, which will be destr
   a^
 }
 
-Error at 1:1
-This value shares from `z`, but `z` will be destroyed at the end of this block
+Error at 6:5
+Can't assign a value of type `number&` to a location of type `box(number)`
 ```
 
 ```test
@@ -753,7 +753,8 @@ This value shares from `z`, but `z` will be destroyed at the end of this block
   a*
 }
 
-12
+Error at 6:5
+Can't assign a value of type `number&` to a location of type `box(number)`
 ```
 
 ```test
@@ -763,7 +764,7 @@ This value shares from `z`, but `z` will be destroyed at the end of this block
 }
 
 Error at 3:11
-Can't create an owned ref containing a borrowed/shared ref
+Can't box a shared ref
 ```
 
 ```test
@@ -778,7 +779,7 @@ Can't create an owned ref containing a borrowed/shared ref
 }
 
 Error at 6:5
-Can't write a borrowed/shared reference to an owned ref
+Can't assign a value of type `number&` to a location of type `box(number)`
 ```
 
 ```test
@@ -797,7 +798,7 @@ Can't copy an owned reference
   a*^
 }
 
-ref(1)
+box(1)
 ```
 
 ```test
@@ -813,7 +814,7 @@ let a = ref(1);
 a* = { a = ref(2); 3 };
 a^
 
-ref(3)
+box(3)
 ```
 
 ```test
@@ -1635,7 +1636,8 @@ with_new_stack(fn [b&] () {
   b**&;
 });
 
-[]
+Error at 3:1
+The closure passed to `with_new_stack` contains a shared reference to a shared reference.
 ```
 
 TODO below are all wrong
@@ -1649,8 +1651,8 @@ with_new_stack(fn [b!] () {
 });
 b*
 
-Error at 5:3
-Can't write a borrowed/shared reference to an owned ref
+Error at 3:1
+The closure passed to `with_new_stack` contains a borrowed reference to a shared reference.
 ```
 
 ```test
@@ -1662,8 +1664,8 @@ with_new_stack(fn [b!, c&] () {
 });
 b*
 
-Error at 5:3
-Can't write a borrowed/shared reference to an owned ref
+Error at 4:1
+The closure passed to `with_new_stack` contains a borrowed reference to a shared reference.
 ```
 
 ```test
@@ -1676,5 +1678,5 @@ with_new_stack(fn [b!, c&] () {
 b*
 
 Error at 5:3
-Can't write a borrowed/shared reference to an owned ref
+Can't assign a value of type `[number, number, number]&` to a location of type `box([number, number, number])`
 ```
