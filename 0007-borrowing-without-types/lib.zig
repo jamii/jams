@@ -1687,6 +1687,11 @@ const Value = struct {
         @memcpy(getDataSlice(args.to), getDataSlice(args.from));
     }
 
+    fn moveData(args: struct { to: Value, from: Value }) void {
+        Value.copyData(.{ .to = args.to, .from = args.from });
+        args.from.setRefsToNull();
+    }
+
     fn order(a: Value, b: Value) std.math.Order {
         switch (TypeId.order(a.type_id, b.type_id)) {
             .lt => return .lt,
@@ -2220,8 +2225,7 @@ fn evalPatternOwned(expr_id: ExprId, value: Value) error{Error}!void {
     switch (c.exprs.items[expr_id.id]) {
         .get => {
             const result = Value.allocStack(value.type_id);
-            Value.copyData(.{ .to = result, .from = value });
-            value.setRefsToNull();
+            Value.moveData(.{ .to = result, .from = value });
             c.stack.push(.{
                 .is_pattern = true,
                 .expr_id = expr_id,
@@ -2323,8 +2327,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
             owner.ref_count.move();
 
             const result = Value.allocStack(path.value.type_id);
-            Value.copyData(.{ .to = result, .from = path.value });
-            path.value.setRefsToNull(); // Null out refs in original to avoid double-free.
+            Value.moveData(.{ .to = result, .from = path.value });
 
             c.stack.push(.{ .expr_id = expr_id, .value = result });
         },
@@ -2602,7 +2605,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         .shared, .borrowed => unreachable,
                     }
 
-                    Value.copyData(.{ .to = path.value, .from = arg1.value });
+                    Value.moveData(.{ .to = path.value, .from = arg1.value });
 
                     stackPushEmptyTuple(expr_id);
                 },
@@ -2671,7 +2674,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                     errdefer comptime unreachable;
 
                     const target = Value.allocHeap(arg0.value.type_id);
-                    Value.copyData(.{ .from = arg0.value, .to = target });
+                    Value.moveData(.{ .from = arg0.value, .to = target });
 
                     const ref = Value.allocStack(Type.internRef(.owned, arg0.value.type_id));
                     ref.setRefElem(target);
@@ -2804,7 +2807,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         defer stacks_old = c.replaceStacks(stacks_old);
 
                         const result_old = Value.allocStack(result.value.type_id);
-                        Value.copyData(.{ .to = result_old, .from = result.value });
+                        Value.moveData(.{ .to = result_old, .from = result.value });
                         c.stack.push(.{ .expr_id = result.expr_id, .value = result_old });
                     }
                 },
