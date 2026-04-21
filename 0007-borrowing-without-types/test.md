@@ -1726,3 +1726,11 @@ let [a, [b, c]] = z&;
 Error at 2:9
 Expected a tuple but found a number
 ```
+
+```test
+let x = box([1, 2]);
+let f = fn [x^]() { x^ };  // capture x by move, return the heap value
+with_new_stack(f^)
+
+box([1, 2])
+```

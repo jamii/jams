@@ -2714,8 +2714,6 @@ fn eval(expr_id: ExprId) error{Error}!void {
 
                     try checkKind(call_builtin.args[0], .{ .expected = .closure, .actual = arg0.value.type_id });
 
-                    const closure_old = arg0.value;
-
                     var stacks_old = c.replaceStacks(.{
                         .stack = .init(stack_size),
                         .stack_top = 0,
@@ -2726,6 +2724,7 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         _ = c.replaceStacks(stacks_old);
                     }
 
+                    const closure_old = arg0.value;
                     const fn_id = closure_old.type_id.getType().closure.fn_id;
                     const @"fn" = &c.fns.items[fn_id.id];
                     const fn_expr = c.exprs.items[@"fn".fn_expr_id.id].@"fn";
@@ -2745,8 +2744,12 @@ fn eval(expr_id: ExprId) error{Error}!void {
                         const ref = closure_old.getRefAtIndex(ref_index);
                         const ref_lease = ref.type_id.getType().ref.lease;
                         switch (ref_lease) {
-                            .owned => {},
+                            .owned => {
+                                // Move owned refs.
+                                closure_old.getRefAtIndex(ref_index).setRefsToNull();
+                            },
                             .borrowed, .shared => {
+                                // Reborrow borrowed/shared refs.
                                 const target = ref.getRefElem();
                                 for (target.type_id.getRefIndexes()) |target_ref_index| {
                                     const target_ref = target.getRefAtIndex(target_ref_index);
