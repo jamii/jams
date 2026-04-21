@@ -1734,3 +1734,31 @@ with_new_stack(f^)
 
 box([1, 2])
 ```
+
+```test
+let a = 1;
+let b = a&;
+let c = b^*&;
+c*
+
+1
+```
+
+```test
+let a = 1;
+let b = a!;
+let c = b^*&;
+c*
+
+1
+```
+
+```test
+let a = 1;
+let b = a&;
+let c = b^*!;
+c*
+
+Error at 3:9
+Can't borrow through a shared reference
+```
