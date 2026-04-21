@@ -1669,14 +1669,6 @@ const Value = struct {
         };
     }
 
-    // Returns null if `value.ptr` does not point to `stack_data`.
-    fn getStackIndex(value: Value) ?StackIndex {
-        if (@intFromPtr(value.ptr) < @intFromPtr(c.stack_data.ptr)) return null;
-        const index = @divExact(@intFromPtr(value.ptr) - @intFromPtr(c.stack_data.ptr), @sizeOf(usize));
-        if (index >= c.stack_data.len) return null;
-        return @intCast(index);
-    }
-
     fn getDataSlice(value: Value) []usize {
         const size = value.type_id.getWordSize();
         return value.ptr[0..size];
