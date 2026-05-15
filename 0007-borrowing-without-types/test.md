@@ -1671,8 +1671,6 @@ Error at 3:1
 The closure passed to `with_new_stack` contains a shared reference to a shared reference.
 ```
 
-TODO below are all wrong
-
 ```test
 let a = [1, 2, 3];
 let b = a&;
